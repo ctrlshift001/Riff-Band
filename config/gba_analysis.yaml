@@ -1,0 +1,7 @@
+main_model: moonshot-v1-32k
+sub_models:
+  - moonshot-v1-32k
+  - Gemini-2.5-Flash-Lite
+sources_dir: ../workspace/sources
+max_attempts: 6
+max_subagent_steps: 8
