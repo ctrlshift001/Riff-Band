@@ -1,4 +1,4 @@
-"""ReActAgent - ReAct-style SubAgent implementation"""
+﻿"""ReActAgent - ReAct-style SubAgent implementation"""
 from __future__ import annotations
 
 import re
@@ -10,7 +10,7 @@ from base.agent.base_agent import BaseAgent
 from base.agent.memory import Memory
 from base.engine.utils import parse_llm_action_response, parse_llm_output
 from base.engine.logs import logger, LogLevel
-from benchmark.common.env import BasicInfo, Observation, Action
+from aorchestra.benchmark.common.env import BasicInfo, Observation, Action
 
 
 # GAIA SubAgent Prompt Template
@@ -39,7 +39,7 @@ GAIA_PROMPT = """You are a specialized SubAgent. Complete the assigned task effi
 4. Use print() in ExecuteCodeAction to see computation results
 5. Once done, use 'finish' IMMEDIATELY
 
-⚠️ BUDGET: When remaining_steps <= 5, use 'finish' NOW!
+鈿狅笍 BUDGET: When remaining_steps <= 5, use 'finish' NOW!
 
 ==== Output Format ====
 ```json
@@ -98,7 +98,7 @@ You have TWO actions available:
 2. **finish** - Report your progress to MainAgent
    - Use when task is COMPLETE (status="done")
    - Use when you made PROGRESS but need more work (status="partial")
-   - ⚠️ MUST use before running out of steps! Your work is LOST if you timeout.
+   - 鈿狅笍 MUST use before running out of steps! Your work is LOST if you timeout.
 
 **What to report in finish:**
 - completed: List SUCCESSFUL steps that WORKED (e.g., ["apt update succeeded", "nginx installed"])
@@ -108,7 +108,7 @@ You have TWO actions available:
 This info helps the NEXT SubAgent know what to repeat and what to avoid.
 
 ==== Output Format ====
-⚠️ CRITICAL: You MUST reply with ONLY a JSON object. No explanations, no markdown, no other text.
+鈿狅笍 CRITICAL: You MUST reply with ONLY a JSON object. No explanations, no markdown, no other text.
 
 For execute:
 {{"action": "execute", "params": {{"command": "your shell command"}}, "memory": "key findings"}}
@@ -212,9 +212,9 @@ class ReActAgent(BaseAgent):
     def _get_budget_warning(self, remaining_steps: int) -> str:
         """Generate budget warning"""
         if remaining_steps <= 3:
-            return f"🚨 CRITICAL: Only {remaining_steps} steps left! Use 'finish' NOW!"
+            return f"馃毃 CRITICAL: Only {remaining_steps} steps left! Use 'finish' NOW!"
         elif remaining_steps <= 5:
-            return f"⚠️ Warning: {remaining_steps} steps remaining. Plan to finish soon."
+            return f"鈿狅笍 Warning: {remaining_steps} steps remaining. Plan to finish soon."
         return ""
     
     def _build_prompt(
@@ -301,3 +301,4 @@ class ReActAgent(BaseAgent):
     async def run(self, request: str = None) -> str:
         """Standalone run - not used in Orchestra mode"""
         return ""
+

@@ -1,11 +1,11 @@
-# TerminalBench Benchmark Configuration (Baseline Mode)
+﻿# TerminalBench Benchmark Configuration (Baseline Mode)
 # For bench_terminalbench.py (Single-layer Agent mode)
 
 # ======== Task Configuration ========
 # Task directory path (requires terminal-bench dataset)
 # Download first: python run_terminalbench.py --download
 # Or manually: git clone https://github.com/laude-institute/terminal-bench-2.git
-tasks_dir: "benchmark/terminalbench/terminal-bench/test"
+tasks_dir: "aorchestra/benchmark/terminalbench/terminal-bench/test"
 
 # ======== Task Limits ========
 # Maximum number of tasks to run (null = all tasks)
@@ -49,3 +49,4 @@ result_folder: "workspace/logs/terminalbench_baseline"
 # env_init:
 #   http_proxy: "http://host.docker.internal:7890"
 #   https_proxy: "http://host.docker.internal:7890"
+

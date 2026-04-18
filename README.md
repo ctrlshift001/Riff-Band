@@ -1,122 +1,249 @@
-# AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration
+# AOrchestra-Agent
 
 [![Arxiv](https://img.shields.io/badge/2602.03786-arXiv-red)](https://arxiv.org/abs/2602.03786)
 
-> If you encounter any difficulties in using or reproducing the code, please contact me at [aurorra1123@gmail.com](mailto:aurorra1123@gmail.com).
+AOrchestra-Agent is a development project built on top of the original **AOrchestra** paper and codebase.
 
+This repository is not just a reproduction of the paper results. Our goal is to evolve the research prototype into a better **general-purpose agent system** with:
 
-We introduce our AOrchestra. Across three challenging benchmarks (GAIA, SWE-Bench, Terminal-Bench), AOrchestra achieves a 16.28% relative improvement over the strongest baseline when paired with Gemini-3-Flash.
+- a usable **TUI-first** product form
+- a standard **single-agent mode** for everyday tasks
+- a distinctive **dynamic multi-agent mode** for complex tasks
+- task-specific optimization profiles, with **industry research** as the first focus area
 
+## Relationship to the Original Paper
 
-<p align="center">
-  <img src="figure/abs.png"" width="75%">
-</p>
+This project is based on the ideas introduced in:
 
-Prior sub-agent designs in long-horizon agentic systems typically fall into two gaps. One treats sub-agents as context-isolated threads or copied agents, which can reduce context rot but offers limited specialization because the sub-agent’s capabilities are largely fixed. The other relies on static, predefined roles (e.g., coder/searcher/writer), which provides specialization but is inflexible and requires substantial human engineering to maintain across tasks and environments. In contrast, AOrchestra views a sub-agent as a configurable unit specified by a four-tuple $\phi=\langle I,C,T,M\rangle$. 
+> **AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration**  
+> Jianhao Ruan, Zhihao Xu, Yiran Peng, Fashen Ren, Zhaoyang Yu, Xinbing Liang, Jinyu Xiang, Bang Liu, Chenglin Wu, Yuyu Luo, Jiayi Zhang  
+> arXiv:2602.03786
 
+The original work models a sub-agent as a configurable four-tuple:
 
-[![Diff](figure/diff.png)](figure/diff.pdf)
+- `I`: Instruction
+- `C`: Context
+- `T`: Tools
+- `M`: Model
 
-## Core Idea
+That four-tuple remains the conceptual foundation of this repository. What changes here is the product direction: instead of stopping at benchmark-oriented orchestration research, we want to build a stronger general agent system around the same core abstraction.
 
-![Introduction](figure/introduction.png)
+## Current Direction
 
-Our core claim is that agent orchestration becomes modular, controllable, and plug-and-play when we model any (sub-)agent as a four-tuple interface $\langle I,C,T,M\rangle$ and let a central orchestrator concretize this interface at runtime. This abstraction decouples orchestration from execution: the orchestrator focuses on goal decomposition and tuple synthesis—writing actionable instructions $I$, curating context $C$, selecting tools $T$, and choosing models $M$—while dynamically created sub-agents focus on executing delegated subtasks. As a result, the system can specialize sub-agents per subtask, explicitly control context sharing to mitigate long-horizon degradation, and navigate performance–cost trade-offs through configurable choices of $C$, $T$, and $M$, without relying on static roles or full-context copying.
+The current direction of this repository is:
 
+> Build a TUI-based general-purpose agent system that supports both single-agent execution and dynamic multi-agent orchestration, while applying deeper optimization to industry research tasks.
 
-## Repository Layout
+In practice, this means:
+
+- keeping the original research and benchmark stack available
+- continuing to explore a product-oriented runtime in parallel
+- treating industry research as the first optimized profile, not the only use case
+- prioritizing TUI over GUI in the current stage
+
+## Why This Direction
+
+We think the original AOrchestra idea is stronger than a single benchmark story.
+
+The dynamic creation of sub-agents is useful not only for GAIA, SWE-bench, or TerminalBench, but also for real-world complex tasks such as:
+
+- research and analysis
+- multi-step information gathering
+- evidence collection and report generation
+- long-horizon problem solving
+
+So this repository is moving toward a system with two clear operating modes.
+
+## Two Modes
+
+### 1. Single-Agent Mode
+
+This is the standard mode for lightweight tasks.
+
+Use it when we want:
+
+- lower cost
+- lower latency
+- simpler execution
+- a more assistant-like workflow
+
+### 2. Dynamic Multi-Agent Mode
+
+This is the distinctive mode of the project.
+
+Use it when tasks are:
+
+- decomposable
+- multi-step
+- tool-heavy
+- better solved through specialization and coordination
+
+In this mode, a main agent can dynamically synthesize sub-agents with different instructions, contexts, tools, and models, then coordinate their execution and merge results.
+
+## TUI Instead of GUI
+
+At this stage, we are intentionally building around **TUI / CLI**, not GUI.
+
+Why:
+
+- it matches the current state of the codebase
+- it is better for fast iteration on orchestration and runtime design
+- it exposes execution flow, logs, and agent coordination more clearly
+- it is a better fit for developer and research workflows
+
+The long-term product goal is not “a chat page,” but a capable terminal-first agent workspace.
+
+## Repository Structure
+
+This repository currently contains two major lines of work.
+
+### 1. Research / Benchmark Line
+
+The original paper-oriented implementation is now centered under [aorchestra/](./aorchestra):
 
 ```text
-.
-├── bench_aorchestra_gaia.py
-├── bench_aorchestra_swebench.py
-├── bench_aorchestra_terminalbench.py
-├── aorchestra/                 # MainAgent/SubAgent framework
-├── benchmark/                  # Benchmark adapters and datasets
-├── config/example/benchmarks/  # Benchmark config templates
-└── config/example/model_config.yaml
+aorchestra/
+  benchmark/      # benchmark adapters, datasets, benchmark-specific utilities
+  runners/        # benchmark runners
+  subagents/      # research-oriented subagent implementations
+  tools/          # orchestration tools
+  scripts/        # benchmark entrypoints
 ```
+
+This line is mainly for:
+
+- the original research setup
+- benchmark evaluation
+- legacy orchestration components
+
+### 2. Product / Application Line
+
+The newer application-oriented work currently lives mainly under [src/](./src) and related files:
+
+```text
+src/
+  agents/
+  base/
+  core/
+  environments/
+  orchestration_tools/
+  project/
+run_agents.py
+config/gba_analysis.yaml
+```
+
+This line is where we are exploring:
+
+- general runtime ideas
+- application workflows
+- profile-specific optimizations
+- the path toward a TUI-based general agent system
+
+At the moment, this application line still leans heavily toward the **industry research** profile, but the long-term goal is broader than that single scenario.
+
+## Current Focus: Industry Research as the First Profile
+
+The first heavily optimized profile in this repository is **industry research**, especially structured research workflows such as:
+
+- policy research
+- company research
+- supply-chain analysis
+- news and signal collection
+- report drafting
+
+We consider this a very suitable proving ground for dynamic multi-agent orchestration because these tasks are naturally parallelizable and require evidence-backed output.
+
+Important: this does **not** mean the repository is permanently limited to an industry-research-only product. It means industry research is the first deep optimization target.
 
 ## Quick Start
 
-```bash
-# 1) Install
-conda create -n orchestra python=3.13 && conda activate orchestra
-pip install -r requirements.txt
+### Install
 
-# 2) Configure
+```bash
+conda create -n orchestra python=3.13
+conda activate orchestra
+pip install -r requirements.txt
+```
+
+### Configure
+
+```bash
 cp .env.example .env
 cp config/example/model_config.yaml config/
 cp -r config/example/benchmarks config/
+```
 
-# 3) Fill in API keys
-vim .env
-vim config/model_config.yaml
+Then fill in:
+
+- `.env`
+- `config/model_config.yaml`
+
+## Run the Current Application Prototype
+
+The current application entrypoint is:
+
+```bash
+python run_agents.py --config config/gba_analysis.yaml
+```
+
+This currently runs an industry-analysis-oriented workflow from terminal input and writes outputs to `workspace/output/`.
+
+## Run the Research / Benchmark Stack
+
+Benchmark entrypoints are now under `aorchestra.scripts`:
+
+```bash
+python -m aorchestra.scripts.bench_aorchestra_gaia --config config/benchmarks/aorchestra_gaia.yaml
+python -m aorchestra.scripts.bench_aorchestra_swebench --config config/benchmarks/aorchestra_swebench.yaml
+python -m aorchestra.scripts.bench_aorchestra_terminalbench --config config/benchmarks/aorchestra_terminalbench.yaml
 ```
 
 ## Dataset Setup
 
 | Benchmark | Download | Put it here |
 |---|---|---|
-| **GAIA** | https://huggingface.co/datasets/gaia-benchmark/GAIA | `benchmark/gaia/data/Gaia/` (config expects `benchmark/gaia/data/Gaia/2023/validation/metadata.jsonl`) |
-| **TerminalBench** | https://www.tbench.ai/leaderboard/terminal-bench/2.0 | `benchmark/terminalbench/terminal-bench/` (config default: `benchmark/terminalbench/terminal-bench/test`) |
-| **SWE-bench** | Already prepared in this project setup | Use `config/benchmarks/aorchestra_swebench.yaml` (`dataset_name: princeton-nlp/SWE-bench_Verified`) |
+| **GAIA** | https://huggingface.co/datasets/gaia-benchmark/GAIA | `aorchestra/benchmark/gaia/data/Gaia/` |
+| **TerminalBench** | https://www.tbench.ai/leaderboard/terminal-bench/2.0 | `aorchestra/benchmark/terminalbench/terminal-bench/` |
+| **SWE-bench** | Use Hugging Face dataset config | See `config/benchmarks/aorchestra_swebench.yaml` |
 
 Recommended commands:
 
 ```bash
-# GAIA (gated Hugging Face dataset; requires accepted access + HF login)
-huggingface-cli download gaia-benchmark/GAIA --repo-type dataset --local-dir benchmark/gaia/data/Gaia
-
-# TerminalBench (clone task repo so /test is available)
-git clone --depth=1 https://github.com/laude-institute/terminal-bench-2.git benchmark/terminalbench/terminal-bench
+huggingface-cli download gaia-benchmark/GAIA --repo-type dataset --local-dir aorchestra/benchmark/gaia/data/Gaia
+git clone --depth=1 https://github.com/laude-institute/terminal-bench-2.git aorchestra/benchmark/terminalbench/terminal-bench
 ```
 
 ## API Keys
 
-### By Benchmark
+Typical keys used in this repository include:
 
-| Benchmark | Required API Keys | Optional |
-|---|---|---|
-| **GAIA** | `JINA_API_KEY`, `SERPER_API_KEY`, LLM key in `config/model_config.yaml` | - |
-| **SWE-bench** | LLM key in `config/model_config.yaml`, Docker | - |
-| **TerminalBench** | LLM key in `config/model_config.yaml`, Docker or `E2B_API_KEY` | `DAYTONA_API_KEY` |
+- `JINA_API_KEY`
+- `SERPER_API_KEY`
+- `E2B_API_KEY`
+- `DAYTONA_API_KEY`
+- model keys configured in `config/model_config.yaml`
 
-### By Tool
+## Status
 
-| Tool | Environment Variable | Purpose | Obtain From |
-|---|---|---|---|
-| Jina | `JINA_API_KEY` | Web content extraction | https://jina.ai/ |
-| Serper | `SERPER_API_KEY` | Google search | https://serper.dev/ |
-| E2B | `E2B_API_KEY` | Cloud sandbox | https://e2b.dev/ |
-| Daytona | `DAYTONA_API_KEY` | Cloud sandbox | https://daytona.io/ |
-| LLM | in `config/model_config.yaml` | Model calls | OpenAI / Gemini / Claude etc. |
+This repository is in a transitional stage.
 
-## Run
+What is already true:
 
-| Benchmark | Command |
-|---|---|
-| **GAIA** | `python bench_aorchestra_gaia.py --config config/benchmarks/aorchestra_gaia.yaml` |
-| **SWE-bench** | `python bench_aorchestra_swebench.py --config config/benchmarks/aorchestra_swebench.yaml` |
-| **TerminalBench** | `python bench_aorchestra_terminalbench.py --config config/benchmarks/aorchestra_terminalbench.yaml` |
+- the original paper/benchmark stack is preserved
+- benchmark-related code has been consolidated under `aorchestra/`
+- a newer application line exists and is actively being reshaped
+- the product direction has shifted toward a general agent system
 
-Common CLI options:
+What is still in progress:
 
-```bash
---config config/benchmarks/xxx.yaml
---max_concurrency 5
---tasks task1,task2
-```
-
-Benchmark-specific options:
-
-- GAIA: `--skip_completed <path/to/results.csv>`
-- SWE-bench: `--skip-completed`
-- TerminalBench: `--skip_completed`
-
-
+- unifying the runtime structure
+- making the two modes explicit in code structure
+- building a stronger TUI workflow
+- generalizing beyond the first industry-research profile
 
 ## Citation
+
+If you use the original AOrchestra research idea, please cite the original paper:
 
 ```bibtex
 @misc{ruan2026aorchestraautomatingsubagentcreation,

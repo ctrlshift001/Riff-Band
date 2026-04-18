@@ -1,4 +1,4 @@
-# GAIA Benchmark Configuration (Orchestra Mode)
+﻿# GAIA Benchmark Configuration (Orchestra Mode)
 # For bench_aorchestra_gaia.py (MainAgent + SubAgent mode)
 
 # ======== Model Configuration ========
@@ -12,8 +12,8 @@ sub_models:
   # - "deepseek-chat"     # Can add more models
 
 # ======== Dataset Configuration ========
-dataset_path: "benchmark/gaia/data/Gaia/2023/validation/metadata.jsonl"
-attachments_dir: "benchmark/gaia/data/Gaia/2023/validation"
+dataset_path: "aorchestra/benchmark/gaia/data/Gaia/2023/validation/metadata.jsonl"
+attachments_dir: "aorchestra/benchmark/gaia/data/Gaia/2023/validation"
 
 # Task filtering
 level_filter: null       # null = all, or 1/2/3/[1,2] etc.
@@ -35,3 +35,4 @@ trajectory_folder: "workspace/logs/gaia_aorchestra/trajectories"
 # ======== Required Environment Variables ========
 # Configure in .env file:
 #   JINA_API_KEY, SERPER_API_KEY, OPENAI_API_KEY
+

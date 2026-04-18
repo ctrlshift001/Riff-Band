@@ -1,4 +1,4 @@
-# TerminalBench Benchmark Configuration (Orchestra Mode)
+﻿# TerminalBench Benchmark Configuration (Orchestra Mode)
 # For bench_aorchestra_terminalbench.py (MainAgent + SubAgent mode)
 
 # ======== Model Configuration ========
@@ -9,7 +9,7 @@ sub_models:
 # ======== Task Configuration ========
 # Task directory (requires terminal-bench dataset to be downloaded first)
 # validate directory for validation, test directory for testing
-tasks_dir: "benchmark/terminalbench/terminal-bench/test"
+tasks_dir: "aorchestra/benchmark/terminalbench/terminal-bench/test"
 
 # ======== Task Limits ========
 max_steps: 50
@@ -41,3 +41,4 @@ result_folder: "workspace/logs/terminalbench_aorchestra"
 # env_init:
 #   http_proxy: "http://127.0.0.1:7890"
 #   https_proxy: "http://127.0.0.1:7890"
+

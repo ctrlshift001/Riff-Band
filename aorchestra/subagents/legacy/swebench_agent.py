@@ -1,8 +1,8 @@
 ﻿"""
-SWE-bench SubAgent for aorchestra framework.
+Orchestra SWE-bench SubAgent.
 
-Uses DISCUSSION + COMMAND format (same as baseline SWEAgent),
-with 'finish' command for reporting back to MainAgent.
+Uses the same DISCUSSION + COMMAND format as the Baseline SWEAgent,
+with 'finish' command added for reporting back to MainAgent.
 """
 import re
 from typing import Any, Dict, Optional
@@ -16,7 +16,7 @@ from aorchestra.benchmark.common.env import BasicInfo
 
 
 # =============================================================================
-# SWEBENCH SUBAGENT PROMPT
+# SWEBENCH SUBAGENT PROMPT - Structured like TerminalBench
 # =============================================================================
 SWEBENCH_SUBAGENT_PROMPT = """
 You are an autonomous software engineering agent tasked with solving GitHub issues.
@@ -108,7 +108,7 @@ def build_subagent_prompt(
 def parse_subagent_response(response: str) -> Dict[str, Any]:
     """
     Parse SubAgent response to extract DISCUSSION and COMMAND.
-    Handles 'finish' command for reporting back to MainAgent.
+    Same as Baseline, but also handles 'finish' command.
     """
     discussion = ""
     command = ""
@@ -131,7 +131,7 @@ def parse_subagent_response(response: str) -> Dict[str, Any]:
     if command_match:
         raw_command = command_match.group(1).strip()
         
-        # Only take the first meaningful line as the command
+        # FIX: Only take the first meaningful line as the command
         # This prevents LLM's extra text/thoughts from being included
         lines = raw_command.split('\n')
         for line in lines:
@@ -161,7 +161,7 @@ def parse_subagent_response(response: str) -> Dict[str, Any]:
     
     # Handle finish command (SubAgent specific)
     # Format: finish <status> <message>
-    # status: done | partial
+    # status: done | partial | blocked
     if command.lower().startswith('finish'):
         # Extract content after 'finish'
         finish_content = command[6:].strip() if len(command) > 6 else ""
@@ -231,44 +231,29 @@ def parse_subagent_response(response: str) -> Dict[str, Any]:
 
 class SWEBenchSubAgent(BaseAgent):
     """
-    SubAgent for SWE-bench in aorchestra framework.
+    SubAgent for SWE-bench Orchestra.
     
-    Uses DISCUSSION + COMMAND format (same as baseline SWEAgent),
+    Uses the same DISCUSSION + COMMAND format as Baseline SWEAgent,
     with 'finish' command for reporting back to MainAgent.
     """
     name: str = Field(default="SWEBenchSubAgent")
     description: str = Field(default="SubAgent for SWE-bench with ACI tools")
-    
-    # Task context from MainAgent
-    task_instruction: str = Field(default="")
-    context: str = Field(default="")
-    original_question: str = Field(default="")
-    
-    # Internal state
     current_instruction: str = Field(default="")
     command_docs: str = Field(default="")
     state_info: str = Field(default="(Open file: n/a) (Current directory: /testbed)")
     memory: Optional[Memory] = Field(default=None)
+    context: str = Field(default="")  # Additional context from MainAgent
     
     class Config:
         arbitrary_types_allowed = True
 
     def reset(self, env_info: BasicInfo) -> None:
         """Reset agent state for new task."""
-        if self.memory is None:
-            self.memory = Memory(llm=self.llm, max_memory=20)
-        else:
-            self.memory.clear()
-        
-        # Use task_instruction if set by MainAgent, otherwise use env instruction
-        self.current_instruction = self.task_instruction or env_info.instruction
+        self.memory = Memory(llm=self.llm, max_memory=20)
+        self.current_instruction = env_info.instruction
         self.command_docs = env_info.meta_data.get("command_docs", env_info.action_space)
         self.state_info = "(Open file: n/a) (Current directory: /testbed)"
-        
-        # Store original question for reference
-        if not self.original_question:
-            self.original_question = env_info.instruction
-        
+        self.memory.clear()
         logger.info(f"[SWEBenchSubAgent] Reset for task")
 
     def parse_action(self, resp: str) -> Dict[str, Any]:
@@ -282,11 +267,7 @@ class SWEBenchSubAgent(BaseAgent):
         return "No previous observations."
 
     async def step(self, observation: Any, history: Any, current_step: int = 1, max_steps: int = 50) -> tuple:
-        """Execute one step of the agent loop.
-        
-        Returns:
-            tuple: (action, raw_response, raw_input_prompt)
-        """
+        """Execute one step of the agent loop."""
         # Format observation
         if isinstance(observation, dict):
             obs_str = observation.get("output", str(observation))

@@ -1,4 +1,4 @@
-"""
+﻿"""
 GAIA Benchmark Runner with tool-based MainAgent (delegate_task).
 """
 from __future__ import annotations
@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Tuple
 from base.agent.base_action import BaseAction
 from base.engine.async_llm import LLMsConfig, create_llm_instance
 from base.engine.logs import logger
-from benchmark.common.runner import Runner
-from benchmark.gaia.scorer import question_scorer
-from benchmark.gaia.llm_scorer import llm_semantic_score
+from aorchestra.benchmark.common.runner import Runner
+from aorchestra.benchmark.gaia.scorer import question_scorer
+from aorchestra.benchmark.gaia.llm_scorer import llm_semantic_score
 from aorchestra.main_agent import MainAgent
 from aorchestra.prompts.gaia import GAIAMainAgentPrompt
 from aorchestra.tools.delegate import DelegateTaskTool
@@ -185,7 +185,7 @@ class GAIARunner:
                     )
 
                     # Run MainAgent
-                    from benchmark.common.env import BasicInfo
+                    from aorchestra.benchmark.common.env import BasicInfo
                     main_info = BasicInfo(
                         env_id=level_id,
                         instruction=basic_info.instruction,
@@ -374,3 +374,4 @@ class GAIARunner:
                 csv_file.close()
 
         return results
+

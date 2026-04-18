@@ -1,4 +1,4 @@
-# SWE-bench Benchmark Configuration (Orchestra Mode)
+﻿# SWE-bench Benchmark Configuration (Orchestra Mode)
 # For bench_aorchestra_swebench.py (MainAgent + SubAgent mode)
 
 # ======== Model Configuration ========
@@ -37,8 +37,9 @@ result_folder: "workspace/logs/swebench_aorchestra"
 
 # ======== Optional Configuration ========
 # Specify specific instance IDs to run
-# selected_ids_file: "benchmark/swebench/swebench_selected_ids.json"
+# selected_ids_file: "aorchestra/benchmark/swebench/swebench_selected_ids.json"
 
 # Environment variable injection into Docker container
 # env_init:
 #   http_proxy: "http://127.0.0.1:7890"
+

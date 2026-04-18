@@ -1,4 +1,4 @@
-"""MainAgent: orchestrates SubAgents via tool calls."""
+﻿"""MainAgent: orchestrates SubAgents via tool calls."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from base.agent.base_agent import BaseAgent
 from base.agent.memory import Memory
 from base.engine.async_llm import ModelPricing
 from base.engine.logs import logger, LogLevel
-from benchmark.common.env import BasicInfo
+from aorchestra.benchmark.common.env import BasicInfo
 from aorchestra.common.utils import parse_json_response, indent_text
 
 
@@ -103,7 +103,7 @@ class MainAgent(BaseAgent):
         all_issues = []
         
         for e in self.task_entries:
-            emoji = "✅" if e["status"] == "done" else "⚠️"
+            emoji = "[done]" if e["status"] == "done" else "[pending]"
             steps_info = f'{e.get("steps_taken", "?")}/{e.get("max_steps", 30)}'
             model_display = e.get("model", "?")
             
@@ -113,34 +113,34 @@ class MainAgent(BaseAgent):
             
             entry_lines = [
                 f'[Attempt {e["attempt"]}] {emoji} {e["status"]} | Model: {model_display} | Steps: {steps_info}',
-                f'├─ Task: {e.get("instruction", "N/A")}',
+                f'鈹溾攢 Task: {e.get("instruction", "N/A")}',
             ]
             
             # GAIA format
             if self.benchmark_type == "gaia":
                 result_str = f'"{e.get("result", "")}"' if e.get("result") and e.get("result") != "-" else "(no result)"
-                entry_lines.append(f'├─ Result: {result_str}')
+                entry_lines.append(f'鈹溾攢 Result: {result_str}')
                 if e.get("summary"):
-                    entry_lines.append(f'├─ Summary: {e["summary"]}')
+                    entry_lines.append(f'鈹溾攢 Summary: {e["summary"]}')
             # TerminalBench format
             else:
                 if e.get("message"):
-                    entry_lines.append(f'├─ Message: {e["message"]}')
+                    entry_lines.append(f'鈹溾攢 Message: {e["message"]}')
                 completed = e.get("completed", [])
                 if completed:
-                    entry_lines.append(f'├─ ✅ Completed: {completed}')
+                    entry_lines.append(f'鈹溾攢 鉁?Completed: {completed}')
                     all_completed.extend(completed)
                 issues = e.get("issues", [])
                 if issues:
-                    entry_lines.append(f'├─ ❌ Issues: {issues}')
+                    entry_lines.append(f'鈹溾攢 鉂?Issues: {issues}')
                     all_issues.extend(issues)
             
             # Trace summary
             trace_summary = e.get("trace_summary", "")
             if trace_summary and trace_summary != "N/A":
-                entry_lines.append(f'└─ Trace summary:\n{indent_text(trace_summary, "   ")}')
+                entry_lines.append(f'鈹斺攢 Trace summary:\n{indent_text(trace_summary, "   ")}')
             else:
-                entry_lines[-1] = entry_lines[-1].replace('├─', '└─')
+                entry_lines[-1] = entry_lines[-1].replace('鈹溾攢', '鈹斺攢')
             
             lines.append("\n".join(entry_lines))
             
@@ -151,9 +151,9 @@ class MainAgent(BaseAgent):
         summary_lines = [f"---", f"Summary: {done_count}/{len(self.task_entries)} subtasks done"]
         if self.benchmark_type == "terminalbench":
             if all_completed:
-                summary_lines.append(f"✅ All completed: {all_completed}")
+                summary_lines.append(f"鉁?All completed: {all_completed}")
             if all_issues:
-                summary_lines.append(f"❌ All issues: {all_issues}")
+                summary_lines.append(f"鉂?All issues: {all_issues}")
         
         lines.append("\n".join(summary_lines))
         
@@ -302,3 +302,4 @@ Return JSON: {{"action": "...", "reasoning": "...", "params": {{...}}}}"""
     
     async def run(self, request: Optional[str] = None) -> str:
         return "Orchestration via Runner"
+

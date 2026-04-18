@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from abc import ABC
 from typing import List, Dict, Any, Optional
@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 import json
 
 from base.engine.async_llm import AsyncLLM 
-from benchmark.common.env import Observation, Action
+from aorchestra.benchmark.common.env import Observation, Action
 
 
 class Memory(ABC):
@@ -131,7 +131,7 @@ Please:
   2) useful strategies / plans / tools the agent tried,
   3) important mistakes or failure patterns to avoid later,
   4) partial progress and remaining goals / TODOs.
-- Use at most 8–10 lines.
+- Use at most 8鈥?0 lines.
 - Use a neutral, factual tone.
 - Do NOT repeat low-level JSON details unless they are crucial.
 - Do NOT include meta text like "here is the summary" or any explanation.
@@ -152,3 +152,4 @@ Please:
         """
         self._records.clear()
         self._summary = None
+

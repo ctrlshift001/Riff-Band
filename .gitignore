@@ -1,4 +1,4 @@
-# Environment & secrets
+﻿# Environment & secrets
 .env
 
 # Personal config (contains API keys)
@@ -17,9 +17,10 @@ dist/
 build/
 
 # Datasets (large files)
-benchmark/gaia/data/Gaia/
-benchmark/terminalbench/terminal-bench/
+aorchestra/benchmark/gaia/data/Gaia/
+aorchestra/benchmark/terminalbench/terminal-bench/
 
 # OS
 .DS_Store
 Thumbs.db
+
