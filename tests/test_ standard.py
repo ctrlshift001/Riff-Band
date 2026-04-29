@@ -103,7 +103,7 @@ class Test(unittest.TestCase):
 
             asyncio.run(tool(section_title="Executive Summary", content="Summary content"))
             text = path.read_text(encoding="utf-8")
-            self.assertTrue(text.startswith("# Greater Bay Area Industry Analysis Report"))
+            self.assertTrue(text.startswith("# Task Analysis Report"))
             self.assertIn("## Executive Summary", text)
         finally:
             shutil.rmtree(td, ignore_errors=True)

@@ -14,8 +14,8 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from base.engine.logs import logger
-from config import GBAAnalysisConfig
-from project import build_gba_analysis_project
+from config import AgentConfig
+from project import build_project_by_mode
 
 
 def _read_task_from_terminal() -> str:
@@ -38,15 +38,15 @@ def _read_task_from_terminal() -> str:
 async def main() -> int:
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="运行粤港澳大湾区产业分析智能体工作流")
+    parser = argparse.ArgumentParser(description="Run the general-purpose agent workflow")
     parser.add_argument("--config", required=True, help="配置文件路径")
     args = parser.parse_args()
 
     logger.info("=" * 60)
-    logger.info("Aorchestra for GBA Industry Analysis")
+    logger.info("AOrchestra Agent Runtime")
     logger.info("=" * 60)
 
-    cfg = GBAAnalysisConfig.load(args.config)
+    cfg = AgentConfig.load(args.config)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg.timestamp = timestamp
 
@@ -59,7 +59,9 @@ async def main() -> int:
     logger.info("任务已从终端输入加载")
     logger.info(f"报告输出目录: {output_dir}")
 
-    project = build_gba_analysis_project(
+    profile_name = cfg.profile_name
+    project, decision = await build_project_by_mode(
+        mode=cfg.mode,
         main_model=cfg.main_model,
         sub_models=cfg.sub_models,
         brief_text=task_input,
@@ -67,7 +69,13 @@ async def main() -> int:
         output_dir=output_dir,
         max_attempts=cfg.max_attempts,
         max_subagent_steps=cfg.max_subagent_steps,
+        subagent_process_timeout_seconds=cfg.subagent_process_timeout_seconds,
+        profile_name=profile_name,
     )
+    logger.info(
+        f"Mode routing => selected={decision.mode} source={decision.source} reason={decision.reason}"
+    )
+    logger.info(f"Runtime profile => {profile_name}")
     result = await project.run()
     # print(result.get("final_result"))
     return 0

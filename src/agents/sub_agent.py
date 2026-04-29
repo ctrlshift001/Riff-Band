@@ -12,11 +12,11 @@ from core.interfaces import Action, TaskContext
 
 
 
-class ResearchSubAgent(BaseAgent):
-    """Generic sub-agent for delegated research and report-writing work."""
+class SubAgent(BaseAgent):
+    """通用子智能体，用于执行委派的研究、验证和产物生成任务。"""
 
-    name: str = Field(default="ResearchSubAgent")
-    description: str = Field(default="Delegated sub-agent for focused research tasks")
+    name: str = Field(default="SubAgent")
+    description: str = Field(default="执行聚焦委派任务的子智能体")
     task_instruction: str = Field(default="")
     context: str = Field(default="")
     original_question: str = Field(default="")
@@ -24,6 +24,7 @@ class ResearchSubAgent(BaseAgent):
     current_env_instruction: str = Field(default="")
     current_action_space: str = Field(default="")
     memory: Memory = Field(default=None)
+    preserve_memory_on_reset: bool = Field(default=False)
     prompt_builder: Any = Field(default=None) 
     task_label: str = Field(default="")
 
@@ -34,7 +35,7 @@ class ResearchSubAgent(BaseAgent):
     def reset(self, task_context: TaskContext) -> None:
         if self.memory is None:
             self.memory = Memory(llm=self.llm, max_memory=10)
-        else:
+        elif not self.preserve_memory_on_reset:
             self.memory.clear()
 
         self.current_action_space = task_context.action_space
@@ -81,7 +82,7 @@ class ResearchSubAgent(BaseAgent):
         filtered_blocks = []
 
         for block in blocks:
-            if block.startswith("Available actions"):
+            if block.startswith("Available actions") or block.startswith("可用操作"):
                 filtered_blocks.append(block.rstrip())
                 continue
 
@@ -94,22 +95,22 @@ class ResearchSubAgent(BaseAgent):
         return "\n\n".join(filtered_blocks)        
 
     def _get_memory(self) -> str:
-        return self.memory.as_text() if self.memory else "None"
+        return self.memory.as_text() if self.memory else "无"
 
     def _build_fast_partial_finish(self) -> Action:
         return {
             "action": "finish",
             "params": {
                 "status": "partial",
-                "message": "Stopped early because no local sources were found and web search is unavailable.",
+                "message": "由于没有本地资料且联网搜索不可用，已提前停止。",
                 "completed": [],
                 "issues": [
-                    "No local sources available.",
-                    "Web search is disabled because SERPER_API_KEY is missing.",
+                    "没有可用本地资料。",
+                    "缺少 SERPER_API_KEY，联网搜索未启用。",
                 ],
-                "result": "Please add local source files under sources_dir or configure SERPER_API_KEY.",
+                "result": "请在 sources_dir 下添加本地资料，或配置 SERPER_API_KEY 后重试。",
             },
-            "memory": "Execution stopped early due to unavailable data sources.",
+            "memory": "由于数据来源不可用，执行已提前停止。",
         }
 
     def _build_no_access_finish(self, error: str) -> Action:
@@ -117,15 +118,15 @@ class ResearchSubAgent(BaseAgent):
             "action": "finish",
             "params": {
                 "status": "partial",
-                "message": "Stopped early because local sources are empty and web search access failed.",
+                "message": "由于本地资料为空且联网搜索访问失败，已提前停止。",
                 "completed": [],
                 "issues": [
-                    "No local sources available.",
-                    f"Web search error: {error}",
+                    "没有可用本地资料。",
+                    f"联网搜索错误: {error}",
                 ],
-                "result": "Please add local sources or fix SERPER authorization before rerun.",
+                "result": "请添加本地资料，或修复 Serper 授权后重试。",
             },
-            "memory": "Execution stopped due to empty local sources and web search authorization failure.",
+            "memory": "由于本地资料为空且联网搜索授权失败，执行已停止。",
         }
     
 
@@ -137,14 +138,14 @@ class ResearchSubAgent(BaseAgent):
         max_steps: int = 20,
     ) -> tuple[Action, str, str]:
         if self.prompt_builder is None:
-            raise ValueError("ResearchSubAgent requires a prompt_builder")
+            raise ValueError("SubAgent requires a prompt_builder")
 
         if isinstance(observation, dict) and current_step == 1:
             source_count = int(observation.get("source_count", 0))
             search_enabled = bool(observation.get("search_enabled", False))
             if source_count == 0 and not search_enabled:
                 action = self._build_fast_partial_finish()
-                raw_response = "Auto-finish: empty local sources and web search disabled."
+                raw_response = "自动结束：本地资料为空且联网搜索未启用。"
                 label = f"[{self.task_label}]" if self.task_label else "[task_unknown]"
                 logger.agent_action(f"[ResearchSubAgent] {label}Action: {action}")
                 return action, raw_response, "No prompt sent due to fast-finish guard."
@@ -162,7 +163,7 @@ class ResearchSubAgent(BaseAgent):
                 source_count = int(first_obs.get("source_count", 0)) if isinstance(first_obs, dict) else 0
                 if source_count == 0 and unauthorized:
                     action = self._build_no_access_finish(error_text)
-                    raw_response = "Auto-finish: empty local sources and web search unauthorized."
+                    raw_response = "自动结束：本地资料为空且联网搜索未授权。"
                     label = f"[{self.task_label}]" if self.task_label else "[task_unknown]"
                     logger.agent_action(f"[ResearchSubAgent] {label}Action: {action}")
                     return action, raw_response, "No prompt sent due to web-access guard."
@@ -177,19 +178,19 @@ class ResearchSubAgent(BaseAgent):
             current_step=current_step,
             max_steps=max_steps,
         )
-        #print("当前subagent提示词:", prompt
+        
         label = f"[{self.task_label}]" if self.task_label else "[task_unknown]"
         logger.log_to_file(LogLevel.INFO, f"[ResearchSubAgent] {label}Prompt:\n{prompt}\n")
 
         response = await self.llm(prompt)
-        # print("当前subagent原始响应:", response)
+        
 
         # Parse response
         memory_content = parse_llm_output(response, "memory")
         thinking = memory_content.get("memory") if isinstance(memory_content, dict) else None
         action = parse_llm_action_response(response)
 
-        # 终端打印agent_action
+        
         logger.agent_action(f"[ResearchSubAgent] {label}Action: {action}")
 
         # 记忆存储
@@ -206,3 +207,4 @@ class ResearchSubAgent(BaseAgent):
 
     async def run(self, request: Optional[str] = None) -> str:
         return request or ""
+

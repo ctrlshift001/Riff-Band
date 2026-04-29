@@ -13,9 +13,14 @@ class TestParallelDelegation(unittest.TestCase):
             sub_models=["m1"],
             meta={
                 "max_parallel_subtasks": 3,
-                "subtask_toolkits": {
-                    "general_research": ["search_sources", "read_sources", "record_finding", "write_report_section"]
-                },
+                "default_worker_tools": [
+                    "search_sources",
+                    "read_sources",
+                    "record_finding",
+                    "write_report_section",
+                    "verify_artifacts",
+                ],
+                "parallel_forbidden_tools": ["write_report_section"],
                 "model_routing": {"general_research": "m1"},
             },
         )
@@ -29,6 +34,7 @@ class TestParallelDelegation(unittest.TestCase):
         )
         self.assertEqual(params["max_concurrency"], 3)
         self.assertEqual(params["tasks"][0]["model"], "m1")
+        self.assertIn("verify_artifacts", params["tasks"][0]["tools"])
         self.assertNotIn("write_report_section", params["tasks"][0]["tools"])
         self.assertNotIn("write_report_section", params["tasks"][1]["tools"])
 

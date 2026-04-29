@@ -10,18 +10,34 @@ from base.agent.base_action import BaseAction
 
 
 class CompleteTaskTool(BaseAction):
-    """Finalize the orchestration with quality checks before completion."""
+    """Finalize the orchestration with optional artifact-specific quality checks."""
 
     name: str = "complete_task"
-    description: str = "Finish the overall task only when the report passes quality checks"
+    description: str = "验证交付物并说明剩余问题后，结束整体任务。"
     parameters: Dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
-                "executive_summary": {"type": "string", "description": "Short final summary"},
-                "report_path": {"type": "string", "description": "Path to the generated report"},
+                "executive_summary": {"type": "string", "description": "简短最终总结"},
+                "status": {"type": "string", "description": "done | partial | blocked"},
+                "report_path": {"type": "string", "description": "生成报告路径"},
                 "confidence": {"type": "string", "description": "high | medium | low"},
-                "findings_path": {"type": "string", "description": "Optional findings jsonl path"},
+                "artifacts": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Delivered artifacts such as files, reports, data, or notes",
+                },
+                "verification": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "完成前执行过的检查",
+                },
+                "open_issues": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "partial 或 blocked 状态下的已知剩余问题",
+                },
+                "findings_path": {"type": "string", "description": "可选 findings jsonl 路径"},
                 "required_sections": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -29,7 +45,7 @@ class CompleteTaskTool(BaseAction):
                 },
                 "min_findings": {"type": "integer", "description": "Minimum finding records required"},
             },
-            "required": ["executive_summary", "report_path", "confidence"],
+            "required": ["executive_summary", "confidence"],
             "additionalProperties": False,
         }
     )
@@ -59,35 +75,43 @@ class CompleteTaskTool(BaseAction):
     async def __call__(
         self,
         executive_summary: str,
-        report_path: str,
         confidence: str,
+        status: str = "done",
+        report_path: str = "",
+        artifacts: List[Dict[str, Any]] | None = None,
+        verification: List[str] | None = None,
+        open_issues: List[str] | None = None,
         findings_path: str = "",
         required_sections: List[str] | None = None,
         min_findings: int = 5,
     ) -> Dict[str, Any]:
         issues: List[str] = []
+        artifacts = list(artifacts or [])
+        verification = [str(item).strip() for item in (verification or []) if str(item).strip()]
+        open_issues = [str(item).strip() for item in (open_issues or []) if str(item).strip()]
+        status = str(status or "done").lower().strip()
+        if status not in {"done", "partial", "blocked"}:
+            issues.append("status must be one of done|partial|blocked")
         confidence = str(confidence).lower().strip()
         if confidence not in {"high", "medium", "low"}:
             issues.append("confidence must be one of high|medium|low")
 
-        report_file = Path(report_path)
-        if not report_file.exists():
-            issues.append(f"report file not found: {report_path}")
-            return {
-                "success": False,
-                "done": False,
-                "issues": issues,
-                "quality_gate_passed": False,
-            }
-
-        text = report_file.read_text(encoding="utf-8").strip()
-        if not text:
-            issues.append("report file is empty")
-        if self._count_headings(text) < 3:
-            issues.append("report contains fewer than 3 level-2 sections")
+        text = ""
+        if report_path:
+            report_file = Path(report_path)
+            if not report_file.exists():
+                issues.append(f"report file not found: {report_path}")
+            else:
+                text = report_file.read_text(encoding="utf-8").strip()
+                if not text:
+                    issues.append("report file is empty")
+                if self._count_headings(text) < 3:
+                    issues.append("report contains fewer than 3 level-2 sections")
+                if "http://" not in text and "https://" not in text:
+                    issues.append("report does not contain explicit source links")
 
         required = [item.strip() for item in (required_sections or []) if str(item).strip()]
-        if required:
+        if required and report_path and text:
             missing = [title for title in required if f"## {title}" not in text]
             if missing:
                 issues.append(f"missing required sections: {missing}")
@@ -111,16 +135,20 @@ class CompleteTaskTool(BaseAction):
             if findings_rows and evidence_coverage < max(1, int(len(findings_rows) * 0.8)):
                 issues.append("less than 80% findings include source_url or evidence")
 
-        if "http://" not in text and "https://" not in text:
-            issues.append("report does not contain explicit source links")
+        if status == "done" and open_issues:
+            issues.append("status is done but open_issues is not empty")
 
-        passed = not issues
+        passed = not issues and status == "done"
         return {
             "success": passed,
             "done": passed,
+            "status": status,
             "executive_summary": executive_summary,
             "report_path": report_path,
             "confidence": confidence,
+            "artifacts": artifacts,
+            "verification": verification,
+            "open_issues": open_issues,
             "findings_path": findings_path,
             "findings_count": len(findings_rows),
             "quality_gate_passed": passed,

@@ -14,9 +14,9 @@ class AgentRunner:
 
     step_timeout: Optional[float] = 600.0
 
-    # sub_agent和
     async def run(self, agent, env: AgentEnvironment) -> RunResult:
         start_time = datetime.now().isoformat()
+        # 将tools渲染成action_space注入到task context中
         info = env.get_task_context()
         agent.reset(info)
 

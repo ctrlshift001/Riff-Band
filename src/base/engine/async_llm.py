@@ -10,7 +10,6 @@ from typing import Dict, Optional, Any
 from base.engine.logs import logger, LogLevel
 
 
-os.environ["HTTP_PROXY"] = "你的代理端口"
 
 class LLMConfig:
     def __init__(self, config: dict):
