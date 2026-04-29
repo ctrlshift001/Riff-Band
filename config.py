@@ -6,33 +6,39 @@ from pathlib import Path
 import yaml
 
 
+VALID_MODES = {"single", "multi", "auto"}
+
+
 @dataclass
-class GBAAnalysisConfig:
+class AgentConfig:
     main_model: str
     sub_models: list[str]
-
-    #brief_path: Path
-    sources_dir: Path 
-
-    # output
-    #output_dir: Path
+    sources_dir: Path
     max_attempts: int = 6
     max_subagent_steps: int = 10
+    subagent_process_timeout_seconds: int = 180
+    mode: str = "auto"
+    profile_name: str = "generic"
 
     @classmethod
-    def load(cls, config_path: str | Path) -> "GBAAnalysisConfig":
+    def load(cls, config_path: str | Path) -> "AgentConfig":
         config_path = Path(config_path)
         with config_path.open("r", encoding="utf-8") as handle:
             raw = yaml.safe_load(handle) or {}
 
+        mode = str(raw.get("mode", "auto")).strip().lower() or "auto"
+        if mode not in VALID_MODES:
+            raise ValueError(f"Invalid mode `{mode}`. Supported modes are: single, multi, auto.")
+
         return cls(
             main_model=str(raw["main_model"]),
-            sub_models=[str(item) for item in raw["sub_models"]],
-            # brief_path=_resolve_path(config_path, raw["brief_path"]),
+            sub_models=[str(item) for item in (raw.get("sub_models") or [str(raw["main_model"])])],
             sources_dir=_resolve_path(config_path, raw["sources_dir"]),
-            # output_dir=_resolve_path(config_path, raw["output_dir"]),
             max_attempts=int(raw.get("max_attempts", 6)),
             max_subagent_steps=int(raw.get("max_subagent_steps", 10)),
+            subagent_process_timeout_seconds=int(raw.get("subagent_process_timeout_seconds", 180)),
+            mode=mode,
+            profile_name=str(raw.get("profile_name", "generic")).strip() or "generic",
         )
 
 
@@ -41,3 +47,7 @@ def _resolve_path(config_path: Path, raw_path: str) -> Path:
     if path.is_absolute():
         return path
     return (config_path.parent / path).resolve()
+
+
+# Backward compatibility alias
+GBAAnalysisConfig = AgentConfig

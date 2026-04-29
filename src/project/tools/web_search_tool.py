@@ -10,12 +10,15 @@ from pydantic import Field
 from base.agent.base_action import BaseAction
 
 
-os.environ["HTTP_PROXY"] = "代理端口"
+if os.getenv("WEB_SEARCH_HTTP_PROXY"):
+    os.environ["HTTP_PROXY"] = os.getenv("WEB_SEARCH_HTTP_PROXY", "")
+if os.getenv("WEB_SEARCH_HTTPS_PROXY"):
+    os.environ["HTTPS_PROXY"] = os.getenv("WEB_SEARCH_HTTPS_PROXY", "")
 
 
 class WebSearchTool(BaseAction):
     name: str = "web_search"
-    description: str = "Search the web for evidence snippets via Serper with DuckDuckGo fallback."
+    description: str = "通过 Serper 搜索联网证据片段，并在失败时回退到 DuckDuckGo。"
     parameters: Dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",

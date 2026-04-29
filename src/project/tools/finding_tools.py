@@ -13,11 +13,14 @@ from base.agent.base_action import BaseAction
 
 class RecordFindingTool(BaseAction):
     name: str = "record_finding"
-    description: str = "Append a structured finding to findings.jsonl."
+    description: str = "向 findings.jsonl 追加一条结构化发现。"
     parameters: Dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
+                "topic": {"type": "string"},
+                "entity": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
                 "city": {"type": "string"},
                 "industry": {"type": "string"},
                 "finding": {"type": "string"},
@@ -29,7 +32,7 @@ class RecordFindingTool(BaseAction):
                 "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                 "dedup_key": {"type": "string"},
             },
-            "required": ["city", "industry", "finding"],
+            "required": ["finding"],
         }
     )
     findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
@@ -58,9 +61,12 @@ class RecordFindingTool(BaseAction):
 
     async def __call__(
         self,
-        city: str,
-        industry: str,
         finding: str,
+        topic: str = "",
+        entity: str = "",
+        tags: list[str] | None = None,
+        city: str = "",
+        industry: str = "",
         evidence: str = "",
         source_url: str = "",
         source_title: str = "",
@@ -75,7 +81,10 @@ class RecordFindingTool(BaseAction):
 
         key = dedup_key.strip() if isinstance(dedup_key, str) else ""
         if not key:
-            raw = f"{city.strip()}|{industry.strip()}|{finding.strip()}|{source_url.strip()}|{published_at.strip()}"
+            raw = (
+                f"{topic.strip()}|{entity.strip()}|{city.strip()}|{industry.strip()}|"
+                f"{finding.strip()}|{source_url.strip()}|{published_at.strip()}"
+            )
             key = sha1(raw.encode("utf-8")).hexdigest()[:16]
 
         self.findings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +93,9 @@ class RecordFindingTool(BaseAction):
             return {"success": True, "output": f"Skipped duplicate finding with dedup_key={key}"}
 
         record = {
+            "topic": topic,
+            "entity": entity,
+            "tags": [str(item) for item in (tags or [])],
             "city": city,
             "industry": industry,
             "finding": finding,
@@ -98,4 +110,5 @@ class RecordFindingTool(BaseAction):
         }
         with self.findings_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        return {"success": True, "output": f"Recorded finding for {city} / {industry} ({key})"}
+        scope = topic or entity or city or industry or "generic_scope"
+        return {"success": True, "output": f"Recorded finding for {scope} ({key})"}

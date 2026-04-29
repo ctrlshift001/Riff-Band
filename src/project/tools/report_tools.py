@@ -10,7 +10,7 @@ from base.agent.base_action import BaseAction
 
 class WriteReportSectionTool(BaseAction):
     name: str = "write_report_section"
-    description: str = "Write or replace one markdown report section."
+    description: str = "写入或替换一个 markdown 报告章节。"
     parameters: Dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
@@ -22,13 +22,15 @@ class WriteReportSectionTool(BaseAction):
         }
     )
     report_path: Path = Field(default=Path("report.md"), exclude=True)
+    report_title: str = Field(default="任务分析报告", exclude=True)
 
     class Config:
         arbitrary_types_allowed = True
 
     @staticmethod
-    def _default_report_header() -> str:
-        return "# Greater Bay Area Industry Analysis Report\n"
+    def _build_default_report_header(title: str) -> str:
+        safe_title = str(title or "任务分析报告").strip() or "任务分析报告"
+        return f"# {safe_title}\n"
 
     async def __call__(self, section_title: str, content: str) -> Dict[str, Any]:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,7 +38,7 @@ class WriteReportSectionTool(BaseAction):
         existing = (
             self.report_path.read_text(encoding="utf-8")
             if self.report_path.exists()
-            else self._default_report_header()
+            else self._build_default_report_header(self.report_title)
         )
         if header in existing:
             before, _, rest = existing.partition(header)

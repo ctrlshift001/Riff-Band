@@ -12,7 +12,7 @@ from project.tools.common import read_source_text, safe_resolve, tokenize
 
 class ListSourcesTool(BaseAction):
     name: str = "list_sources"
-    description: str = "List all local source files."
+    description: str = "列出所有本地资料文件。"
     parameters: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}, "required": []})
     sources_dir: Path = Field(default=Path("."), exclude=True)
 
@@ -29,7 +29,7 @@ class ListSourcesTool(BaseAction):
 # 搜索文件内容
 class SearchSourcesTool(BaseAction):
     name: str = "search_sources"
-    description: str = "Search local source files by filename and content overlap."
+    description: str = "按文件名和内容重合度搜索本地资料文件。"
     parameters: Dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
@@ -53,7 +53,7 @@ class SearchSourcesTool(BaseAction):
 
         query_tokens = tokenize(q)
         if not query_tokens:
-            return {"success": False, "message": "Query has no searchable tokens."}
+            return {"success": False, "message": "查询内容没有可搜索的关键词。"}
 
         candidates: List[Dict[str, Any]] = []
         for path in self.sources_dir.rglob("*"):
@@ -98,7 +98,7 @@ class SearchSourcesTool(BaseAction):
 
 class ReadSourceTool(BaseAction):
     name: str = "read_source"
-    description: str = "Read one local source file."
+    description: str = "读取一个本地资料文件。"
     parameters: Dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
@@ -125,7 +125,7 @@ class ReadSourceTool(BaseAction):
 
 class ReadSourcesTool(BaseAction):
     name: str = "read_sources"
-    description: str = "在一次召唤中读取多个本地源文件"
+    description: str = "一次读取多个本地资料文件。"
     parameters: Dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
