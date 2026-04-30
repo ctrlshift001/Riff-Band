@@ -1,15 +1,29 @@
 from __future__ import annotations
 
-import os
+import asyncio
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Tuple
 
 from agents.main_agent import MainAgent
 from agents.sub_agent import SubAgent
 from base.engine.async_llm import LLMsConfig, create_llm_instance
 from base.engine.logs import logger
+from core.message import (
+    ErrorMessage,
+    OrchestratorDecision,
+    OrchestratorThinking,
+    PhaseTransition,
+    ShellMessage,
+    TaskCancelled,
+    TaskComplete,
+    WorkerCompleted,
+    WorkerSpawned,
+    WorkerWaitEnd,
+    WorkerWaitStart,
+)
 from core.runner import AgentRunner
 from environments.environment import TaskExecutionEnvironment
 from modes.router import ModeDecision, ModeRouter
@@ -417,41 +431,239 @@ class AgentProject:
         attempts.append({"action": wait_action, "raw_response": "forced synthesis wait"})
         return wait_result
 
-    async def run(self):
-        attempts = []
+    # ── helpers for extracting worker events from step results ──────
+
+    @staticmethod
+    def _extract_worker_events(
+        action: Dict[str, Any],
+    ) -> List[ShellMessage]:
+        """Extract worker lifecycle messages from a MainAgent step result."""
+        messages: List[ShellMessage] = []
+        result = action.get("result", {}) or {}
+        action_name = action.get("action", "")
+
+        if action_name == "delegate_task":
+            session_id = str(result.get("session_id", "") or "")
+            finish = result.get("finish_result", {}) or {}
+            label = "task_single"
+            if session_id:
+                messages.append(
+                    WorkerSpawned(
+                        session_id=session_id,
+                        label=label,
+                        model=str(action.get("params", {}).get("model", "")),
+                        task_instruction=str(
+                            action.get("params", {}).get("task_instruction", "")
+                        ),
+                    )
+                )
+            status = (
+                str(finish.get("status", "") or result.get("worker_state", ""))
+                .strip()
+                .lower()
+            )
+            if status and status != "running":
+                messages.append(
+                    WorkerCompleted(
+                        session_id=session_id,
+                        label=label,
+                        status=status,
+                        steps_taken=int(result.get("steps_taken", 0)),
+                        cost=float(result.get("cost", 0.0)),
+                        message=str(finish.get("message", "") or ""),
+                        issues=list(finish.get("issues", []) or []),
+                    )
+                )
+
+        elif action_name == "delegate_tasks":
+            for item in result.get("results", []) or []:
+                session_id = str(item.get("session_id", "") or "")
+                finish = item.get("finish_result", {}) or {}
+                label = f"task_{item.get('task_index', '')}"
+                if session_id:
+                    messages.append(
+                        WorkerSpawned(
+                            session_id=session_id,
+                            label=label,
+                            model=str(item.get("model", "")),
+                            task_instruction=str(item.get("task_instruction", "")),
+                        )
+                    )
+                status = (
+                    str(finish.get("status", "") or item.get("worker_state", ""))
+                    .strip()
+                    .lower()
+                )
+                if status and status != "running":
+                    messages.append(
+                        WorkerCompleted(
+                            session_id=session_id,
+                            label=label,
+                            status=status,
+                            steps_taken=int(item.get("steps_taken", 0)),
+                            cost=float(item.get("cost", 0.0)),
+                            message=str(finish.get("message", "") or ""),
+                            issues=list(finish.get("issues", []) or []),
+                        )
+                    )
+
+        elif action_name == "wait_worker_sessions":
+            messages.append(
+                WorkerWaitEnd(
+                    completed=int(
+                        result.get("summary", {}).get("completed", 0) or 0
+                    ),
+                    still_running=int(
+                        result.get("summary", {}).get("still_running", 0) or 0
+                    ),
+                    results=list(result.get("results", []) or []),
+                )
+            )
+
+        return messages
+
+    # ── streaming API ─────────────────────────────────────────────
+
+    async def stream(
+        self,
+        cancel_event: asyncio.Event | None = None,
+    ) -> AsyncGenerator[ShellMessage, None]:
+        """Run the multi-agent pipeline, yielding ShellMessages.
+
+        If *cancel_event* is set, the loop stops at the next checkpoint
+        and yields a :class:`TaskCancelled` message.
+        """
+
+        attempts: List[Dict[str, Any]] = []
         final_result = None
-        for _ in range(self.max_attempts):
+        prev_phase = ""
+        total_cost = 0.0
+
+        for attempt_idx in range(self.max_attempts):
+            if cancel_event is not None and cancel_event.is_set():
+                yield TaskCancelled(
+                    message="Cancelled by user.",
+                    attempts=attempt_idx + 1,
+                )
+                break
+
+            current_phase = self.main_agent._current_phase()
+            if current_phase != prev_phase:
+                yield PhaseTransition(
+                    from_phase=prev_phase or "start",
+                    to_phase=current_phase,
+                    guidance=self.main_agent._phase_guidance(),
+                )
+                prev_phase = current_phase
+
+            yield OrchestratorThinking(
+                attempt=attempt_idx + 1,
+                max_attempts=self.max_attempts,
+            )
+
             action, raw_response = await self.main_agent.step(None, [])
             attempts.append({"action": action, "raw_response": raw_response})
 
-            if action["action"] != "complete_task":
+            action_name = action.get("action", "")
+            yield OrchestratorDecision(
+                action=action_name,
+                reasoning=action.get("reasoning", ""),
+                params=action.get("params", {}),
+                raw_response=raw_response or "",
+            )
+
+            for msg in self._extract_worker_events(action):
+                yield msg
+
+            if action_name != "complete_task":
                 continue
 
             result = action.get("result", {})
+            total_cost = float(result.get("total_cost", 0.0))
             if result.get("done") and result.get("quality_gate_passed"):
                 final_result = result
                 break
 
-        if final_result is None:
+        # ── forced finalization ────────────────────────────────────
+        if final_result is None and not (
+            cancel_event is not None and cancel_event.is_set()
+        ):
+            yield WorkerWaitStart(
+                session_ids=[],
+                timeout_seconds=self.final_wait_seconds,
+            )
             final_wait_result = await self._collect_remaining_sessions(attempts)
-            summary = final_wait_result.get("summary", {}) if isinstance(final_wait_result, dict) else {}
+            summary = (
+                final_wait_result.get("summary", {})
+                if isinstance(final_wait_result, dict)
+                else {}
+            )
+            yield WorkerWaitEnd(
+                completed=int(summary.get("completed", 0) or 0),
+                still_running=int(summary.get("still_running", 0) or 0),
+                results=list(
+                    (final_wait_result.get("results", []) or [])
+                    if isinstance(final_wait_result, dict)
+                    else []
+                ),
+            )
+
             has_collected = int(summary.get("completed", 0) or 0) > 0
             still_running = int(summary.get("still_running", 0) or 0)
             if has_collected or still_running == 0:
                 await self._run_synthesis_if_needed(attempts)
                 previous_max = self.main_agent.max_attempts
-                self.main_agent.max_attempts = max(previous_max, self.main_agent.attempt + 1)
+                self.main_agent.max_attempts = max(
+                    previous_max, self.main_agent.attempt + 1
+                )
                 try:
-                    action, raw_response = await self.main_agent.step(None, [], forced_final_decision=True)
+                    action, raw_response = await self.main_agent.step(
+                        None, [], forced_final_decision=True
+                    )
                 finally:
                     self.main_agent.max_attempts = previous_max
                 action["forced_final_decision"] = True
                 attempts.append({"action": action, "raw_response": raw_response})
+
+                yield OrchestratorDecision(
+                    action=action.get("action", ""),
+                    reasoning=action.get("reasoning", ""),
+                    params=action.get("params", {}),
+                    raw_response=raw_response or "",
+                )
+
                 if action["action"] == "complete_task":
                     result = action.get("result", {})
+                    total_cost = float(result.get("total_cost", 0.0))
                     if result.get("done") and result.get("quality_gate_passed"):
                         final_result = result
-        return {"attempts": attempts, "final_result": final_result}
+
+        passed = (
+            final_result is not None
+            and final_result.get("quality_gate_passed", False)
+        )
+        yield TaskComplete(
+            success=passed,
+            quality_gate_passed=passed,
+            attempts=len(attempts),
+            total_cost=total_cost,
+            summary=str(
+                (final_result or {}).get("executive_summary", "")
+            ),
+            final_result=final_result,
+        )
+
+        self._run_result = {
+            "attempts": attempts,
+            "final_result": final_result,
+        }
+
+    async def run(self):
+        """Run to completion (backward-compatible wrapper)."""
+        self._run_result = None
+        async for _ in self.stream():
+            pass
+        return self._run_result or {"attempts": [], "final_result": None}
 
 
 @dataclass
@@ -459,9 +671,25 @@ class SingleAgentProject:
     sub_agent: SubAgent
     env: TaskExecutionEnvironment
 
-    async def run(self):
+    async def stream(
+        self,
+        cancel_event: asyncio.Event | None = None,
+    ) -> AsyncGenerator[ShellMessage, None]:
+        """Run single-agent mode, yielding ShellMessages."""
         runner = AgentRunner()
-        result = await runner.run(self.sub_agent, self.env)
+        async for msg in runner.stream(
+            self.sub_agent, self.env, cancel_event=cancel_event
+        ):
+            yield msg
+        result = runner._last_result
+        if result is None:
+            yield ErrorMessage(
+                error_type="no_result",
+                message="Single-agent runner produced no result.",
+            )
+            self._run_result = {"attempts": [], "final_result": None}
+            return
+
         finish_result = {}
         if result.trace:
             finish_result = (
@@ -471,29 +699,66 @@ class SingleAgentProject:
             )
 
         meta = self.env.meta_data or {}
-        report_path = str(meta.get("report_path", str(self.env.output_dir / "task_report.md")))
-        findings_path = str(meta.get("findings_path", str(self.env.output_dir / "findings.jsonl")))
+        report_path = str(
+            meta.get("report_path", str(self.env.output_dir / "task_report.md"))
+        )
+        findings_path = str(
+            meta.get("findings_path", str(self.env.output_dir / "findings.jsonl"))
+        )
         complete = await CompleteTaskTool()(
-            executive_summary=str(finish_result.get("message", "") or "single-agent execution finished"),
+            executive_summary=str(
+                finish_result.get("message", "")
+                or "single-agent execution finished"
+            ),
             confidence="medium",
             status="done" if finish_result.get("status") == "done" else "partial",
             report_path=report_path,
-            artifacts=[{"type": "report", "path": report_path, "description": "single-agent report output"}],
-            verification=["single-agent run completed; report quality gate evaluated"],
+            artifacts=[
+                {
+                    "type": "report",
+                    "path": report_path,
+                    "description": "single-agent report output",
+                }
+            ],
+            verification=[
+                "single-agent run completed; report quality gate evaluated"
+            ],
             open_issues=list(finish_result.get("issues", []) or []),
             findings_path=findings_path,
             required_sections=list(meta.get("required_sections", []) or []),
             min_findings=int(meta.get("min_findings", 0) or 0),
         )
-        return {
+        passed = complete.get("quality_gate_passed", False)
+        yield TaskComplete(
+            success=passed,
+            quality_gate_passed=passed,
+            attempts=1,
+            total_cost=result.cost,
+            summary=str(complete.get("executive_summary", "")),
+            final_result=complete,
+        )
+
+        self._run_result = {
             "attempts": [
                 {
-                    "action": {"action": "single_agent_run", "result": finish_result},
-                    "raw_response": result.trace[-1].raw_response if result.trace else "",
+                    "action": {
+                        "action": "single_agent_run",
+                        "result": finish_result,
+                    },
+                    "raw_response": result.trace[-1].raw_response
+                    if result.trace
+                    else "",
                 }
             ],
             "final_result": complete,
         }
+
+    async def run(self):
+        """Run to completion (backward-compatible wrapper)."""
+        self._run_result = None
+        async for _ in self.stream():
+            pass
+        return self._run_result or {"attempts": [], "final_result": None}
 
 # 创建runtime，确定产物路径、工具实例、环境变量等，并注入到工具中以实现状态共享
 def _build_runtime_components(

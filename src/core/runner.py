@@ -3,54 +3,116 @@ from __future__ import annotations
 import asyncio
 import inspect
 from datetime import datetime
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 
 from base.engine.logs import LogLevel, logger
 from core.interfaces import AgentEnvironment, RunResult, StepRecord
+from core.message import (
+    ErrorMessage,
+    ShellMessage,
+    SubAgentResult,
+    SubAgentStart,
+    SubAgentStepEnd,
+    SubAgentStepStart,
+    TaskCancelled,
+)
 
 
 class AgentRunner:
-    """Generic agent-environment loop."""
+    """Generic agent-environment loop with streaming support."""
 
     step_timeout: Optional[float] = 600.0
+    _last_result: Optional[RunResult] = None
+
+    # ── public API ─────────────────────────────────────────────────
 
     async def run(self, agent, env: AgentEnvironment) -> RunResult:
+        """Run agent to completion (backward-compatible)."""
+        result = None
+        async for _ in self.stream(agent, env):
+            pass
+        return self._last_result
+
+    async def stream(
+        self,
+        agent,
+        env: AgentEnvironment,
+        cancel_event: Optional["asyncio.Event"] = None,
+    ) -> AsyncGenerator[ShellMessage, None]:
+        """Run agent, yielding ShellMessage events at each step.
+
+        If *cancel_event* is set, the loop stops at the next checkpoint
+        and yields a :class:`TaskCancelled` message.
+        """
         start_time = datetime.now().isoformat()
-        # 将tools渲染成action_space注入到task context中
+        self._last_result = None
+
         info = env.get_task_context()
         agent.reset(info)
 
         reset_result = env.reset()
         obs = await reset_result if inspect.isawaitable(reset_result) else reset_result
 
+        label = getattr(agent, "task_label", "") or ""
+        model = getattr(agent, "llm", None)
+        model_name = getattr(model, "model_name", "") if model else ""
+
+        yield SubAgentStart(
+            label=label,
+            task_instruction=getattr(agent, "task_instruction", "") or "",
+            model=model_name or "",
+            max_steps=info.max_steps,
+        )
+
         history: List[StepRecord] = []
         total_reward = 0.0
 
         for idx in range(info.max_steps):
+            if cancel_event is not None and cancel_event.is_set():
+                yield TaskCancelled(
+                    message=f"Cancelled at step {idx + 1}/{info.max_steps}",
+                    attempts=idx + 1,
+                )
+                break
+
+            yield SubAgentStepStart(
+                agent_label=label,
+                current_step=idx + 1,
+                max_steps=info.max_steps,
+            )
+
             logger.log_to_file(LogLevel.INFO, f"[AgentRunner] Observation: {obs}")
             try:
                 if self.step_timeout:
                     step_result = await asyncio.wait_for(
-                        agent.step(observation=obs, history=history, current_step=idx + 1, max_steps=info.max_steps),
+                        agent.step(
+                            observation=obs,
+                            history=history,
+                            current_step=idx + 1,
+                            max_steps=info.max_steps,
+                        ),
                         timeout=self.step_timeout,
                     )
                 else:
                     step_result = await agent.step(
                         observation=obs,
-                        history=history, 
+                        history=history,
                         current_step=idx + 1,
                         max_steps=info.max_steps,
                     )
             except asyncio.TimeoutError:
-                history.append(
-                    StepRecord(
-                        observation=obs,
-                        action={"action": "timeout", "params": {}},
-                        reward=0.0,
-                        raw_response="step timeout",
-                        done=True,
-                        info={"error": "step_timeout"},
-                    )
+                record = StepRecord(
+                    observation=obs,
+                    action={"action": "timeout", "params": {}},
+                    reward=0.0,
+                    raw_response="step timeout",
+                    done=True,
+                    info={"error": "step_timeout"},
+                )
+                history.append(record)
+                yield ErrorMessage(
+                    error_type="step_timeout",
+                    message=f"Step {idx + 1} timed out after {self.step_timeout}s",
                 )
                 break
 
@@ -75,14 +137,32 @@ class AgentRunner:
                 )
             )
             total_reward += reward
-            obs = obs_next
 
+            yield SubAgentStepEnd(
+                agent_label=label,
+                action_taken=action.get("action", ""),
+                current_step=idx + 1,
+                max_steps=info.max_steps,
+                done=done,
+                info=step_info,
+            )
+
+            obs = obs_next
             if done:
                 break
 
         end_time = datetime.now().isoformat()
         usage = agent.llm.get_usage_summary() if getattr(agent, "llm", None) else {}
-        return RunResult(
+
+        finish_result = {}
+        if history:
+            finish_result = (
+                history[-1].info.get("finish_result", {})
+                if history[-1].info.get("finished")
+                else {}
+            )
+
+        result = RunResult(
             model=usage.get("model", ""),
             total_reward=total_reward,
             steps=len(history),
@@ -93,4 +173,16 @@ class AgentRunner:
             output_tokens=usage.get("total_output_tokens", 0),
             start_time=start_time,
             end_time=end_time,
+        )
+        self._last_result = result
+
+        yield SubAgentResult(
+            label=label,
+            model=model_name or "",
+            steps_taken=len(history),
+            done=result.done,
+            cost=result.cost,
+            finish_status=finish_result.get("status", ""),
+            finish_message=finish_result.get("message", ""),
+            finish_issues=list(finish_result.get("issues", []) or []),
         )

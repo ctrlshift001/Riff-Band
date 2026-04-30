@@ -45,8 +45,46 @@ class MainAgent(BaseAgent):
         self.task_plan_executor.reset()
         self.latest_plan_task_ids = []
 
+    def soft_reset(self, instruction: str) -> None:
+        """Reset per-turn state while preserving accumulated task entries
+        and task plan state across conversation turns."""
+        self.instruction = instruction
+        self.attempt = 0
+        self.context = ""
+        self.history = []
+        self.latest_plan_task_ids = []
+
     def get_usage_cost(self) -> float:
         return self.llm.get_usage_summary().get("total_cost", 0.0)
+
+    # ── state persistence ────────────────────────────────────────
+
+    def dump_state(self) -> Dict[str, Any]:
+        """Serialize runtime state for session persistence."""
+        return {
+            "instruction": self.instruction,
+            "meta": dict(self.meta),
+            "attempt": self.attempt,
+            "max_attempts": self.max_attempts,
+            "context": self.context,
+            "history": list(self.history),
+            "task_entries": list(self.task_entries),
+            "task_plan_executor": self.task_plan_executor.dump(),
+        }
+
+    def load_state(self, data: Dict[str, Any]) -> None:
+        """Restore runtime state from a previously dumped payload."""
+        self.instruction = str(data.get("instruction", ""))
+        self.meta = dict(data.get("meta", {}) or {})
+        self.attempt = int(data.get("attempt", 0))
+        self.max_attempts = int(data.get("max_attempts", self.max_attempts))
+        self.context = str(data.get("context", ""))
+        self.history = list(data.get("history", []) or [])
+        self.task_entries = list(data.get("task_entries", []) or [])
+        plan_data = data.get("task_plan_executor")
+        if isinstance(plan_data, dict):
+            self.task_plan_executor.restore(plan_data)
+        self.latest_plan_task_ids = []
 
     def _infer_profile(self, task_instruction: str) -> str:
         text = (task_instruction or "").lower()
@@ -406,4 +444,8 @@ class MainAgent(BaseAgent):
 
     async def run(self, request: Optional[str] = None) -> str:
         return request or ""
+
+
+# Backward compatibility alias
+MainOrchestratorAgent = MainAgent
 
