@@ -208,3 +208,7 @@ class SubAgent(BaseAgent):
     async def run(self, request: Optional[str] = None) -> str:
         return request or ""
 
+
+# Backward compatibility alias
+ResearchSubAgent = SubAgent
+

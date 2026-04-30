@@ -134,6 +134,115 @@ class TaskPlanExecutor:
         self.task_map = {}
         self.runtime = {}
 
+    # ── persistence ───────────────────────────────────────────────
+
+    def dump(self) -> Dict[str, Any]:
+        """Serialize executor state for session persistence."""
+        plan_data = None
+        if self.plan:
+            plan_data = {
+                "id": self.plan.id,
+                "root_task_id": self.plan.root_task_id,
+                "tasks": [
+                    {
+                        "id": task.id,
+                        "task_instruction": task.task_instruction,
+                        "model": task.model,
+                        "context": task.context,
+                        "tools": list(task.tools),
+                        "result_schema": task.result_schema,
+                    }
+                    for task in self.plan.tasks
+                ],
+                "dependencies": [
+                    {"from_task": dep.from_task, "to_task": dep.to_task}
+                    for dep in self.plan.dependencies
+                ],
+            }
+        return {
+            "plan_id": self.plan_id,
+            "_counter": self._counter,
+            "plan": plan_data,
+            "task_map": {
+                task_id: {
+                    "id": spec.id,
+                    "task_instruction": spec.task_instruction,
+                    "model": spec.model,
+                    "context": spec.context,
+                    "tools": list(spec.tools),
+                    "result_schema": spec.result_schema,
+                }
+                for task_id, spec in self.task_map.items()
+            },
+            "runtime": {
+                task_id: {
+                    "state": record.state.value,
+                    "result": record.result,
+                    "error": record.error,
+                }
+                for task_id, record in self.runtime.items()
+            },
+        }
+
+    def restore(self, data: Dict[str, Any]) -> None:
+        """Restore executor state from a previously dumped payload."""
+        self.plan_id = str(data.get("plan_id", "main_plan"))
+        self._counter = int(data.get("_counter", 0))
+
+        plan_data = data.get("plan")
+        if isinstance(plan_data, dict) and plan_data.get("tasks"):
+            tasks = []
+            for item in plan_data["tasks"]:
+                tasks.append(
+                    TaskSpec(
+                        id=str(item["id"]),
+                        task_instruction=str(item.get("task_instruction", "")),
+                        model=str(item.get("model", "")),
+                        context=str(item.get("context", "")),
+                        tools=[str(t) for t in (item.get("tools") or [])],
+                        result_schema=item.get("result_schema"),
+                    )
+                )
+            deps = [
+                TaskDependency(
+                    from_task=str(dep["from_task"]),
+                    to_task=str(dep["to_task"]),
+                )
+                for dep in (plan_data.get("dependencies") or [])
+            ]
+            root_id = str(plan_data.get("root_task_id", tasks[0].id if tasks else ""))
+            self.plan = TaskPlan(
+                id=str(plan_data.get("id", "main_plan")),
+                root_task_id=root_id,
+                tasks=tasks,
+                dependencies=deps,
+            )
+        else:
+            self.plan = None
+
+        self.task_map = {}
+        for task_id, item in (data.get("task_map") or {}).items():
+            self.task_map[task_id] = TaskSpec(
+                id=str(item.get("id", task_id)),
+                task_instruction=str(item.get("task_instruction", "")),
+                model=str(item.get("model", "")),
+                context=str(item.get("context", "")),
+                tools=[str(t) for t in (item.get("tools") or [])],
+                result_schema=item.get("result_schema"),
+            )
+
+        self.runtime = {}
+        for task_id, item in (data.get("runtime") or {}).items():
+            record = TaskRuntimeRecord()
+            raw_state = str(item.get("state", "queued"))
+            try:
+                record.state = TaskState(raw_state)
+            except ValueError:
+                record.state = TaskState.QUEUED
+            record.result = item.get("result")
+            record.error = str(item.get("error", ""))
+            self.runtime[task_id] = record
+
 
     # 新增任务
     def create_or_extend(
