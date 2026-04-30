@@ -1,0 +1,14 @@
+# AOrchestra Agent 运行配置
+# Copy to aorchestra.yaml and customize.
+
+main_model: your-model-name
+mode: auto                       # single | multi | auto
+profile_name: generic            # generic | gba_industry_analysis
+
+sub_models:
+  - your-model-name
+
+sources_dir: workspace/sources
+max_attempts: 6
+max_subagent_steps: 12
+subagent_process_timeout_seconds: 300

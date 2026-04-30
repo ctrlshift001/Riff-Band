@@ -2,7 +2,7 @@
 GAIA Benchmark with aorchestra (MainAgent + SubAgent)
 
 Usage:
-    python -m aorchestra.scripts.bench_aorchestra_gaia --config config/benchmarks/aorchestra_gaia.yaml
+    python -m aorchestra.scripts.bench_aorchestra_gaia --config aorchestra/configs/aorchestra_gaia.yaml
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from aorchestra.config import GAIAOrchestraConfig
 from aorchestra.runners.gaia_runner import GAIARunner
 
 
-DEFAULT_CONFIG_PATH = REPO_ROOT / "config/benchmarks/aorchestra_gaia.yaml"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "aorchestra/configs/aorchestra_gaia.yaml"
 
 
 async def main():

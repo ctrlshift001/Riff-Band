@@ -20,7 +20,7 @@ from aorchestra.benchmark.swebench.aci_tools import ACIToolManager, format_comma
 
 # Project root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config/example/benchmarks/swebench.yaml"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "aorchestra/configs/swebench.yaml"
 
 
 @dataclass

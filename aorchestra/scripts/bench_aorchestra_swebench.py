@@ -2,8 +2,8 @@
 SWE-bench with aorchestra (MainAgent + SubAgent)
 
 Usage:
-    python -m aorchestra.scripts.bench_aorchestra_swebench --config config/benchmarks/aorchestra_swebench.yaml
-    python -m aorchestra.scripts.bench_aorchestra_swebench --config config/benchmarks/aorchestra_swebench.yaml --tasks "django__django-11848"
+    python -m aorchestra.scripts.bench_aorchestra_swebench --config aorchestra/configs/aorchestra_swebench.yaml
+    python -m aorchestra.scripts.bench_aorchestra_swebench --config aorchestra/configs/aorchestra_swebench.yaml --tasks "django__django-11848"
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from aorchestra.config import SWEBenchOrchestraConfig
 from aorchestra.runners.swebench_runner import SWEBenchOrchestra
 
 
-DEFAULT_CONFIG_PATH = REPO_ROOT / "config/benchmarks/aorchestra_swebench.yaml"
+DEFAULT_CONFIG_PATH = REPO_ROOT / "aorchestra/configs/aorchestra_swebench.yaml"
 
 
 async def main():

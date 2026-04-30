@@ -2,7 +2,7 @@
 TerminalBench with aorchestra (MainAgent + SubAgent)
 
 Usage:
-    python -m aorchestra.scripts.bench_aorchestra_terminalbench --config config/benchmarks/aorchestra_terminalbench.yaml
+    python -m aorchestra.scripts.bench_aorchestra_terminalbench --config aorchestra/configs/aorchestra_terminalbench.yaml
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from aorchestra.runners.terminalbench_runner import TerminalBenchRunner
 from aorchestra.benchmark.bench_terminalbench import TerminalBenchConfig, TerminalBenchBenchmark
 
 
-DEFAULT_CONFIG = REPO_ROOT / "config/benchmarks/aorchestra_terminalbench.yaml"
+DEFAULT_CONFIG = REPO_ROOT / "aorchestra/configs/aorchestra_terminalbench.yaml"
 
 
 def load_completed_tasks(csv_path: Path) -> set[str]:

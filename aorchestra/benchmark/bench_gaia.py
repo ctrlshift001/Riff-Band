@@ -26,7 +26,7 @@ from aorchestra.benchmark.common.runner import LevelResult, StepRecord
 from aorchestra.benchmark.gaia.scorer import question_scorer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config/benchmarks/gaia.yaml"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "aorchestra/configs/gaia.yaml"
 
 # File extension to tool hint mapping
 FILE_TOOL_HINTS = {

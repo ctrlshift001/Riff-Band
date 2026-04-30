@@ -1,9 +1,8 @@
 ﻿# Environment & secrets
 .env
 
-# Personal config (contains API keys)
-config/model_config.yaml
-config/benchmarks/
+# Personal config
+aorchestra.yaml
 
 # Runtime output
 workspace/

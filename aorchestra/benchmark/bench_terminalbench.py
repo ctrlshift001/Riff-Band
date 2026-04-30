@@ -24,7 +24,7 @@ from aorchestra.benchmark.terminalbench.utils import resolve_path
 
 # Project root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config/benchmarks/terminalbench.yaml"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "aorchestra/configs/terminalbench.yaml"
 DOCKER_COMPOSE_BUILD_PATH = PROJECT_ROOT / "aorchestra/benchmark/terminalbench/docker-compose-build.yaml"
 
 # Global docker manager

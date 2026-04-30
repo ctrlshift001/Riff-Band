@@ -32,34 +32,39 @@ class LLMsConfig:
     # 返回LLMsConfig类实例
     @classmethod
     def default(cls):
-        """Get or create a default configuration from YAML file"""
+        """Get or create a default configuration — env vars take priority over YAML."""
         if cls._default_config is None:
-            config_data: Optional[Dict[str, Any]] = None
+            # 1. Try env vars (always takes priority)
+            env_config = cls._load_config_from_env() or {}
 
+            # 2. Try YAML files (fallback for models not in env)
+            yaml_config: Dict[str, Any] = {}
             config_paths = [
                 Path("config/model_config.yaml"),
                 Path("config/global_config.yaml"),
                 Path("config/global_config2.yaml"),
                 Path("./config/global_config.yaml"),
             ]
-
-            config_file = next((path for path in config_paths if path.exists() and path.stat().st_size > 0), None)
-
+            config_file = next(
+                (path for path in config_paths if path.exists() and path.stat().st_size > 0),
+                None,
+            )
             if config_file is not None:
                 with open(config_file, "r", encoding="utf-8") as f:
-                    config_data = yaml.safe_load(f) or {}
-            else:
-                config_data = cls._load_config_from_env()
+                    raw = yaml.safe_load(f) or {}
+                if "models" in raw:
+                    yaml_config = raw["models"] or {}
 
-            if not config_data:
+            # 3. Merge: env vars override YAML for matching model names
+            merged = {**yaml_config, **env_config}
+
+            if not merged:
                 raise FileNotFoundError(
-                    "No default configuration file found in the expected locations and no environment-based fallback is configured."
+                    "No LLM configuration found. Set AUTOENV_OPENAI_API_KEY in .env, "
+                    "or create config/model_config.yaml."
                 )
 
-            if "models" in config_data:
-                config_data = config_data["models"] or {}
-
-            cls._default_config = cls(config_data)
+            cls._default_config = cls(merged)
 
         return cls._default_config
 
