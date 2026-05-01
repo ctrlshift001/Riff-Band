@@ -17,6 +17,7 @@ from core.message import (
     OrchestratorThinking,
     PhaseTransition,
     ShellMessage,
+    SubAgentCreated,
     TaskCancelled,
     TaskComplete,
     WorkerCompleted,
@@ -36,6 +37,7 @@ from orchestration_tools.delegate import (
     InspectWorkerSessionTool,
     ListWorkerSessionsTool,
     WaitWorkerSessionsTool,
+    agent_label,
 )
 from project.prompts import GenericMainPromptBuilder, GenericSubPromptBuilder
 from project.tools import (
@@ -437,7 +439,9 @@ class AgentProject:
     def _extract_worker_events(
         action: Dict[str, Any],
     ) -> List[ShellMessage]:
-        """Extract worker lifecycle messages from a MainAgent step result."""
+        """Extract worker lifecycle messages from a MainAgent step result.
+        SubAgentCreated are emitted first (four-tuple display), then WorkerSpawned.
+        """
         messages: List[ShellMessage] = []
         result = action.get("result", {}) or {}
         action_name = action.get("action", "")
@@ -445,7 +449,10 @@ class AgentProject:
         if action_name == "delegate_task":
             session_id = str(result.get("session_id", "") or "")
             finish = result.get("finish_result", {}) or {}
-            label = "task_single"
+            label = agent_label(
+                str(action.get("params", {}).get("task_instruction", "")),
+            )
+            # Phase 1: task first
             if session_id:
                 messages.append(
                     WorkerSpawned(
@@ -457,6 +464,19 @@ class AgentProject:
                         ),
                     )
                 )
+            # Phase 2: then agent four-tuple
+            tools = list(result.get("allowed_tools", []) or [])
+            messages.append(
+                SubAgentCreated(
+                    agent_id=session_id or "sub",
+                    model=str(action.get("params", {}).get("model", "")),
+                    tools=tools,
+                    task_instruction=str(
+                        action.get("params", {}).get("task_instruction", "")
+                    ),
+                    task_label=label,
+                )
+            )
             status = (
                 str(finish.get("status", "") or result.get("worker_state", ""))
                 .strip()
@@ -476,10 +496,13 @@ class AgentProject:
                 )
 
         elif action_name == "delegate_tasks":
-            for item in result.get("results", []) or []:
+            # Phase 1: list all tasks first
+            for idx, item in enumerate(result.get("results", []) or []):
                 session_id = str(item.get("session_id", "") or "")
-                finish = item.get("finish_result", {}) or {}
-                label = f"task_{item.get('task_index', '')}"
+                label = agent_label(
+                    str(item.get("task_instruction", "")),
+                    idx + 1,
+                )
                 if session_id:
                     messages.append(
                         WorkerSpawned(
@@ -489,6 +512,30 @@ class AgentProject:
                             task_instruction=str(item.get("task_instruction", "")),
                         )
                     )
+            # Phase 2: then show agent four-tuple assembly
+            for idx, item in enumerate(result.get("results", []) or []):
+                tools = list(item.get("allowed_tools", []) or [])
+                label = agent_label(
+                    str(item.get("task_instruction", "")),
+                    idx + 1,
+                )
+                messages.append(
+                    SubAgentCreated(
+                        agent_id=f"agent_{idx + 1}",
+                        model=str(item.get("model", "")),
+                        tools=tools,
+                        task_instruction=str(item.get("task_instruction", "")),
+                        task_label=label,
+                    )
+                )
+            # Phase 3: WorkerCompleted for already-finished tasks
+            for idx, item in enumerate(result.get("results", []) or []):
+                session_id = str(item.get("session_id", "") or "")
+                finish = item.get("finish_result", {}) or {}
+                label = agent_label(
+                    str(item.get("task_instruction", "")),
+                    idx + 1,
+                )
                 status = (
                     str(finish.get("status", "") or item.get("worker_state", ""))
                     .strip()

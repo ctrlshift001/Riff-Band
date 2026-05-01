@@ -90,7 +90,29 @@ def _session_public_view(session: Dict[str, Any], include_trace: bool = False) -
     return view
 
 
-def _filter_action_space(action_space: str, allowed_tools: Set[str]) -> str:
+def agent_label(task_instruction: str, task_index: int | None = None) -> str:
+    """Generate a human-friendly label: 'task_0 研究政策驱动'."""
+    index_part = f"task_{task_index}" if task_index is not None else "task"
+    text = str(task_instruction or "").strip()
+    if not text:
+        return index_part
+
+    # Try "具体任务:" or "具体任务：" first
+    for prefix in ("具体任务:", "具体任务：", "task:", "Task:"):
+        if prefix in text:
+            rest = text.split(prefix, 1)[1].strip()
+            first_line = rest.split("\n")[0].strip()
+            if first_line:
+                return f"{index_part} {first_line[:12]}"
+            break
+
+    # Fall back to first meaningful line, stripped of common prefixes
+    first_line = text.split("\n")[0].strip()
+    for p in ("任务类型:", "期望产出:", "完成标准:"):
+        first_line = first_line.replace(p, "").strip()
+    if len(first_line) > 12:
+        first_line = first_line[:12]
+    return f"{index_part} {first_line}" if first_line else index_part
     if not allowed_tools:
         return action_space
 
@@ -514,7 +536,7 @@ class _DelegateBase(BaseAction):
 
         normalized_context = _normalize_context(context)
         allowed_tools = self._resolve_allowed_tools(tools)
-        label = f"task_{task_index}" if task_index is not None else "task_single"
+        label = agent_label(task_instruction, task_index)
         meta = getattr(run_env, "meta_data", {}) or {}
         report_path = Path(str(meta.get("report_path", "")))
         report_filename = report_path.name if str(report_path).strip() else "task_report.md"

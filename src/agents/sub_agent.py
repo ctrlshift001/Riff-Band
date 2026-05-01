@@ -9,6 +9,7 @@ from base.engine.logs import LogLevel, logger
 from base.engine.utils import parse_llm_action_response, parse_llm_output
 from agents.memory import Memory
 from core.interfaces import Action, TaskContext
+from core.message import ContentPart
 
 
 
@@ -204,6 +205,80 @@ class SubAgent(BaseAgent):
             )
 
         return action, response, prompt
+
+    async def stream_step(
+        self,
+        observation: Any,
+        history: Any,
+        current_step: int = 1,
+        max_steps: int = 20,
+    ):
+        """Like step(), but yields ContentPart chunks during LLM generation."""
+        # Reuse fast-finish guards
+        if self.prompt_builder is None:
+            raise ValueError("SubAgent requires a prompt_builder")
+
+        if isinstance(observation, dict) and current_step == 1:
+            source_count = int(observation.get("source_count", 0))
+            search_enabled = bool(observation.get("search_enabled", False))
+            if source_count == 0 and not search_enabled:
+                action = self._build_fast_partial_finish()
+                raw_response = "自动结束：本地资料为空且联网搜索未启用。"
+                yield action, raw_response, "No prompt sent due to fast-finish guard."
+                return
+
+        if isinstance(observation, dict):
+            is_web_fail = (
+                observation.get("action") == "web_search"
+                and observation.get("success") is False
+                and isinstance(observation.get("error"), str)
+            )
+            if is_web_fail:
+                error_text = str(observation.get("error", "web_search failed"))
+                unauthorized = ("403" in error_text) or ("Unauthorized" in error_text)
+                first_obs = history[0].observation if history else {}
+                source_count = int(first_obs.get("source_count", 0)) if isinstance(first_obs, dict) else 0
+                if source_count == 0 and unauthorized:
+                    action = self._build_no_access_finish(error_text)
+                    raw_response = "自动结束：本地资料为空且联网搜索未授权。"
+                    yield action, raw_response, "No prompt sent due to web-access guard."
+                    return
+
+        prompt = self.prompt_builder.build_prompt(
+            task_instruction=self.task_instruction,
+            context=self.context,
+            original_question=self.original_question,
+            action_space=self.current_action_space,
+            observation=observation,
+            memory=self._get_memory(),
+            current_step=current_step,
+            max_steps=max_steps,
+        )
+
+        # Stream LLM response
+        full_response_parts: list[str] = []
+        async for chunk in self.llm.stream_response(prompt):
+            full_response_parts.append(chunk)
+            yield ContentPart(text=chunk)
+
+        full_response = "".join(full_response_parts)
+
+        # Parse response
+        memory_content = parse_llm_output(full_response, "memory")
+        thinking = memory_content.get("memory") if isinstance(memory_content, dict) else None
+        action = parse_llm_action_response(full_response)
+
+        # Memory
+        if self.memory:
+            previous_obs = history[-1].info.get("last_action_result") if history else observation
+            await self.memory.add_memory(
+                obs=previous_obs,
+                action=action,
+                thinking=thinking,
+                raw_response=full_response,
+            )
+
+        yield action, full_response, prompt
 
     async def run(self, request: Optional[str] = None) -> str:
         return request or ""

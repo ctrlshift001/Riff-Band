@@ -367,6 +367,43 @@ class AsyncLLM:
         logger.log_to_file(LogLevel.INFO, f"LLM Response: {ret}")
         return ret
         
+    def _build_messages(self, prompt):
+        """Build the message list for an LLM call. Returns (messages, tokens_to_use)."""
+        message = []
+        if self.sys_msg is not None:
+            message.append({"content": self.sys_msg, "role": "system"})
+
+        if isinstance(prompt, str):
+            message.append({"role": "user", "content": prompt})
+        elif isinstance(prompt, list):
+            message.append({"role": "user", "content": prompt})
+        else:
+            raise ValueError(f"prompt must be str or list, got {type(prompt)}")
+
+        return message
+
+    def _create_kwargs(self, tokens_to_use):
+        """Build kwargs for the API call based on model type."""
+        is_claude = "claude" in self.config.model.lower()
+        is_moonshot = "moonshot" in self.config.model.lower()
+        sampling_params = (
+            {"temperature": self.config.temperature}
+            if is_claude or is_moonshot
+            else {"temperature": self.config.temperature, "top_p": self.config.top_p}
+        )
+        kwargs = {"model": self.config.model, **sampling_params}
+
+        if self.config.model == "gemini-3-flash-preview":
+            kwargs["reasoning_effort"] = "high"
+
+        if tokens_to_use is not None:
+            if "o3" in self.config.model:
+                kwargs["max_completion_tokens"] = tokens_to_use
+            elif "o3" not in self.config.model:
+                kwargs["max_tokens"] = tokens_to_use
+
+        return kwargs
+
     async def __call__(self, prompt, max_tokens=None):
         """Send a prompt to the LLM. Accepts text (str) or multimodal payloads (list)."""
         if self._is_gemini_model():
@@ -465,7 +502,34 @@ class AsyncLLM:
         logger.log_to_file(LogLevel.INFO, f"LLM Response: {ret}")
 
         return ret
-    
+
+    async def stream_response(self, prompt, max_tokens=None):
+        """Stream response chunks from the LLM. Yields text deltas."""
+        if self._is_gemini_model():
+            # Gemini streaming not yet supported; fall back to full response
+            text = await self.__call__(prompt, max_tokens=max_tokens)
+            yield text
+            return
+
+        messages = self._build_messages(prompt)
+        tokens_to_use = max_tokens if max_tokens is not None else self.max_completion_tokens
+        kwargs = self._create_kwargs(tokens_to_use)
+
+        try:
+            stream = await self.aclient.chat.completions.create(
+                messages=messages,
+                stream=True,
+                **kwargs,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    yield delta.content
+        except Exception:
+            # Fall back to non-streaming on error
+            text = await self.__call__(prompt, max_tokens=max_tokens)
+            yield text
+
     def get_usage_summary(self):
         """Get a summary of token usage and costs"""
         return self.usage_tracker.get_summary()

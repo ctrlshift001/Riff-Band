@@ -33,7 +33,30 @@ class OrchestratorDecision(ShellMessage):
     raw_response: str = ""
 
 
+# ── Streaming content ───────────────────────────────────────────────────
+
+
+@dataclass
+class ContentPart(ShellMessage):
+    """A chunk of streaming text from the LLM."""
+
+    text: str = ""
+    content_type: str = "text"  # text | tool_call
+
+
 # ── Sub-agent lifecycle (in-process) ───────────────────────────────────
+
+
+@dataclass
+class SubAgentCreated(ShellMessage):
+    """A sub-agent has been assembled with its (I, C, T, M) four-tuple."""
+
+    agent_id: str = ""
+    model: str = ""
+    tools: List[str] = field(default_factory=list)
+    task_instruction: str = ""
+    task_label: str = ""
+    context: str = ""
 
 
 @dataclass

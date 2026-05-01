@@ -12,10 +12,12 @@ from rich.table import Table
 from rich.text import Text
 
 from core.message import (
+    ContentPart,
     ErrorMessage,
     OrchestratorDecision,
     OrchestratorThinking,
     PhaseTransition,
+    SubAgentCreated,
     SubAgentResult,
     SubAgentStart,
     SubAgentStepEnd,
@@ -97,12 +99,10 @@ class MessageRenderer:
     def _render_WorkerSpawned(self, msg: WorkerSpawned) -> RenderableType:
         if msg.session_id and msg.label:
             self._worker_labels[msg.session_id] = msg.label
-        short_task = (msg.task_instruction or "")[:80]
+        short_task = (msg.task_instruction or "")[:60]
         return Text.assemble(
             ("  [>] ", "bold cyan"),
-            (f"{msg.label} ", "bold"),
-            (f"| {msg.model} ", "dim"),
-            (f"| {msg.session_id}", "dim"),
+            (f"{msg.label}", "bold"),
             (f"\n      {short_task}" if short_task else "", "dim"),
         )
 
@@ -129,6 +129,35 @@ class MessageRenderer:
             f"  [wait] collected={msg.completed} still_running={msg.still_running}",
             style="dim",
         )
+
+    def _render_SubAgentCreated(self, msg: SubAgentCreated) -> RenderableType:
+        """Show agent assembly with four-tuple info."""
+        lines: List[RenderableType] = [
+            Text.assemble(
+                ("  [+] ", "bold green"),
+                (f"Agent {msg.agent_id or 'sub'} assembled", "bold"),
+            ),
+            Text.assemble(
+                ("      Task:  ", "dim"),
+                (msg.task_label or msg.task_instruction[:40], ""),
+            ),
+            Text.assemble(
+                ("      Model: ", "dim"),
+                (msg.model or "default", ""),
+            ),
+        ]
+        if msg.tools:
+            lines.append(
+                Text.assemble(
+                    ("      Tools: ", "dim"),
+                    (", ".join(msg.tools[:6]), ""),
+                )
+            )
+        return Group(*lines)
+
+    def _render_ContentPart(self, msg: ContentPart) -> RenderableType:
+        """Streaming text — suppress in TUI to avoid raw JSON noise."""
+        return None  # Only show structured messages, not raw LLM tokens
 
     def _render_SubAgentStart(self, msg: SubAgentStart) -> RenderableType:
         return Text.assemble(
@@ -224,6 +253,14 @@ class SimpleRenderer:
 
     def _render_WorkerWaitEnd(self, msg):
         print(f"  [wait] collected={msg.completed} still_running={msg.still_running}")
+
+    def _render_SubAgentCreated(self, msg):
+        tools = ", ".join(msg.tools[:4]) if msg.tools else "all"
+        task = msg.task_label or msg.task_instruction[:30]
+        print(f"  [+] Agent {msg.agent_id or 'sub'} | {task} | {msg.model} | {tools}")
+
+    def _render_ContentPart(self, msg):
+        pass  # suppress raw LLM tokens in TUI
 
     def _render_SubAgentStart(self, msg):
         print(f"  [sub] start: {msg.label} ({msg.model})")

@@ -14,6 +14,7 @@ class AgentConfig:
     main_model: str
     sub_models: list[str]
     sources_dir: Path
+    workspace_dir: Path = Path("workspace")
     max_attempts: int = 6
     max_subagent_steps: int = 10
     subagent_process_timeout_seconds: int = 180
@@ -30,10 +31,14 @@ class AgentConfig:
         if mode not in VALID_MODES:
             raise ValueError(f"Invalid mode `{mode}`. Supported modes are: single, multi, auto.")
 
+        workspace_raw = raw.get("workspace_dir", "workspace")
+        workspace_dir = _resolve_path(config_path, str(workspace_raw)) if workspace_raw else Path("workspace")
+
         return cls(
             main_model=str(raw["main_model"]),
             sub_models=[str(item) for item in (raw.get("sub_models") or [str(raw["main_model"])])],
             sources_dir=_resolve_path(config_path, raw["sources_dir"]),
+            workspace_dir=workspace_dir,
             max_attempts=int(raw.get("max_attempts", 6)),
             max_subagent_steps=int(raw.get("max_subagent_steps", 10)),
             subagent_process_timeout_seconds=int(raw.get("subagent_process_timeout_seconds", 180)),

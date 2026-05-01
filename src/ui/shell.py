@@ -41,6 +41,10 @@ class AOrchestraShell:
     def __init__(self, config_path: str | Path):
         load_dotenv()
 
+        # Silence logger console output — TUI handles its own display
+        from base.engine.logs import logger as base_logger
+        base_logger.console_output = False
+
         self._config_path = Path(config_path)
         self._cfg = AgentConfig.load(self._config_path)
         self._cfg.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -49,11 +53,12 @@ class AOrchestraShell:
         self._renderer = MessageRenderer(self._console)
 
         # Session
-        self._work_dir = (REPO_ROOT / "workspace").resolve()
+        self._work_dir = self._cfg.workspace_dir.resolve()
         self._session: Optional[ConversationSession] = None
 
         # Runtime state (created lazily on first prompt)
         self._main_agent = None
+        self._state_restored = False  # True only after explicit /resume
         self._profile_name = self._cfg.profile_name or "generic"
         self._mode = self._cfg.mode or "auto"
         self._env = None
@@ -126,7 +131,7 @@ class AOrchestraShell:
             return  # readline not available (common on Windows)
 
         COMMANDS = [
-            "/help", "/mode", "/model", "/status", "/session",
+            "/help", "/mode", "/model", "/setup", "/status", "/session",
             "/sessions", "/resume", "/clear", "/exit", "/quit",
         ]
 
@@ -264,6 +269,9 @@ class AOrchestraShell:
         elif cmd == "/model":
             self._set_model(arg)
 
+        elif cmd == "/setup":
+            self._rerun_onboarding()
+
         else:
             self._console.print(f"[red]Unknown command: {cmd}[/]")
             self._console.print("[dim]Type /help for available commands.[/]")
@@ -276,12 +284,13 @@ class AOrchestraShell:
         table.add_column("Description")
         for cmd, desc in [
             ("/help", "Show this help"),
-            ("/mode <single|multi|auto>", "Switch execution mode"),
-            ("/model <name>", "Switch LLM model for next turn"),
+            ("/mode single|multi|auto", "Switch execution mode"),
+            ("/model name", "Switch LLM model for next turn"),
+            ("/setup", "Re-run the setup wizard"),
             ("/status", "Show current agent state"),
             ("/session", "Show session info"),
             ("/sessions", "List saved sessions"),
-            ("/resume <id>", "Resume a previous session"),
+            ("/resume id", "Resume a previous session"),
             ("/clear", "Clear screen"),
             ("/exit, /quit, /q", "Exit the shell"),
         ]:
@@ -299,7 +308,17 @@ class AOrchestraShell:
         if self._session:
             self._session.mode = mode
             self._session.save()
-        self._console.print(f"[green]Mode set to [bold]{mode}[/][/]")
+        # Save state before rebuild so findings/report persist to disk
+        self._save_state()
+        self._main_agent = None
+        self._main_project = None
+        self._console.print(
+            f"[green]Mode set to [bold]{mode}[/] (next turn)[/]"
+        )
+        if self._session and self._session.turn_count > 0:
+            self._console.print(
+                "[dim]Note: agent memory will reset, but findings and report are preserved.[/]"
+            )
 
     def _resume_session(self, arg: str):
         """Switch to a previously saved session."""
@@ -342,6 +361,7 @@ class AOrchestraShell:
         self._session = new_session
         self._mode = new_session.mode
         self._profile_name = new_session.profile_name
+        self._state_restored = True
 
         # Discard current project so next turn rebuilds
         self._main_agent = None
@@ -375,6 +395,24 @@ class AOrchestraShell:
         self._main_project = None
 
         self._console.print(f"[green]Model set to [bold]{model}[/] (next turn)[/]")
+
+    def _rerun_onboarding(self):
+        """Re-run the setup wizard to update config and .env."""
+        from ui.onboarding import run_onboarding
+
+        env_path = Path(".env")
+        ok = run_onboarding(self._config_path, env_path)
+        if ok:
+            # Reload config
+            self._cfg = AgentConfig.load(self._config_path)
+            self._profile_name = self._cfg.profile_name or "generic"
+            self._mode = self._cfg.mode or "auto"
+            self._work_dir = self._cfg.workspace_dir.resolve()
+            self._work_dir.mkdir(parents=True, exist_ok=True)
+            (self._work_dir / "sessions").mkdir(parents=True, exist_ok=True)
+            (self._work_dir / "output").mkdir(parents=True, exist_ok=True)
+            self._main_agent = None
+            self._main_project = None
 
     def _show_status(self):
         if self._main_agent is None:
@@ -537,13 +575,14 @@ class AOrchestraShell:
             )
             self._main_agent = self._main_project.main_agent
 
-        # Try to restore agent state from session (e.g. after /resume)
-        if self._session and self._session.agent_state_file.exists():
+        # Only restore state when explicitly resumed via /resume
+        if self._state_restored and self._session and self._session.agent_state_file.exists():
             if self._main_agent is not None and hasattr(self._main_agent, "load_state"):
                 self._session.load_agent_state(self._main_agent)
                 self._console.print(
                     "[dim]Restored agent state from session.[/]"
                 )
+                self._state_restored = False
 
         self._console.print(f"[dim]Profile: {self._profile_name}[/]")
 
@@ -587,10 +626,21 @@ async def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="AOrchestra interactive shell")
-    parser.add_argument("--config", required=True, help="Path to config YAML")
+    parser.add_argument("--config", default="aorchestra.yaml", help="Path to config YAML")
     args = parser.parse_args()
 
-    shell = AOrchestraShell(args.config)
+    config_path = Path(args.config)
+
+    # First run? Show onboarding
+    if not config_path.exists():
+        from ui.onboarding import run_onboarding
+
+        env_path = Path(".env")
+        ok = run_onboarding(config_path, env_path)
+        if not ok:
+            return 1
+
+    shell = AOrchestraShell(config_path)
     await shell.run()
 
 

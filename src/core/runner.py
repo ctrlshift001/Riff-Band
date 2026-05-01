@@ -8,6 +8,7 @@ from typing import AsyncGenerator, List, Optional
 from base.engine.logs import LogLevel, logger
 from core.interfaces import AgentEnvironment, RunResult, StepRecord
 from core.message import (
+    ContentPart,
     ErrorMessage,
     ShellMessage,
     SubAgentResult,
@@ -83,7 +84,28 @@ class AgentRunner:
 
             logger.log_to_file(LogLevel.INFO, f"[AgentRunner] Observation: {obs}")
             try:
-                if self.step_timeout:
+                if hasattr(agent, "stream_step"):
+                    # Streaming path: yield ContentPart chunks, extract final result
+                    action = None
+                    raw_response = ""
+                    raw_input = None
+                    step_gen = agent.stream_step(
+                        observation=obs,
+                        history=history,
+                        current_step=idx + 1,
+                        max_steps=info.max_steps,
+                    )
+                    async for item in step_gen:
+                        if isinstance(item, tuple) and len(item) >= 2:
+                            # Final result: (action, raw_response, raw_input?)
+                            action = item[0]
+                            raw_response = item[1]
+                            raw_input = item[2] if len(item) > 2 else None
+                        elif isinstance(item, ContentPart):
+                            yield item
+                    if action is None:
+                        raise ValueError("stream_step did not yield a final result")
+                elif self.step_timeout:
                     step_result = await asyncio.wait_for(
                         agent.step(
                             observation=obs,
@@ -116,13 +138,14 @@ class AgentRunner:
                 )
                 break
 
-            if len(step_result) == 3:
-                action, raw_response, raw_input = step_result
-            elif len(step_result) == 2:
-                action, raw_response = step_result
-                raw_input = None
-            else:
-                raise ValueError(f"Unsupported step return shape: {len(step_result)}")
+            if not hasattr(agent, "stream_step"):
+                if len(step_result) == 3:
+                    action, raw_response, raw_input = step_result
+                elif len(step_result) == 2:
+                    action, raw_response = step_result
+                    raw_input = None
+                else:
+                    raise ValueError(f"Unsupported step return shape: {len(step_result)}")
 
             obs_next, reward, done, step_info = await env.step(action)
             history.append(
