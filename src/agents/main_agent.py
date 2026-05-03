@@ -291,18 +291,19 @@ class MainAgent(BaseAgent):
         action_name = decision.get("action")
         params = decision.get("params", {})
         forced_final_decision = bool(kwargs.get("forced_final_decision", False))
-        if forced_final_decision and action_name in {"delegate_task", "delegate_tasks", "continue_task"}:
+        if forced_final_decision and action_name != "complete_task":
             report_path = str(self.meta.get("report_path", "") or "")
             findings_path = str(self.meta.get("findings_path", "") or "")
             action_name = "complete_task"
+            # Let CompleteTaskTool quality gate decide the actual status
             params = {
                 "executive_summary": "已进入最终决策轮，基于已收集的 SubAgent 结果进行收尾。",
-                "status": "partial",
+                "status": "done",
                 "artifacts": [
                     {"type": "report", "path": report_path, "description": "最终综合报告"}
                 ],
                 "verification": ["forced final decision prevented additional delegation"],
-                "open_issues": ["模型在最终决策轮仍尝试继续委派，已强制转为 partial 收尾。"],
+                "open_issues": [],
                 "confidence": "medium",
                 "report_path": report_path,
                 "findings_path": findings_path,

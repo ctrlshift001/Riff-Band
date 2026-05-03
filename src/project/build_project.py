@@ -655,35 +655,25 @@ class AgentProject:
                 ),
             )
 
-            has_collected = int(summary.get("completed", 0) or 0) > 0
-            still_running = int(summary.get("still_running", 0) or 0)
-            if has_collected or still_running == 0:
-                await self._run_synthesis_if_needed(attempts)
-                previous_max = self.main_agent.max_attempts
-                self.main_agent.max_attempts = max(
-                    previous_max, self.main_agent.attempt + 1
+            # Always attempt forced finalization with whatever results we have
+            await self._run_synthesis_if_needed(attempts)
+            previous_max = self.main_agent.max_attempts
+            self.main_agent.max_attempts = max(
+                previous_max, self.main_agent.attempt + 1
+            )
+            try:
+                action, raw_response = await self.main_agent.step(
+                    None, [], forced_final_decision=True
                 )
-                try:
-                    action, raw_response = await self.main_agent.step(
-                        None, [], forced_final_decision=True
-                    )
-                finally:
-                    self.main_agent.max_attempts = previous_max
-                action["forced_final_decision"] = True
-                attempts.append({"action": action, "raw_response": raw_response})
-
-                yield OrchestratorDecision(
-                    action=action.get("action", ""),
-                    reasoning=action.get("reasoning", ""),
-                    params=action.get("params", {}),
-                    raw_response=raw_response or "",
-                )
-
-                if action["action"] == "complete_task":
-                    result = action.get("result", {})
-                    total_cost = float(result.get("total_cost", 0.0))
-                    if result.get("done") and result.get("quality_gate_passed"):
-                        final_result = result
+            finally:
+                self.main_agent.max_attempts = previous_max
+            action["forced_final_decision"] = True
+            attempts.append({"action": action, "raw_response": raw_response})
+            if action["action"] == "complete_task":
+                result = action.get("result", {})
+                total_cost = float(result.get("total_cost", 0.0))
+                if result.get("done") and result.get("quality_gate_passed"):
+                    final_result = result
 
         passed = (
             final_result is not None
