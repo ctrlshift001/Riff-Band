@@ -188,6 +188,20 @@ class ErrorMessage(ShellMessage):
     details: Optional[Dict[str, Any]] = None
 
 
+# ── Status updates ──────────────────────────────────────────────────────
+
+
+@dataclass
+class StatusUpdate(ShellMessage):
+    """Periodic status snapshot during execution."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    phase: str = ""
+    elapsed: str = ""
+
+
 # ── Cancellation ────────────────────────────────────────────────────────
 
 

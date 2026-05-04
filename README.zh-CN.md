@@ -122,4 +122,9 @@ aorchestra/             # 原论文与 benchmark（历史保留）
       primaryClass={cs.AI},
       url={https://arxiv.org/abs/2602.03786},
 }
+
+## 许可协议
+
+本项目基于 [AOrchestra](https://github.com/franknobox/AOrchestra-Agent) 开发，原始代码使用 Apache 2.0 许可。原始 LICENSE 文件已保留。修改及新增代码版权归 franknobox 所有。
+
 ```

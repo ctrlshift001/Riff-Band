@@ -122,4 +122,9 @@ aorchestra/             # Original paper & benchmark (legacy)
       primaryClass={cs.AI},
       url={https://arxiv.org/abs/2602.03786},
 }
+
+## License
+
+This project is based on [AOrchestra](https://github.com/franknobox/AOrchestra-Agent), originally licensed under Apache 2.0. The original LICENSE file is preserved. Modifications and new code are copyright 2026 franknobox.
+
 ```

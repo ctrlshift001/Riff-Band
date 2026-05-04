@@ -223,6 +223,7 @@ class AOrchestraShell:
             (" [", "dim"),
             (self._mode, "cyan"),
             ("]", "dim"),
+            (" [dim]Ctrl+C to cancel[/]", ""),
             (" > ", "dim"),
         )
         self._console.print(prompt_text, end="")

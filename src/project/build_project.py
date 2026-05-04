@@ -17,6 +17,7 @@ from core.message import (
     OrchestratorThinking,
     PhaseTransition,
     ShellMessage,
+    StatusUpdate,
     SubAgentCreated,
     TaskCancelled,
     TaskComplete,
@@ -584,7 +585,7 @@ class AgentProject:
         attempts: List[Dict[str, Any]] = []
         final_result = None
         prev_phase = ""
-        total_cost = 0.0
+        accumulated_cost = 0.0
 
         for attempt_idx in range(self.max_attempts):
             if cancel_event is not None and cancel_event.is_set():
@@ -621,12 +622,27 @@ class AgentProject:
 
             for msg in self._extract_worker_events(action):
                 yield msg
+                if isinstance(msg, WorkerCompleted):
+                    accumulated_cost += msg.cost
+
+            # Emit token status after each orchestration step
+            llm_summary = (
+                self.main_agent.llm.get_usage_summary()
+                if getattr(self.main_agent, "llm", None)
+                else {}
+            )
+            yield StatusUpdate(
+                input_tokens=llm_summary.get("total_input_tokens", 0),
+                output_tokens=llm_summary.get("total_output_tokens", 0),
+                total_tokens=llm_summary.get("total_tokens", 0),
+                phase=self.main_agent._current_phase(),
+                elapsed="",
+            )
 
             if action_name != "complete_task":
                 continue
 
             result = action.get("result", {})
-            total_cost = float(result.get("total_cost", 0.0))
             if result.get("done") and result.get("quality_gate_passed"):
                 final_result = result
                 break
@@ -671,9 +687,11 @@ class AgentProject:
             attempts.append({"action": action, "raw_response": raw_response})
             if action["action"] == "complete_task":
                 result = action.get("result", {})
-                total_cost = float(result.get("total_cost", 0.0))
                 if result.get("done") and result.get("quality_gate_passed"):
                     final_result = result
+
+        # Aggregate main agent's own LLM cost
+        accumulated_cost += self.main_agent.get_usage_cost()
 
         passed = (
             final_result is not None
@@ -683,7 +701,7 @@ class AgentProject:
             success=passed,
             quality_gate_passed=passed,
             attempts=len(attempts),
-            total_cost=total_cost,
+            total_cost=accumulated_cost,
             summary=str(
                 (final_result or {}).get("executive_summary", "")
             ),

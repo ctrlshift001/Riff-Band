@@ -7,7 +7,6 @@ from typing import Dict, List, Optional
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.rule import Rule
-from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
@@ -17,10 +16,12 @@ from core.message import (
     OrchestratorDecision,
     OrchestratorThinking,
     PhaseTransition,
+    StatusUpdate,
     SubAgentCreated,
     SubAgentResult,
     SubAgentStart,
     SubAgentStepEnd,
+    SubAgentStepStart,
     TaskCancelled,
     TaskComplete,
     WorkerCompleted,
@@ -46,7 +47,9 @@ class MessageRenderer:
 
     def __init__(self, console: Console):
         self._console = console
-        self._worker_labels: Dict[str, str] = {}  # session_id → label
+        self._worker_labels: Dict[str, str] = {}
+        self._step_buf = ""       # accumulate text within one step
+        self._in_json = False     # suppress JSON blocks
 
     # ── helpers ───────────────────────────────────────────────────
 
@@ -66,23 +69,31 @@ class MessageRenderer:
         return None
 
     def _render_OrchestratorThinking(self, msg: OrchestratorThinking) -> RenderableType:
-        return Spinner(
-            "dots",
-            text=(
-                f"[dim]  [{msg.attempt}/{msg.max_attempts}][/] "
-                f"[bold]MainAgent[/] thinking..."
-            ),
+        self._step_buf = ""
+        self._in_json = False
+        return Text.assemble(
+            ("  ◌ ", "bold cyan"),
+            (f"[{msg.attempt}/{msg.max_attempts}] ", "dim"),
+            ("MainAgent planning...", "bold"),
         )
+
+    def _render_StatusUpdate(self, msg: StatusUpdate) -> RenderableType:
+        """Compact status line: phase | tokens."""
+        parts = [f"phase={msg.phase}"]
+        if msg.input_tokens:
+            parts.append(f"in={msg.input_tokens}")
+        if msg.output_tokens:
+            parts.append(f"out={msg.output_tokens}")
+        return Text(f"  ── {' | '.join(parts)} ──", style="dim")
 
     def _render_OrchestratorDecision(self, msg: OrchestratorDecision) -> RenderableType:
         action = msg.action or "unknown"
         reasoning = msg.reasoning or ""
         lines: List[RenderableType] = [
             Text.assemble(
-                ("  ", "dim"),
-                (f"[{msg.attempt}]" if hasattr(msg, "attempt") else "", "dim"),
+                ("  ", ""),
                 (" → ", "bold cyan"),
-                (action, "bold white"),
+                (action, "bold cyan"),
             )
         ]
         if reasoning:
@@ -130,11 +141,17 @@ class MessageRenderer:
             style="dim",
         )
 
+    def _render_SubAgentStepStart(self, msg: SubAgentStepStart) -> RenderableType:
+        """Reset streaming buffer on new step."""
+        self._step_buf = ""
+        self._in_json = False
+        return None
+
     def _render_SubAgentCreated(self, msg: SubAgentCreated) -> RenderableType:
         """Show agent assembly with four-tuple info."""
         lines: List[RenderableType] = [
             Text.assemble(
-                ("  [+] ", "bold green"),
+                ("  [+] ", "bold blue"),
                 (f"Agent {msg.agent_id or 'sub'} assembled", "bold"),
             ),
             Text.assemble(
@@ -156,8 +173,14 @@ class MessageRenderer:
         return Group(*lines)
 
     def _render_ContentPart(self, msg: ContentPart) -> RenderableType:
-        """Streaming text — suppress in TUI to avoid raw JSON noise."""
-        return None  # Only show structured messages, not raw LLM tokens
+        """Streaming text: show think blocks as dim, suppress JSON."""
+        self._step_buf += msg.text
+        if not self._in_json:
+            if '\n{"action"' in self._step_buf or self._step_buf.lstrip().startswith('{"action"'):
+                self._in_json = True
+                return None
+            return Text(msg.text, style="dim")
+        return None
 
     def _render_SubAgentStart(self, msg: SubAgentStart) -> RenderableType:
         return Text.assemble(
@@ -230,6 +253,14 @@ class SimpleRenderer:
 
     def _render_OrchestratorThinking(self, msg):
         print(f"  [think] MainAgent deciding (attempt {msg.attempt}/{msg.max_attempts})...")
+
+    def _render_StatusUpdate(self, msg):
+        parts = [f"phase={msg.phase}"]
+        if msg.input_tokens:
+            parts.append(f"in={msg.input_tokens}")
+        if msg.output_tokens:
+            parts.append(f"out={msg.output_tokens}")
+        print(f"  -- {' | '.join(parts)} --")
 
     def _render_OrchestratorDecision(self, msg):
         action = getattr(msg, "action", "") or ""
