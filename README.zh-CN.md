@@ -1,6 +1,6 @@
-# AOrchestra
+# RiffBand
 
-一个基于 [AOrchestra](https://arxiv.org/abs/2602.03786) 论文构建的通用多智能体系统，支持三种运行模式。
+一个为研究任务而生的轻量级 Agent 引擎，基于 [AOrchestra](https://arxiv.org/abs/2602.03786)。支持 TUI 交互与被 MCP 调用。
 
 ## 核心概念
 
@@ -15,47 +15,11 @@
 
 主编排 Agent 根据任务动态创建不同 `(I, C, T, M)` 组合的子 Agent，协调执行并合并结果。
 
-> 原论文与 benchmark 代码保留在 `aorchestra/` 目录中。如需了解论文细节和评测体系，详见[论文原仓库](https://github.com/franknobox/AOrchestra-Agent)。
-
-## 三种模式
-
-### 1. `single` — 单 Agent 模式
-
-面向轻量、直接的日常任务。一个 Agent 直接执行，不启动编排器。
-
-适合：
-- 日常问答与总结
-- 简单搜索与文件处理
-- 低成本、低延迟场景
-
-### 2. `multi` — 多 Agent 模式
-
-面向复杂、可拆分的任务。主编排 Agent 动态合成子 Agent，为每个子 Agent 分配不同的指令、上下文、工具和模型，支持并行执行并合并结果。
-
-适合：
-- 多步骤调研与分析
-- 需要多工具协作的任务
-- 需要并行化的证据收集与报告生成
-
-### 3. `auto` — 自动路由模式
-
-系统根据任务文本自动判断复杂度，选择合适的模式：
-- 短文本、简单任务 → `single`
-- 多步骤、需要证据/报告/并行 → `multi`
-
-决策分三层：硬规则（关键词匹配）→ LLM 辅助（模糊任务）→ 软规则（综合评分）。
+> 基于 [AOrchestra](https://arxiv.org/abs/2602.03786)。原论文代码详见 [fork 仓库](https://github.com/franknobox/AOrchestra-Agent)。
 
 ## 当前重点
 
-产业研究是本仓库第一个重点优化的场景，尤其是：
-
-- 政策研究
-- 公司研究
-- 产业链分析
-- 新闻与信号收集
-- 结构化报告生成
-
-这些任务天然可拆分、多信息源、需要证据链，非常适合验证动态多 Agent 编排能力。但这不意味着系统仅限于产业研究——它是第一个深度打磨的 profile，系统设计本身是通用的。
+通过结构化工作流实现研究任务自动化，涵盖文献检索、多 Agent 假设辩论与报告生成。可通过内置 TUI shell 使用，也可作为 MCP tool 被外部 Agent 调用。
 
 ## 快速开始
 
@@ -85,14 +49,31 @@ python shell.py --config aorchestra.yaml
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示帮助 |
-| `/mode <single\|multi\|auto>` | 切换执行模式 |
-| `/model <name>` | 切换 LLM 模型 |
+| `/mode single|multi|auto` | 切换执行模式 |
+| `/model name` | 切换 LLM 模型 |
+| `/research topic` | 启动研究模式 |
+| `/setup` | 重新运行配置向导 |
 | `/status` | 查看 Agent 状态 |
 | `/session` | 查看当前会话 |
 | `/sessions` | 列出历史会话 |
-| `/resume <id>` | 恢复历史会话 |
+| `/resume id` | 恢复历史会话 |
 | `/clear` | 清屏 |
 | `/exit` | 退出 |
+
+## MCP 集成
+
+RiffBand 可通过 MCP 被外部 Agent（Claude Code、Codex、Gemini CLI 等）调用：
+
+```json
+{
+  "mcpServers": {
+    "riffband": {
+      "command": "python",
+      "args": ["-m", "riffband.mcp"]
+    }
+  }
+}
+```
 
 ## 项目结构
 
@@ -105,7 +86,6 @@ src/
   project/              # 项目组装、prompt、工具集
   modes/                # 模式路由器 (single / multi / auto)
   ui/                   # 交互式 shell + Rich 渲染器
-aorchestra/             # 原论文与 benchmark（历史保留）
 ```
 
 ## 引用
