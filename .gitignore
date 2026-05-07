@@ -15,10 +15,6 @@ __pycache__/
 dist/
 build/
 
-# Datasets (large files)
-aorchestra/benchmark/gaia/data/Gaia/
-aorchestra/benchmark/terminalbench/terminal-bench/
-
 # OS
 .DS_Store
 Thumbs.db
