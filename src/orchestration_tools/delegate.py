@@ -16,6 +16,7 @@ from base.engine.async_llm import LLMsConfig, create_llm_instance
 from base.engine.logs import LogLevel, logger
 from core.interfaces import Action, Observation, TaskContext
 from core.runner import AgentRunner
+from core.trace import summarize_trace_for_decision
 from orchestration_tools.worker_process import SubAgentProcessManager
 
 
@@ -40,13 +41,7 @@ def _normalize_context(context: Any) -> str:
 
 
 def _format_trace(trace) -> str:
-    if not trace:
-        return "No steps executed."
-    lines = []
-    for idx, step in enumerate(trace, 1):
-        lines.append(f"Step {idx}: {step.action}")
-        lines.append(f"  Observation: {step.observation}")
-    return "\n".join(lines)
+    return summarize_trace_for_decision(trace)
 
 
 def _summarize_finish_result(finish_result: Dict[str, Any]) -> str:
@@ -91,11 +86,16 @@ def _session_public_view(session: Dict[str, Any], include_trace: bool = False) -
 
 
 def agent_label(task_instruction: str, task_index: int | None = None) -> str:
-    """Generate a human-friendly label: 'task_0 研究政策驱动'."""
+    """Generate a human-friendly label without truncating the task title."""
     index_part = f"task_{task_index}" if task_index is not None else "task"
     text = str(task_instruction or "").strip()
     if not text:
         return index_part
+    for prefix in ("具体任务:", "具体任务："):
+        if prefix in text:
+            first_line = text.split(prefix, 1)[1].strip().split("\n")[0].strip()
+            if first_line:
+                return f"{index_part} {first_line}"
 
     # Try "具体任务:" or "具体任务：" first
     for prefix in ("具体任务:", "具体任务：", "task:", "Task:"):
@@ -103,16 +103,17 @@ def agent_label(task_instruction: str, task_index: int | None = None) -> str:
             rest = text.split(prefix, 1)[1].strip()
             first_line = rest.split("\n")[0].strip()
             if first_line:
-                return f"{index_part} {first_line[:12]}"
+                return f"{index_part} {first_line}"
             break
 
     # Fall back to first meaningful line, stripped of common prefixes
     first_line = text.split("\n")[0].strip()
     for p in ("任务类型:", "期望产出:", "完成标准:"):
         first_line = first_line.replace(p, "").strip()
-    if len(first_line) > 12:
-        first_line = first_line[:12]
     return f"{index_part} {first_line}" if first_line else index_part
+
+
+def _filter_action_space(action_space: str, allowed_tools: Set[str]) -> str:
     if not allowed_tools:
         return action_space
 
@@ -437,7 +438,8 @@ class _DelegateBase(BaseAction):
             raise RuntimeError(f"Failed to clone environment for parallel task {task_index}: {exc}") from exc
 
         base_output = Path(getattr(self.env, "output_dir", Path("workspace/output")))
-        task_output_dir = base_output / "parallel_runs" / run_id / f"task_{task_index}"
+        display_index = max(1, int(task_index or 1))
+        task_output_dir = base_output / "parallel_runs" / run_id / f"task_{display_index}"
         task_output_dir.mkdir(parents=True, exist_ok=True)
 
         if hasattr(env_clone, "output_dir"):
@@ -450,6 +452,7 @@ class _DelegateBase(BaseAction):
             env_clone.meta_data["report_path"] = str(task_output_dir / report_name)
             env_clone.meta_data["findings_path"] = str(task_output_dir / "findings.jsonl")
             env_clone.meta_data["scratchpad_path"] = str(task_output_dir / "scratchpad" / "shared.md")
+            env_clone.meta_data["parallel_task_index"] = display_index
 
         tools_map = getattr(env_clone, "tools", {})
         if isinstance(tools_map, dict):
@@ -517,6 +520,39 @@ class _DelegateBase(BaseAction):
 
         return {"merged_findings": merged_count, "target_findings_path": str(base_findings)}
 
+    def _merge_scratchpad_files(self, isolated_scratchpads: List[Path]) -> Dict[str, Any]:
+        base_scratchpad = Path(
+            getattr(self.env, "meta_data", {}).get(
+                "scratchpad_path",
+                str(Path(getattr(self.env, "output_dir", Path("workspace/output"))) / "scratchpad" / "shared.md"),
+            )
+        )
+        base_scratchpad.parent.mkdir(parents=True, exist_ok=True)
+
+        existing = base_scratchpad.read_text(encoding="utf-8").strip() if base_scratchpad.exists() else "# Shared Scratchpad"
+        seen_blocks: Set[str] = {existing}
+        merged_count = 0
+        blocks = [existing.rstrip()]
+        for file in isolated_scratchpads:
+            if not file.exists():
+                continue
+            text = file.read_text(encoding="utf-8").strip()
+            if not text:
+                continue
+            normalized = re.sub(r"\s+", " ", text)
+            if normalized in seen_blocks:
+                continue
+            seen_blocks.add(normalized)
+            merged_count += 1
+            blocks.append(f"## Parallel scratchpad: {file.parent.parent.name}\n\n{text}")
+
+        if merged_count:
+            base_scratchpad.write_text("\n\n".join(blocks).rstrip() + "\n", encoding="utf-8")
+        elif not base_scratchpad.exists():
+            base_scratchpad.write_text(existing.rstrip() + "\n", encoding="utf-8")
+
+        return {"merged_scratchpads": merged_count, "target_scratchpad_path": str(base_scratchpad)}
+
     def _prepare_process_run(
         self,
         task_instruction: str,
@@ -543,6 +579,11 @@ class _DelegateBase(BaseAction):
         output_dir = Path(getattr(run_env, "output_dir", Path("workspace/output")))
         sources_dir = Path(getattr(run_env, "sources_dir", Path("workspace/sources")))
         original_question = run_env.get_task_context().instruction
+        if hasattr(run_env, "meta_data") and isinstance(run_env.meta_data, dict):
+            run_env.meta_data["task_label"] = label
+            run_env.meta_data["worker_session_id"] = session_id or ""
+            if task_index is not None:
+                run_env.meta_data["parallel_task_index"] = int(task_index)
         return {
             "run_env": run_env,
             "allowed_tools": allowed_tools,
@@ -558,6 +599,7 @@ class _DelegateBase(BaseAction):
                 "max_subagent_steps": int(getattr(run_env, "max_steps", 10) or 10),
                 "allowed_tools": allowed_tools,
                 "task_label": label,
+                "parallel_task_index": int(task_index or meta.get("parallel_task_index", 0) or 0),
                 "profile_name": str(meta.get("profile_name", "generic") or "generic"),
                 "report_filename": report_filename,
                 "required_sections": list(meta.get("required_sections", []) or []),
@@ -908,12 +950,14 @@ class WaitWorkerSessionsTool(_DelegateBase):
         results = self._collect_finished_sessions(done_ids)
         for item in results:
             finish = item.get("finish_result", {}) or {}
+            issues = finish.get("issues", []) or []
+            issue_part = f" issues={issues}" if issues else ""
             logger.info(
                 "[WaitWorkerSessions] Collected "
                 f"session={item.get('session_id', '')} "
                 f"status={finish.get('status', '')} "
-                f"message={str(finish.get('message', '') or '')[:300]} "
-                f"issues={finish.get('issues', []) or []}"
+                f"message={str(finish.get('message', '') or '')[:300]}"
+                f"{issue_part}"
             )
 
         isolated = [
@@ -922,6 +966,11 @@ class WaitWorkerSessionsTool(_DelegateBase):
             if str(item.get("isolated_findings_path", "")).strip()
         ]
         merge_info = self._merge_findings_files(isolated) if isolated else {}
+        isolated_scratchpads = [
+            path.parent / "scratchpad" / "shared.md"
+            for path in isolated
+        ]
+        scratchpad_merge_info = self._merge_scratchpad_files(isolated_scratchpads) if isolated_scratchpads else {}
         running_ids = [
             session_id
             for session_id in ids
@@ -938,6 +987,7 @@ class WaitWorkerSessionsTool(_DelegateBase):
                 "completed": len(results),
                 "still_running": len(running_ids),
                 **merge_info,
+                **scratchpad_merge_info,
             },
         }
 
@@ -1003,7 +1053,7 @@ class DelegateTasksTool(_DelegateBase):
 
         async def _run_with_session(idx: int, task: Dict[str, Any]) -> Dict[str, Any]:
             async with semaphore:
-                isolated_env, isolated_findings = self._create_isolated_env(idx, run_id)
+                isolated_env, isolated_findings = self._create_isolated_env(idx + 1, run_id)
                 result = await self._spawn_single(
                     task_instruction=str(task.get("task_instruction", "")),
                     model=str(task.get("model", "")),
@@ -1011,12 +1061,12 @@ class DelegateTasksTool(_DelegateBase):
                     tools=task.get("tools"),
                     result_schema=task.get("result_schema"),
                     env_override=isolated_env,
-                    task_index=idx,
+                    task_index=idx + 1,
                     session_id=str(task.get("session_id", "")),
                     parallel_worker=True,
                     isolated_findings_path=str(isolated_findings),
                 )
-                result["task_index"] = idx
+                result["task_index"] = idx + 1
                 result["task_instruction"] = str(task.get("task_instruction", ""))
                 result["isolated_findings_path"] = str(isolated_findings)
                 isolated_files.append(isolated_findings)

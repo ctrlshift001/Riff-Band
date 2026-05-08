@@ -148,6 +148,8 @@ class AgentRunner:
                     raise ValueError(f"Unsupported step return shape: {len(step_result)}")
 
             obs_next, reward, done, step_info = await env.step(action)
+            step_info = dict(step_info or {})
+            step_info["last_action_result"] = obs_next
             history.append(
                 StepRecord(
                     observation=obs,

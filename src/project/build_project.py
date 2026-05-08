@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 from dataclasses import dataclass, field
@@ -73,13 +74,20 @@ class RuntimeProfile:
     subtask_toolkits: Dict[str, List[str]] = field(default_factory=dict)
     default_worker_tools: List[str] = field(default_factory=list)
     parallel_forbidden_tools: List[str] = field(default_factory=list)
-    model_routing: Dict[str, str] = field(default_factory=dict)
 
 
-def _normalize_sub_models(main_model: str, sub_models: List[str]) -> List[str]:
-    normalized = [str(item).strip() for item in (sub_models or []) if str(item).strip()]
-    if main_model not in normalized:
-        normalized.insert(0, main_model)
+def _normalize_sub_models(main_model: str, sub_models: List[Any]) -> List[str]:
+    normalized: List[str] = []
+    for item in sub_models or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("model") or "").strip()
+        else:
+            name = str(item).strip()
+        if name and name not in normalized:
+            normalized.append(name)
+    main = str(main_model or "").strip()
+    if main and main not in normalized:
+        normalized.insert(0, main)
     return normalized
 
 
@@ -148,10 +156,6 @@ def _default_subtask_toolkits() -> Dict[str, List[str]]:
 
 def _default_worker_tools() -> List[str]:
     return [
-        "list_sources",
-        "search_sources",
-        "read_source",
-        "read_sources",
         "web_search",
         "record_finding",
         "write_scratchpad_note",
@@ -163,34 +167,6 @@ def _default_worker_tools() -> List[str]:
 
 def _default_parallel_forbidden_tools() -> List[str]:
     return ["write_report_section"]
-
-
-def _default_model_routing(sub_models: List[str]) -> Dict[str, str]:
-    if not sub_models:
-        model = ""
-        return {
-            "policy_research": model,
-            "company_research": model,
-            "supply_chain": model,
-            "financial_metrics": model,
-            "news_signals": model,
-            "report_drafting": model,
-            "verification": model,
-            "general_research": model,
-        }
-
-    primary = sub_models[0]
-    secondary = sub_models[1] if len(sub_models) > 1 else primary
-    return {
-        "policy_research": primary,
-        "company_research": secondary,
-        "supply_chain": primary,
-        "financial_metrics": primary,
-        "news_signals": secondary,
-        "report_drafting": secondary,
-        "verification": secondary,
-        "general_research": secondary,
-    }
 
 
 def _generic_profile(sub_models: List[str]) -> RuntimeProfile:
@@ -209,7 +185,6 @@ def _generic_profile(sub_models: List[str]) -> RuntimeProfile:
         subtask_toolkits=_default_subtask_toolkits(),
         default_worker_tools=_default_worker_tools(),
         parallel_forbidden_tools=_default_parallel_forbidden_tools(),
-        model_routing=_default_model_routing(sub_models),
     )
 
 
@@ -241,7 +216,6 @@ def _gba_profile(sub_models: List[str]) -> RuntimeProfile:
         subtask_toolkits=_default_subtask_toolkits(),
         default_worker_tools=_default_worker_tools(),
         parallel_forbidden_tools=_default_parallel_forbidden_tools(),
-        model_routing=_default_model_routing(sub_models),
     )
 
 
@@ -257,10 +231,13 @@ def _resolve_profile(
     subtask_toolkits: Dict[str, List[str]] | None = None,
     default_worker_tools: List[str] | None = None,
     parallel_forbidden_tools: List[str] | None = None,
-    model_routing: Dict[str, str] | None = None,
 ) -> RuntimeProfile:
     normalized_name = (profile_name or "generic").strip() or "generic"
-    base = _gba_profile(sub_models) if normalized_name == "gba_industry_analysis" else _generic_profile(sub_models)
+    base = (
+        _gba_profile(sub_models)
+        if normalized_name == "gba_industry_analysis"
+        else _generic_profile(sub_models)
+    )
 
     if normalized_name != base.name:
         base = RuntimeProfile(
@@ -274,7 +251,6 @@ def _resolve_profile(
             subtask_toolkits=dict(base.subtask_toolkits),
             default_worker_tools=list(base.default_worker_tools),
             parallel_forbidden_tools=list(base.parallel_forbidden_tools),
-            model_routing=dict(base.model_routing),
         )
 
     return RuntimeProfile(
@@ -288,8 +264,31 @@ def _resolve_profile(
         subtask_toolkits=dict(subtask_toolkits or base.subtask_toolkits),
         default_worker_tools=list(default_worker_tools or base.default_worker_tools),
         parallel_forbidden_tools=list(parallel_forbidden_tools or base.parallel_forbidden_tools),
-        model_routing=dict(model_routing or base.model_routing),
     )
+
+
+def _infer_required_sections_from_brief(brief_text: str) -> List[str]:
+    text = str(brief_text or "")
+    candidates = [
+        "执行摘要",
+        "城市比较",
+        "政策驱动",
+        "政策驱动与约束",
+        "城市与产业比较",
+        "投资机会与风险",
+        "关键发现",
+        "行动建议",
+        "Executive Summary",
+        "City Comparison",
+        "Policy Drivers and Constraints",
+        "Key Findings",
+        "Actionable Recommendations",
+    ]
+    found: List[str] = []
+    for title in candidates:
+        if title in text and title not in found:
+            found.append(title)
+    return found
 
 
 @dataclass
@@ -297,6 +296,7 @@ class AgentProject:
     main_agent: MainAgent
     max_attempts: int
     final_wait_seconds: int = 180
+    model_retry_failures: Dict[str, set[str]] = field(default_factory=dict)
 
     def _main_report_exists(self) -> bool:
         report_path = str(self.main_agent.meta.get("report_path", "") or "").strip()
@@ -323,26 +323,35 @@ class AgentProject:
     def _build_synthesis_context(self) -> str:
         entries = []
         for item in self.main_agent.task_entries:
+            trace_summary = str(item.get("trace_summary", "") or "")
             finish = {
                 "status": item.get("status", ""),
                 "message": item.get("message", ""),
-                "completed": item.get("completed", []),
-                "issues": item.get("issues", []),
-                "result": item.get("result", ""),
+                "completed": list(item.get("completed", []) or [])[:8],
+                "issues": [str(issue)[:300] for issue in list(item.get("issues", []) or [])[:6]],
+                "result": str(item.get("result", "") or "")[:1200],
                 "session_id": item.get("session_id", ""),
                 "profile": item.get("profile", ""),
-                "trace_summary": str(item.get("trace_summary", "") or "")[:2000],
+                "trace_digest": trace_summary[:800],
             }
             entries.append(finish)
         findings_preview = []
         findings_path = Path(str(self.main_agent.meta.get("findings_path", "") or ""))
         if findings_path.is_file():
-            for line in findings_path.read_text(encoding="utf-8").splitlines()[:30]:
+            for line in findings_path.read_text(encoding="utf-8").splitlines()[:12]:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    findings_preview.append(json.loads(line))
+                    item = json.loads(line)
+                    if isinstance(item, dict):
+                        findings_preview.append({
+                            key: str(value)[:600]
+                            for key, value in item.items()
+                            if key in {"topic", "entity", "finding", "evidence", "source_url", "source_title"}
+                        })
+                    else:
+                        findings_preview.append({"raw": str(item)[:500]})
                 except json.JSONDecodeError:
                     findings_preview.append({"raw": line[:500]})
         return (
@@ -368,7 +377,9 @@ class AgentProject:
         params = {"session_ids": [], "timeout_seconds": timeout}
         logger.info(f"[AgentProject] Final wait for running SubAgent sessions timeout={timeout}s")
         result = await wait_tool(**params)
-        self.main_agent._update_context("wait_worker_sessions", params, result)
+        context_params = dict(params)
+        context_params["_event_type"] = "final_wait"
+        self.main_agent._update_context("wait_worker_sessions", context_params, result)
         action = {
             "action": "wait_worker_sessions",
             "params": params,
@@ -377,6 +388,219 @@ class AgentProject:
         }
         attempts.append({"action": action, "raw_response": "forced final wait for running SubAgent sessions"})
         return result
+
+    def _running_session_ids(self) -> List[str]:
+        wait_tool = next((item for item in self.main_agent.tools if item.name == "wait_worker_sessions"), None)
+        if wait_tool is None:
+            return []
+        session_store = getattr(wait_tool, "session_store", {}) or {}
+        return [
+            str(session_id)
+            for session_id, session in session_store.items()
+            if session.get("state") == "running"
+        ]
+
+    def _wait_timeout_seconds(self) -> int:
+        timeout = int(
+            self.main_agent.meta.get(
+                "final_wait_seconds",
+                self.main_agent.meta.get("subagent_process_timeout_seconds", self.final_wait_seconds),
+            )
+            or self.final_wait_seconds
+        )
+        return max(1, timeout)
+
+    @staticmethod
+    def _retry_key_for_task(task_instruction: str) -> str:
+        return " ".join(str(task_instruction or "").lower().split())
+
+    @staticmethod
+    def _is_model_unavailable_result(item: Dict[str, Any]) -> bool:
+        finish = item.get("finish_result", {}) or {}
+        status = str(finish.get("status", "") or item.get("worker_state", "")).strip().lower()
+        if status not in {"blocked", "failed"}:
+            return False
+        text = " ".join(
+            str(part)
+            for part in [
+                finish.get("message", ""),
+                " ".join(str(issue) for issue in list(finish.get("issues", []) or [])),
+                item.get("error", ""),
+                json.dumps(item.get("worker_process", {}) or {}, ensure_ascii=False),
+            ]
+        ).lower()
+        model_failure_markers = (
+            "sub-agent worker failed",
+            "configuration for",
+            "api key",
+            "apikey",
+            "unauthorized",
+            "authentication",
+            "permission",
+            "invalid model",
+            "model not found",
+            "rate limit",
+            "timeout",
+            "connection",
+            "base_url",
+            "openai",
+            "llm",
+            "401",
+            "403",
+            "429",
+            "5xx",
+        )
+        return any(marker in text for marker in model_failure_markers)
+
+    def _select_retry_model(self, failed_model: str, task_instruction: str) -> str:
+        if len(self.main_agent.sub_models) <= 1:
+            return ""
+        key = self._retry_key_for_task(task_instruction)
+        failed_models = self.model_retry_failures.setdefault(key, set())
+        if failed_model:
+            failed_models.add(failed_model)
+        for model in self.main_agent.sub_models:
+            if model not in failed_models:
+                return model
+        return ""
+
+    @staticmethod
+    def _merge_wait_results(primary: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+        if not extra:
+            return primary
+        merged = dict(primary or {})
+        merged_results = list((primary or {}).get("results", []) or [])
+        merged_results.extend(list(extra.get("results", []) or []))
+        primary_summary = dict((primary or {}).get("summary", {}) or {})
+        extra_summary = dict(extra.get("summary", {}) or {})
+        merged_summary = dict(primary_summary)
+        for key in ("completed", "still_running", "merged_findings", "merged_scratchpads"):
+            merged_summary[key] = int(primary_summary.get(key, 0) or 0) + int(extra_summary.get(key, 0) or 0)
+        waited_for = list(primary_summary.get("waited_for", []) or [])
+        waited_for.extend(list(extra_summary.get("waited_for", []) or []))
+        if waited_for:
+            merged_summary["waited_for"] = waited_for
+        merged["results"] = merged_results
+        merged["summary"] = merged_summary
+        return merged
+
+    async def _retry_model_unavailable_sessions(
+        self,
+        attempts: List[Dict[str, Any]],
+        wait_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        results = list((wait_result or {}).get("results", []) or [])
+        if not results:
+            return {}
+        delegate_tool = next((item for item in self.main_agent.tools if item.name == "delegate_task"), None)
+        wait_tool = next((item for item in self.main_agent.tools if item.name == "wait_worker_sessions"), None)
+        if delegate_tool is None or wait_tool is None:
+            return {}
+
+        retry_session_ids: List[str] = []
+        for item in results:
+            if not self._is_model_unavailable_result(item):
+                continue
+            failed_model = str(item.get("model", "") or "").strip()
+            task_instruction = str(item.get("task_instruction", "") or "").strip()
+            retry_model = self._select_retry_model(failed_model, task_instruction)
+            if not retry_model:
+                continue
+
+            old_session_id = str(item.get("session_id", "") or "").strip()
+            old_session = getattr(wait_tool, "session_store", {}).get(old_session_id, {}) or {}
+            retry_params = {
+                "task_instruction": task_instruction,
+                "context": old_session.get("last_context", old_session.get("context", "")),
+                "model": retry_model,
+                "tools": list(item.get("allowed_tools") or old_session.get("tools") or []),
+            }
+            logger.info(
+                "[AgentProject] Retry subtask with alternate sub_model "
+                f"old_session={old_session_id} failed_model={failed_model} retry_model={retry_model}"
+            )
+            spawn_result = await delegate_tool._spawn_single(
+                task_instruction=retry_params["task_instruction"],
+                model=retry_params["model"],
+                context=retry_params["context"],
+                tools=retry_params["tools"],
+                result_schema=old_session.get("result_schema"),
+                env_override=old_session.get("env"),
+            )
+            self.main_agent._update_context("delegate_task", retry_params, spawn_result)
+            attempts.append(
+                {
+                    "action": {
+                        "action": "delegate_task",
+                        "params": retry_params,
+                        "result": spawn_result,
+                        "model_retry": True,
+                        "failed_model": failed_model,
+                        "previous_session_id": old_session_id,
+                    },
+                    "raw_response": "model unavailable retry delegate_task",
+                }
+            )
+            session_id = str(spawn_result.get("session_id", "") or "").strip()
+            if session_id:
+                retry_session_ids.append(session_id)
+
+        if not retry_session_ids:
+            return {}
+
+        retry_wait_params = {
+            "session_ids": retry_session_ids,
+            "timeout_seconds": self._wait_timeout_seconds(),
+            "_event_type": "auto_wait",
+        }
+        retry_wait_result = await wait_tool(
+            session_ids=retry_session_ids,
+            timeout_seconds=retry_wait_params["timeout_seconds"],
+        )
+        self.main_agent._update_context("wait_worker_sessions", retry_wait_params, retry_wait_result)
+        attempts.append(
+            {
+                "action": {
+                    "action": "wait_worker_sessions",
+                    "params": {
+                        "session_ids": retry_session_ids,
+                        "timeout_seconds": retry_wait_params["timeout_seconds"],
+                    },
+                    "result": retry_wait_result,
+                    "model_retry_wait": True,
+                },
+                "raw_response": "model unavailable retry wait",
+            }
+        )
+        return retry_wait_result
+
+    async def _wait_for_running_sessions(self, attempts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        running_ids = self._running_session_ids()
+        if not running_ids:
+            return {}
+        wait_tool = next((item for item in self.main_agent.tools if item.name == "wait_worker_sessions"), None)
+        if wait_tool is None:
+            return {}
+
+        timeout = self._wait_timeout_seconds()
+        params = {"session_ids": running_ids, "timeout_seconds": timeout}
+        logger.info(
+            "[AgentProject] Auto wait for running SubAgent sessions "
+            f"count={len(running_ids)} timeout={timeout}s"
+        )
+        result = await wait_tool(**params)
+        context_params = dict(params)
+        context_params["_event_type"] = "auto_wait"
+        self.main_agent._update_context("wait_worker_sessions", context_params, result)
+        action = {
+            "action": "wait_worker_sessions",
+            "params": params,
+            "result": result,
+            "auto_wait": True,
+        }
+        attempts.append({"action": action, "raw_response": "auto wait for running SubAgent sessions"})
+        retry_result = await self._retry_model_unavailable_sessions(attempts, result)
+        return self._merge_wait_results(result, retry_result)
 
     async def _run_synthesis_if_needed(self, attempts: List[Dict[str, Any]]) -> Dict[str, Any]:
         if self._main_report_exists():
@@ -424,7 +648,9 @@ class AgentProject:
         )
         wait_params = {"session_ids": [session_id] if session_id else [], "timeout_seconds": max(1, timeout)}
         wait_result = await wait_tool(**wait_params)
-        self.main_agent._update_context("wait_worker_sessions", wait_params, wait_result)
+        context_wait_params = dict(wait_params)
+        context_wait_params["_event_type"] = "forced_synthesis_wait"
+        self.main_agent._update_context("wait_worker_sessions", context_wait_params, wait_result)
         wait_action = {
             "action": "wait_worker_sessions",
             "params": wait_params,
@@ -625,6 +851,34 @@ class AgentProject:
                 if isinstance(msg, WorkerCompleted):
                     accumulated_cost += msg.cost
 
+            if action_name in {"delegate_task", "delegate_tasks", "continue_task"}:
+                running_ids = self._running_session_ids()
+                if running_ids:
+                    wait_timeout = self._wait_timeout_seconds()
+                    yield WorkerWaitStart(
+                        session_ids=running_ids,
+                        timeout_seconds=wait_timeout,
+                    )
+                    wait_result = await self._wait_for_running_sessions(attempts)
+                    wait_summary = (
+                        wait_result.get("summary", {})
+                        if isinstance(wait_result, dict)
+                        else {}
+                    )
+                    wait_results = (
+                        wait_result.get("results", []) or []
+                        if isinstance(wait_result, dict)
+                        else []
+                    )
+                    yield WorkerWaitEnd(
+                        completed=int(wait_summary.get("completed", 0) or 0),
+                        still_running=int(wait_summary.get("still_running", 0) or 0),
+                        results=list(wait_results),
+                    )
+                    for item in wait_results:
+                        finish = item.get("finish_result", {}) or {}
+                        accumulated_cost += float(item.get("cost", 0.0) or 0.0)
+
             # Emit token status after each orchestration step
             llm_summary = (
                 self.main_agent.llm.get_usage_summary()
@@ -823,13 +1077,18 @@ def _build_runtime_components(
     output_dir: Path,
     max_subagent_steps: int,
     profile: RuntimeProfile,
+    max_parallel_subtasks: int = 3,
     subagent_process_timeout_seconds: int = 180,
 ) -> Tuple[TaskExecutionEnvironment, List[object]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / profile.report_filename
     findings_path = output_dir / "findings.jsonl"
     scratchpad_path = output_dir / "scratchpad" / "shared.md"
-    search_enabled = bool(os.getenv("SERPER_API_KEY"))
+    ddg_available = bool(
+        importlib.util.find_spec("ddgs")
+        or importlib.util.find_spec("duckduckgo_search")
+    )
+    search_enabled = bool(os.getenv("SERPER_API_KEY")) or ddg_available
 
     task_tools = [
         ListSourcesTool(sources_dir=sources_dir),
@@ -865,9 +1124,8 @@ def _build_runtime_components(
             "subtask_toolkits": dict(profile.subtask_toolkits),
             "default_worker_tools": list(profile.default_worker_tools),
             "parallel_forbidden_tools": list(profile.parallel_forbidden_tools),
-            "model_routing": dict(profile.model_routing),
             "brief_injection_mode": "direct_prompt_context",
-            "max_parallel_subtasks": 3,
+            "max_parallel_subtasks": max(1, int(max_parallel_subtasks or 3)),
             "subagent_process_timeout_seconds": int(subagent_process_timeout_seconds or 180),
             "task_goal": profile.task_goal,
             "workflow_hints": list(profile.workflow_hints),
@@ -885,6 +1143,7 @@ def build_agent_project(
     output_dir: Path,
     max_attempts: int = 6,
     max_subagent_steps: int = 10,
+    max_parallel_subtasks: int = 3,
     subagent_process_timeout_seconds: int = 180,
     profile_name: str = "generic",
     report_filename: str = "task_report.md",
@@ -893,6 +1152,10 @@ def build_agent_project(
 ) -> AgentProject:
     # 1.标准化模型列表，确保主模型在首位
     sub_models = _normalize_sub_models(main_model, sub_models)
+    if required_sections is None:
+        inferred_sections = _infer_required_sections_from_brief(brief_text)
+        if inferred_sections:
+            required_sections = inferred_sections
     #解析运行profile
     profile = _resolve_profile(
         sub_models=sub_models,
@@ -909,6 +1172,7 @@ def build_agent_project(
         output_dir=output_dir,
         max_subagent_steps=max_subagent_steps,
         profile=profile,
+        max_parallel_subtasks=max_parallel_subtasks,
         subagent_process_timeout_seconds=subagent_process_timeout_seconds,
     )
 
@@ -996,6 +1260,7 @@ def build_single_agent_project(
     sources_dir: Path,
     output_dir: Path,
     max_subagent_steps: int = 10,
+    max_parallel_subtasks: int = 3,
     subagent_process_timeout_seconds: int = 180,
     profile_name: str = "generic",
     report_filename: str = "task_report.md",
@@ -1017,6 +1282,7 @@ def build_single_agent_project(
         output_dir=output_dir,
         max_subagent_steps=max_subagent_steps,
         profile=profile,
+        max_parallel_subtasks=max_parallel_subtasks,
         subagent_process_timeout_seconds=subagent_process_timeout_seconds,
     )
     sub_llm = create_llm_instance(LLMsConfig.default().get(main_model))
@@ -1041,6 +1307,7 @@ async def build_project_by_mode(
     output_dir: Path,
     max_attempts: int = 6,
     max_subagent_steps: int = 10,
+    max_parallel_subtasks: int = 3,
     subagent_process_timeout_seconds: int = 180,
     profile_name: str = "generic",
     report_filename: str = "task_report.md",
@@ -1070,6 +1337,7 @@ async def build_project_by_mode(
             sources_dir=sources_dir,
             output_dir=output_dir,
             max_subagent_steps=max_subagent_steps,
+            max_parallel_subtasks=max_parallel_subtasks,
             subagent_process_timeout_seconds=subagent_process_timeout_seconds,
             profile_name=profile_name,
             report_filename=report_filename,
@@ -1086,6 +1354,7 @@ async def build_project_by_mode(
         output_dir=output_dir,
         max_attempts=max_attempts,
         max_subagent_steps=max_subagent_steps,
+        max_parallel_subtasks=max_parallel_subtasks,
         subagent_process_timeout_seconds=subagent_process_timeout_seconds,
         profile_name=profile_name,
         report_filename=report_filename,
@@ -1106,6 +1375,7 @@ def build_gba_analysis_project(
     output_dir: Path,
     max_attempts: int = 6,
     max_subagent_steps: int = 10,
+    max_parallel_subtasks: int = 3,
     subagent_process_timeout_seconds: int = 180,
 ) -> AgentProject:
     return build_agent_project(
@@ -1116,6 +1386,7 @@ def build_gba_analysis_project(
         output_dir=output_dir,
         max_attempts=max_attempts,
         max_subagent_steps=max_subagent_steps,
+        max_parallel_subtasks=max_parallel_subtasks,
         subagent_process_timeout_seconds=subagent_process_timeout_seconds,
         profile_name="gba_industry_analysis",
     )

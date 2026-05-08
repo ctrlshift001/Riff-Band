@@ -62,15 +62,20 @@ class TaskExecutionEnvironment:
         )
 
     def _build_instruction(self) -> str:
-        source_files = self._source_files()
-        sources_text = "\n".join(f"- {item}" for item in source_files) if source_files else "- 未找到本地资料"
         search_enabled = self.meta_data.get("search_enabled", False)
-        search_text = "已启用" if search_enabled else "未启用 (缺少SERPER_API_KEY)"
-        return (
-            f"[用户任务]\n{self.brief_text}\n\n"
-            f"[可用资料]\n{sources_text}\n\n"
-            f"[联网搜索]\n{search_text}"
-        )
+        search_text = "已启用" if search_enabled else "未启用"
+        return f"[用户任务]\n{self.brief_text}\n\n[联网搜索]\n{search_text}"
+
+    def _log_label(self) -> str:
+        label = str(self.meta_data.get("task_label", "") or "").strip()
+        session_id = str(self.meta_data.get("worker_session_id", "") or "").strip()
+        if label and session_id:
+            return f"{label} session={session_id}"
+        if label:
+            return label
+        if session_id:
+            return f"{self.task_id} session={session_id}"
+        return self.task_id
 
     def _build_action_space(self) -> str:
         if not self.tools:
@@ -163,7 +168,13 @@ class TaskExecutionEnvironment:
                 "current_step": self._steps,
                 "max_steps": self.max_steps,
             }
-            logger.info(f"[TaskExecutionEnvironment] {self.task_id} step {self._steps}: {action_type} success={success}")
+            if result.get("backend"):
+                observation["backend"] = result.get("backend")
+            logger.info(
+                f"[TaskExecutionEnvironment] {self._log_label()} "
+                f"step {self._steps}: {action_type} success={success}"
+                f"{' backend=' + str(result.get('backend')) if result.get('backend') else ''}"
+            )
         except Exception as exc:
             observation = {
                 "action": action_type,

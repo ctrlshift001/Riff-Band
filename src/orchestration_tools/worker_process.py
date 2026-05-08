@@ -41,6 +41,7 @@ class SubAgentProcessManager:
         max_subagent_steps: int,
         allowed_tools: Optional[List[str]] = None,
         task_label: str = "",
+        parallel_task_index: int = 0,
         profile_name: str = "generic",
         report_filename: str = "task_report.md",
         required_sections: Optional[List[str]] = None,
@@ -58,6 +59,7 @@ class SubAgentProcessManager:
             "max_subagent_steps": max_subagent_steps,
             "allowed_tools": list(allowed_tools or []),
             "task_label": task_label,
+            "parallel_task_index": int(parallel_task_index or 0),
             "profile_name": profile_name,
             "report_filename": report_filename,
             "required_sections": list(required_sections or []),
@@ -163,10 +165,11 @@ class SubAgentProcessManager:
             status = finish_result.get("status", "")
             message = str(finish_result.get("message", "") or "")
             issues = finish_result.get("issues", []) or []
+            issue_part = f" issues={issues}" if issues else ""
             logger.info(
                 f"[SubAgentProcessManager] Done session={session_id} label={task_label} "
                 f"exit={completed.returncode} status={status} "
-                f"message={message[:300]} issues={issues}"
+                f"message={message[:300]}{issue_part}"
             )
             return payload
 

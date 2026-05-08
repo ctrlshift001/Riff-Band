@@ -364,7 +364,6 @@ class AsyncLLM:
         self.usage_tracker.add_usage(self.config.model, input_tokens, output_tokens)
 
         ret = self._extract_gemini_text(response)
-        logger.log_to_file(LogLevel.INFO, f"LLM Response: {ret}")
         return ret
         
     def _build_messages(self, prompt):
@@ -427,61 +426,11 @@ class AsyncLLM:
         # Prefer to use the max_tokens argument passed to the function; if it is None, use the instance variable.
         tokens_to_use = max_tokens if max_tokens is not None else self.max_completion_tokens
 
-        # Claude models不能同时支持temperature和top_p
-        is_claude = "claude" in self.config.model.lower()
-        is_moonshot = "moonshot" in self.config.model.lower()
-        sampling_params = (
-            {"temperature": self.config.temperature}
-            if is_claude or is_moonshot
-            else {"temperature": self.config.temperature, "top_p": self.config.top_p}
+        kwargs = self._create_kwargs(tokens_to_use)
+        response = await self.aclient.chat.completions.create(
+            messages=message,
+            **kwargs,
         )
-        # Gemini 3 flash preview requires reasoning_effort parameter
-        if self.config.model == "gemini-3-flash-preview":
-            response = await self.aclient.chat.completions.create(
-                model=self.config.model,
-                messages=message,
-                max_tokens=tokens_to_use,
-                **sampling_params,
-                reasoning_effort="high",
-            )
-        elif tokens_to_use is not None and "o3" in self.config.model:
-            response = await self.aclient.chat.completions.create(
-                model=self.config.model,
-                messages=message,
-                max_completion_tokens=tokens_to_use,
-                **sampling_params,
-            )
-        # 添加moonshot的调用
-        elif is_moonshot:
-            response = await self.aclient.chat.completions.create(
-                model=self.config.model,
-                messages=message,
-                max_tokens=tokens_to_use,
-                **sampling_params,
-            )
-        # Gemini-3-Flash requires reasoning_effort parameter for thinking route
-        elif self.config.model == "gemini-3-flash-preview":
-            response = await self.aclient.chat.completions.create(
-                model=self.config.model,
-                messages=message,
-                max_tokens=tokens_to_use,
-                **sampling_params,
-                reasoning_effort="high"
-            )
-        # Only gpt-series support max_completion_tokens.
-        elif tokens_to_use is not None and "o3" not in self.config.model:
-            response = await self.aclient.chat.completions.create(
-                model=self.config.model,
-                messages=message,
-                max_tokens=tokens_to_use,
-                **sampling_params,
-            )
-        else:
-            response = await self.aclient.chat.completions.create(
-                model=self.config.model,
-                messages=message,
-                **sampling_params,
-            )
 
         # Extract token usage from response
         input_tokens = response.usage.prompt_tokens
@@ -499,7 +448,6 @@ class AsyncLLM:
 
         # Return text or multimodal content (API returns content as provided)
         ret = response.choices[0].message.content
-        logger.log_to_file(LogLevel.INFO, f"LLM Response: {ret}")
 
         return ret
 

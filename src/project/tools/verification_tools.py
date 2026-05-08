@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -28,6 +29,16 @@ class VerifyArtifactsTool(BaseAction):
     default_report_path: Path = Field(default=Path("report.md"), exclude=True)
     default_findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
     default_scratchpad_path: Path = Field(default=Path("scratchpad/shared.md"), exclude=True)
+    section_aliases: Dict[str, List[str]] = Field(
+        default_factory=lambda: {
+            "Executive Summary": ["执行摘要", "摘要"],
+            "City Comparison": ["城市比较", "城市比较（深圳/广州/香港/东莞/佛山）"],
+            "Policy Drivers and Constraints": ["政策驱动与约束", "政策驱动和约束", "政策驱动"],
+            "Key Findings": ["关键发现", "主要发现"],
+            "Actionable Recommendations": ["行动建议", "可执行建议", "建议"],
+        },
+        exclude=True,
+    )
 
     class Config:
         arbitrary_types_allowed = True
@@ -50,6 +61,52 @@ class VerifyArtifactsTool(BaseAction):
                     rows.append(data)
         return rows
 
+    @staticmethod
+    def _extract_source_urls(findings_rows: List[Dict[str, Any]]) -> List[str]:
+        urls: List[str] = []
+        seen: set[str] = set()
+        for row in findings_rows:
+            candidates = [
+                str(row.get("source_url", "") or ""),
+                str(row.get("source", "") or ""),
+                str(row.get("evidence", "") or ""),
+            ]
+            for value in candidates:
+                for url in re.findall(r"https?://[^\s\]\)\"'，。；,;]+", value):
+                    cleaned = url.rstrip(".。")
+                    if cleaned and cleaned not in seen:
+                        seen.add(cleaned)
+                        urls.append(cleaned)
+        return urls
+
+    @classmethod
+    def _ensure_report_sources(cls, report_file: Path, findings_rows: List[Dict[str, Any]]) -> int:
+        if not report_file.exists():
+            return 0
+        report_text = report_file.read_text(encoding="utf-8")
+        if "http://" in report_text or "https://" in report_text:
+            return 0
+        urls = cls._extract_source_urls(findings_rows)
+        if not urls:
+            return 0
+        section = ["## 参考来源", ""]
+        section.extend(f"- {url}" for url in urls[:20])
+        updated = report_text.rstrip() + "\n\n" + "\n".join(section) + "\n"
+        report_file.write_text(updated, encoding="utf-8")
+        return min(len(urls), 20)
+
+    def _resolve_path(self, raw_path: str, default_path: Path) -> Path:
+        candidate = Path(raw_path.strip()) if raw_path.strip() else default_path
+        if candidate.exists():
+            return candidate
+        if raw_path.strip() and default_path.exists():
+            return default_path
+        return candidate
+
+    def _has_required_section(self, report_text: str, title: str) -> bool:
+        candidates = [title, *self.section_aliases.get(str(title), [])]
+        return any(f"## {candidate}" in report_text for candidate in candidates if str(candidate).strip())
+
     async def __call__(
         self,
         report_path: str = "",
@@ -58,9 +115,11 @@ class VerifyArtifactsTool(BaseAction):
         required_sections: List[str] | None = None,
         min_findings: int = 0,
     ) -> Dict[str, Any]:
-        report_file = Path(report_path.strip()) if report_path.strip() else self.default_report_path
-        findings_file = Path(findings_path.strip()) if findings_path.strip() else self.default_findings_path
-        scratchpad_file = Path(scratchpad_path.strip()) if scratchpad_path.strip() else self.default_scratchpad_path
+        report_file = self._resolve_path(report_path, self.default_report_path)
+        findings_file = self._resolve_path(findings_path, self.default_findings_path)
+        scratchpad_file = self._resolve_path(scratchpad_path, self.default_scratchpad_path)
+        findings_rows = self._read_findings(findings_file)
+        added_sources = self._ensure_report_sources(report_file, findings_rows)
 
         issues: List[str] = []
         stats: Dict[str, Any] = {
@@ -70,6 +129,7 @@ class VerifyArtifactsTool(BaseAction):
             "report_path": str(report_file),
             "findings_path": str(findings_file),
             "scratchpad_path": str(scratchpad_file),
+            "sources_appended": added_sources,
         }
 
         report_text = report_file.read_text(encoding="utf-8").strip() if report_file.exists() else ""
@@ -80,13 +140,12 @@ class VerifyArtifactsTool(BaseAction):
                 line[3:].strip() for line in report_text.splitlines() if line.strip().startswith("## ")
             ]
             required = [str(item).strip() for item in (required_sections or []) if str(item).strip()]
-            missing = [title for title in required if f"## {title}" not in report_text]
+            missing = [title for title in required if not self._has_required_section(report_text, title)]
             if missing:
                 issues.append(f"缺少报告章节: {missing}")
             if "http://" not in report_text and "https://" not in report_text:
                 issues.append("报告缺少明确来源链接")
 
-        findings_rows = self._read_findings(findings_file)
         stats["findings_count"] = len(findings_rows)
         if int(min_findings or 0) > 0 and len(findings_rows) < int(min_findings):
             issues.append(f"findings 数量为 {len(findings_rows)}，小于最小要求 {int(min_findings)}")

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, ClassVar, Dict, List, Optional
 
 from pydantic import Field
 
@@ -31,6 +31,15 @@ class MainAgent(BaseAgent):
     task_entries: List[Dict[str, Any]] = Field(default_factory=list)
     task_plan_executor: TaskPlanExecutor = Field(default_factory=TaskPlanExecutor)
     latest_plan_task_ids: List[str] = Field(default_factory=list)
+    next_sub_model_index: int = Field(default=0)
+    RESEARCH_PROFILES: ClassVar[set[str]] = {
+        "general_research",
+        "policy_research",
+        "company_research",
+        "supply_chain",
+        "financial_metrics",
+        "news_signals",
+    }
 
     class Config:
         arbitrary_types_allowed = True
@@ -44,6 +53,7 @@ class MainAgent(BaseAgent):
         self.task_entries = []
         self.task_plan_executor.reset()
         self.latest_plan_task_ids = []
+        self.next_sub_model_index = 0
 
     def soft_reset(self, instruction: str) -> None:
         """Reset per-turn state while preserving accumulated task entries
@@ -70,6 +80,7 @@ class MainAgent(BaseAgent):
             "history": list(self.history),
             "task_entries": list(self.task_entries),
             "task_plan_executor": self.task_plan_executor.dump(),
+            "next_sub_model_index": self.next_sub_model_index,
         }
 
     def load_state(self, data: Dict[str, Any]) -> None:
@@ -85,6 +96,7 @@ class MainAgent(BaseAgent):
         if isinstance(plan_data, dict):
             self.task_plan_executor.restore(plan_data)
         self.latest_plan_task_ids = []
+        self.next_sub_model_index = int(data.get("next_sub_model_index", 0) or 0)
 
     def _infer_profile(self, task_instruction: str) -> str:
         text = (task_instruction or "").lower()
@@ -98,65 +110,221 @@ class MainAgent(BaseAgent):
             return "financial_metrics"
         if any(item in text for item in ["news", "sentiment", "public opinion"]):
             return "news_signals"
-        if any(item in text for item in ["verify", "verification", "quality gate", "qa", "validate", "check"]):
+        if any(item in text for item in ["任务类型: verify", "任务类型：verify", "verify", "verification", "quality gate", "qa", "validate", "check"]):
             return "verification"
-        if any(item in text for item in ["report", "summary", "write section", "draft"]):
+        if any(item in text for item in ["任务类型: write", "任务类型：write", "report", "summary", "write section", "draft"]):
             return "report_drafting"
         return "general_research"
 
     def _current_phase(self) -> str:
-        report_path = str(self.meta.get("report_path", "")).strip()
-        report_exists = bool(report_path) and Path(report_path).exists()
-        has_research = any(item.get("profile") not in {"report_drafting", "verification"} for item in self.task_entries)
-        has_verification = any(item.get("profile") == "verification" for item in self.task_entries)
-
-        if not has_research:
+        if not self._phase_entries_done(self.RESEARCH_PROFILES):
             return "research"
-        if not report_exists:
+        if not self._phase_entries_done({"report_drafting"}):
             return "synthesis"
-        if not has_verification:
+        if not self._phase_entries_done({"verification"}):
             return "verification"
         return "verification"
+
+    def _effective_task_entries(self) -> List[Dict[str, Any]]:
+        return [item for item in self.task_entries if not bool(item.get("superseded", False))]
+
+    def _phase_entries_done(self, profiles: set[str]) -> bool:
+        entries = [
+            item for item in self._effective_task_entries()
+            if str(item.get("profile", "general_research") or "general_research") in profiles
+        ]
+        return bool(entries) and all(self._is_done_result(item) for item in entries)
+
+    def _is_done_result(self, entry: Dict[str, Any]) -> bool:
+        if bool(entry.get("superseded", False)):
+            return True
+        status = str(entry.get("status", "") or "").strip().lower()
+        worker_state = str(entry.get("worker_state", "") or "").strip().lower()
+        profile = str(entry.get("profile", "") or "").strip()
+        if profile == "verification" and entry.get("latest_verification_passed") is not True:
+            return False
+        if profile in {"report_drafting", "verification"} and entry.get("latest_verification_passed") is False:
+            return False
+        return status == "done" and worker_state != "running"
+
+    @staticmethod
+    def _latest_verification_from_trace(trace_summary: Any) -> Dict[str, Any]:
+        if isinstance(trace_summary, dict):
+            digest = trace_summary
+        else:
+            try:
+                digest = json.loads(str(trace_summary or "{}"))
+            except json.JSONDecodeError:
+                return {}
+        latest = digest.get("latest_verification", {}) if isinstance(digest, dict) else {}
+        if not isinstance(latest, dict) or not latest:
+            return {}
+        if "verification_passed" not in latest:
+            return {}
+        return {
+            "passed": bool(latest.get("verification_passed", False)),
+            "issues": [str(item) for item in list(latest.get("issues", []) or [])],
+            "step": latest.get("step", ""),
+        }
+
+    @staticmethod
+    def _format_trace_summary(trace_summary: Any) -> str:
+        if isinstance(trace_summary, dict):
+            digest = trace_summary
+        else:
+            try:
+                digest = json.loads(str(trace_summary or "{}"))
+            except json.JSONDecodeError:
+                text = str(trace_summary or "").strip()
+                return text[:400] + ("..." if len(text) > 400 else "")
+        if not isinstance(digest, dict) or not digest:
+            return ""
+
+        lines = [
+            f"steps={digest.get('steps', 0)}",
+            f"last_action={digest.get('last_action', '')}",
+        ]
+
+        tool_parts: List[str] = []
+        tools = digest.get("tools", {})
+        if isinstance(tools, dict):
+            for name, stats in tools.items():
+                if not isinstance(stats, dict):
+                    continue
+                count = stats.get("count", 0)
+                failed = stats.get("failed", 0)
+                if failed:
+                    tool_parts.append(f"{name} x{count} failed={failed}")
+                else:
+                    tool_parts.append(f"{name} x{count}")
+        if tool_parts:
+            lines.append(f"tools={', '.join(tool_parts[:8])}")
+
+        failures = digest.get("failures", [])
+        if failures:
+            failure_texts = []
+            for failure in list(failures or [])[:3]:
+                if isinstance(failure, dict):
+                    action = failure.get("action", "")
+                    error = failure.get("error", "")
+                    failure_texts.append(f"{action}: {error}")
+                else:
+                    failure_texts.append(str(failure))
+            lines.append(f"failures={failure_texts}")
+        else:
+            lines.append("failures=none")
+
+        finish = digest.get("finish", {})
+        if isinstance(finish, dict) and finish:
+            lines.append(
+                "finish="
+                f"status={finish.get('status', '')}, "
+                f"issues={list(finish.get('issues', []) or [])[:3]}"
+            )
+
+        latest_verification = digest.get("latest_verification", {})
+        if isinstance(latest_verification, dict) and "verification_passed" in latest_verification:
+            lines.append(
+                "latest_verification="
+                f"passed={latest_verification.get('verification_passed')}, "
+                f"issues={list(latest_verification.get('issues', []) or [])[:3]}"
+            )
+
+        return "\n".join(lines)
+
+    def _task_fingerprint(self, instruction: str, profile: str) -> str:
+        text = str(instruction or "").lower()
+        text = re.sub(r"session_id\s*[:=]\s*\S+", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        text = re.sub(r"[^\w\u4e00-\u9fff]+", "", text)
+        return f"{str(profile or '').strip().lower()}:{text}"
+
+    def _task_entries_for_profile(self, profiles: set[str]) -> List[Dict[str, Any]]:
+        return [
+            item for item in self._effective_task_entries()
+            if str(item.get("profile", "") or "general_research") in profiles
+        ]
+
+    def _next_required_intent(self) -> str:
+        if not self._phase_entries_done(self.RESEARCH_PROFILES):
+            return "finish_research"
+        if not self._phase_entries_done({"report_drafting"}):
+            return "draft_report"
+        if not self._phase_entries_done({"verification"}):
+            return "delegate_verification"
+        return "complete"
+
+    def _allowed_actions_for_phase(self, forced_final_decision: bool = False) -> List[str]:
+        if forced_final_decision:
+            return ["complete_task"]
+        intent = self._next_required_intent()
+        inspect_actions = ["wait_worker_sessions", "inspect_worker_session", "list_worker_sessions", "close_worker_session"]
+        if intent == "finish_research":
+            return ["delegate_task", "delegate_tasks", "continue_task", *inspect_actions]
+        if intent in {"draft_report", "delegate_verification"}:
+            return ["delegate_task", "continue_task", *inspect_actions]
+        return ["complete_task", "inspect_worker_session", "list_worker_sessions"]
+
+    def _phase_intent_guidance(self, forced_final_decision: bool = False) -> str:
+        if forced_final_decision:
+            return "强制最终决策轮：只能调用 complete_task，并由质量门决定 done/partial/blocked。"
+        intent = self._next_required_intent()
+        if intent == "finish_research":
+            return (
+                "下一步必须完成研究阶段：只能启动、继续、检查或等待 research 子任务；"
+                "不要启动 write/verify，也不要调用 complete_task。"
+            )
+        if intent == "draft_report":
+            return (
+                "下一步必须撰写主报告：启动或继续 write/report_drafting 子任务写入主 report_path；"
+                "不要启动 verification，也不要调用 complete_task。"
+            )
+        if intent == "delegate_verification":
+            return (
+                "下一步必须委派验证子任务：输出 action=delegate_task 或 continue_task，"
+                "让 verification SubAgent 调用 verify_artifacts 并返回 verification_passed=true；"
+                "不要输出 action=verify_artifacts，也不要调用 complete_task。"
+            )
+        return "验证已通过：现在可以调用 complete_task。"
 
     def _phase_guidance(self) -> str:
         phase = self._current_phase()
         if phase == "research":
             return (
                 "阶段 1 / 研究：收集证据、记录 findings、写入共享 scratchpad 笔记。"
-                "此阶段不要完成任务。"
+                "必须等待所有 research 子任务 status=done；partial、failed、blocked 或 running 都不能进入综合阶段。"
             )
         if phase == "synthesis":
             return (
                 "阶段 2 / 综合：把 findings 和 scratchpad 笔记整合为产物或报告章节。"
                 "必须启动新的 write 类型 delegate_task 写入主 report_path；"
-                "不要 continue_task 到并行 research session，避免写回 parallel_runs。"
+                "必须等待所有 write 子任务 status=done 后才能进入验证阶段。"
             )
         return (
             "阶段 3 / 验证：围绕报告、findings 和 scratchpad 执行验证任务；"
-            "调用 complete_task 前必须修复关键问题。"
+            "必须等待所有 verification 子任务 status=done，调用 complete_task 前必须修复关键问题。"
         )
 
     def _format_subtask_history(self) -> str:
+        def clip(value: Any, limit: int) -> str:
+            text = str(value or "")
+            if len(text) <= limit:
+                return text
+            return text[:limit] + f"... [truncated {len(text) - limit} chars]"
+
         if not self.task_entries:
-            plan_snapshot = self.task_plan_executor.snapshot()
-            return (
-                "尚未委派子任务。\n\n"
-                f"current_phase={self._current_phase()}\n"
-                f"phase_guidance={self._phase_guidance()}\n\n"
-                "task_plan_snapshot:\n"
-                f"{indent_text(json.dumps(plan_snapshot, ensure_ascii=False, indent=2), '  ')}"
-            )
+            return "尚未委派子任务。"
 
         lines: List[str] = []
         completed_items: List[str] = []
         issues: List[str] = []
-        for entry in self.task_entries:
+        for entry in self.task_entries[-12:]:
             block = [
                 (
                     f"[Attempt {entry['attempt']}] status={entry['status']} "
                     f"model={entry.get('model', 'unknown')} steps={entry.get('steps_taken', 0)}"
                 ),
-                f"task_instruction={entry.get('instruction', '')}",
+                f"task_instruction={clip(entry.get('instruction', ''), 500)}",
                 f"profile={entry.get('profile', 'general_research')}",
             ]
             if entry.get("session_id"):
@@ -165,39 +333,73 @@ class MainAgent(BaseAgent):
                     f"subagent_reused={entry.get('worker_reused', False)} "
                     f"subagent_state={entry.get('worker_state', '')}"
                 )
+            if entry.get("superseded"):
+                block.append(f"superseded_by={entry.get('superseded_by', '')}")
             if entry.get("message"):
-                block.append(f"message={entry['message']}")
+                block.append(f"message={clip(entry['message'], 400)}")
             if entry.get("completed"):
-                block.append(f"completed={entry['completed']}")
-                completed_items.extend(entry["completed"])
+                completed = list(entry["completed"] or [])[:8]
+                block.append(f"completed={completed}")
+                completed_items.extend(completed)
             if entry.get("issues"):
-                block.append(f"issues={entry['issues']}")
-                issues.extend(entry["issues"])
+                entry_issues = [clip(item, 300) for item in list(entry["issues"] or [])[:6]]
+                block.append(f"issues={entry_issues}")
+                issues.extend(entry_issues)
+            if entry.get("latest_verification_passed") is not None:
+                block.append(f"latest_verification_passed={entry.get('latest_verification_passed')}")
+                latest_issues = [
+                    clip(item, 300)
+                    for item in list(entry.get("latest_verification_issues", []) or [])[:6]
+                ]
+                if latest_issues:
+                    block.append(f"latest_verification_issues={latest_issues}")
+                    issues.extend(latest_issues)
             if entry.get("result"):
-                block.append(f"result={entry['result']}")
+                block.append(f"result={clip(entry['result'], 1200)}")
             if entry.get("trace_summary"):
-                block.append("trace_summary:")
-                block.append(indent_text(entry["trace_summary"], "  "))
+                trace_summary = self._format_trace_summary(entry.get("trace_summary"))
+                if trace_summary:
+                    block.append("trace_summary:")
+                    block.append(indent_text(clip(trace_summary, 800), "  "))
             lines.append("\n".join(block))
 
         summary = [
             f"delegated_subtasks={len(self.task_entries)}",
-            f"done_count={sum(1 for item in self.task_entries if item['status'] == 'done')}",
-            f"current_phase={self._current_phase()}",
-            f"phase_guidance={self._phase_guidance()}",
+            f"done_count={sum(1 for item in self._effective_task_entries() if item['status'] == 'done')}",
         ]
         if completed_items:
-            summary.append(f"all_completed={completed_items}")
+            summary.append(f"all_completed={completed_items[:20]}")
         if issues:
-            summary.append(f"all_issues={issues}")
+            summary.append(f"all_issues={issues[:20]}")
         lines.append("\n".join(summary))
 
-        plan_snapshot = self.task_plan_executor.snapshot()
-        lines.append("task_plan_snapshot:")
-        lines.append(indent_text(json.dumps(plan_snapshot, ensure_ascii=False, indent=2), "  "))
-        return "\n\n".join(lines)
+        return clip("\n\n".join(lines), 24000)
 
-    def _apply_delegate_defaults(self, params: Dict[str, Any], parallel_mode: bool = False) -> Dict[str, Any]:
+    def _next_sub_model(self) -> str:
+        if not self.sub_models:
+            return ""
+        index = self.next_sub_model_index % len(self.sub_models)
+        model = self.sub_models[index]
+        self.next_sub_model_index = (index + 1) % len(self.sub_models)
+        return model
+
+    def _model_for_existing_session(self, session_id: str) -> str:
+        session_id = str(session_id or "").strip()
+        if not session_id:
+            return ""
+        for entry in reversed(self.task_entries):
+            if str(entry.get("session_id", "") or "").strip() == session_id:
+                model = str(entry.get("model", "") or "").strip()
+                if model in self.sub_models:
+                    return model
+        return ""
+
+    def _apply_delegate_defaults(
+        self,
+        params: Dict[str, Any],
+        parallel_mode: bool = False,
+        assign_model: bool = True,
+    ) -> Dict[str, Any]:
         fixed = dict(params or {})
         instruction = str(fixed.get("task_instruction", "")).strip()
         profile = self._infer_profile(instruction)
@@ -214,33 +416,41 @@ class MainAgent(BaseAgent):
             forbidden = set(str(item) for item in (self.meta.get("parallel_forbidden_tools", []) or []))
             fixed["tools"] = [t for t in fixed["tools"] if str(t) not in forbidden]
 
-        routing = self.meta.get("model_routing", {}) or {}
-        routed_model = routing.get(profile)
-        if not fixed.get("model") and routed_model:
-            fixed["model"] = routed_model
-
-        if fixed.get("model") not in self.sub_models and self.sub_models:
-            fixed["model"] = self.sub_models[0]
+        if assign_model:
+            fixed["model"] = self._next_sub_model()
         if "context" not in fixed:
             fixed["context"] = ""
         fixed["worker_profile"] = profile
         return fixed
 
     def _apply_continue_defaults(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        fixed = self._apply_delegate_defaults(params, parallel_mode=False)
+        fixed = dict(params or {})
+        fixed["session_id"] = str(fixed.get("session_id", "")).strip()
+        inherited_model = self._model_for_existing_session(fixed["session_id"])
+        fixed = self._apply_delegate_defaults(
+            fixed,
+            parallel_mode=False,
+            assign_model=not bool(inherited_model),
+        )
+        if inherited_model:
+            fixed["model"] = inherited_model
         fixed["session_id"] = str(fixed.get("session_id", "")).strip()
         return fixed
 
     def _apply_delegate_tasks_defaults(self, params: Dict[str, Any]) -> Dict[str, Any]:
         fixed = dict(params or {})
         tasks = fixed.get("tasks") or []
-        fixed["tasks"] = [
-            self._apply_delegate_defaults(item, parallel_mode=True)
-            for item in tasks
-            if isinstance(item, dict)
-        ]
-        if "max_concurrency" not in fixed or not fixed.get("max_concurrency"):
-            fixed["max_concurrency"] = int(self.meta.get("max_parallel_subtasks", 3))
+        selected_tasks: List[Dict[str, Any]] = []
+        for item in tasks:
+            if not isinstance(item, dict):
+                continue
+            selected = self._apply_delegate_defaults(
+                item,
+                parallel_mode=True,
+            )
+            selected_tasks.append(selected)
+        fixed["tasks"] = selected_tasks
+        fixed["max_concurrency"] = int(self.meta.get("max_parallel_subtasks", 3))
         return fixed
 
     def _tool_params(self, action_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -262,6 +472,167 @@ class MainAgent(BaseAgent):
             return {k: v for k, v in cleaned.items() if k in {"tasks", "max_concurrency"}}
         return params
 
+    def _quality_gate_orchestration(self) -> Dict[str, Any]:
+        return {
+            "task_entries": list(self.task_entries),
+            "current_phase": self._current_phase(),
+            "require_flow_integrity": bool(self.meta.get("require_flow_integrity", True)),
+            "require_verification_passed": bool(self.meta.get("require_verification_passed", True)),
+            "check_duplicate_delegation": bool(self.meta.get("check_duplicate_delegation", True)),
+        }
+
+    def _blocked_by_phase(self, action_name: str, params: Dict[str, Any], forced_final_decision: bool = False) -> str:
+        if forced_final_decision:
+            return ""
+        phase = self._current_phase()
+
+        requested_profiles: List[str] = []
+        if action_name == "continue_task":
+            session_id = str(params.get("session_id", "") or "").strip()
+            existing = next(
+                (
+                    item for item in self.task_entries
+                    if str(item.get("session_id", "") or "").strip() == session_id
+                ),
+                None,
+            )
+            requested_profiles.append(
+                str(existing.get("profile", "") or "").strip()
+                if existing
+                else self._infer_profile(str(params.get("task_instruction", "") or ""))
+            )
+        elif action_name == "delegate_task":
+            requested_profiles.append(self._infer_profile(str(params.get("task_instruction", "") or "")))
+        elif action_name == "delegate_tasks":
+            requested_profiles.extend(
+                self._infer_profile(str(item.get("task_instruction", "") or ""))
+                for item in (params.get("tasks") or [])
+                if isinstance(item, dict)
+            )
+        elif action_name == "complete_task":
+            if not self._phase_entries_done(self.RESEARCH_PROFILES):
+                return "complete_task blocked: research phase is not fully done; continue or retry unfinished research subtasks first."
+            if not self._phase_entries_done({"report_drafting"}):
+                return "complete_task blocked: synthesis/write phase is not fully done; delegate a write subtask first."
+            if not self._phase_entries_done({"verification"}):
+                return "complete_task blocked: verification phase is not fully done; delegate a verify subtask first."
+            return ""
+
+        if not requested_profiles:
+            return ""
+
+        if phase == "research":
+            invalid = [p for p in requested_profiles if p not in self.RESEARCH_PROFILES]
+            if invalid:
+                return (
+                    "delegation blocked: current phase is research; all research subtasks must be status=done "
+                    "before starting write, verification, or completion."
+                )
+        elif phase == "synthesis":
+            invalid = [p for p in requested_profiles if p != "report_drafting"]
+            if invalid:
+                return "delegation blocked: current phase is synthesis; start or finish a write subtask before verification/completion."
+        elif phase == "verification":
+            invalid = [p for p in requested_profiles if p != "verification"]
+            if invalid:
+                return "delegation blocked: current phase is verification; run verification subtasks before completion."
+        return ""
+
+    def _phase_guard_result(self, requested_action: str, params: Dict[str, Any], message: str) -> Dict[str, Any]:
+        return {
+            "success": False,
+            "phase_guard_blocked": True,
+            "requested_action": requested_action,
+            "message": message,
+            "current_phase": self._current_phase(),
+            "next_required_intent": self._next_required_intent(),
+            "allowed_actions": self._allowed_actions_for_phase(),
+            "phase_guidance": self._phase_guidance(),
+            "params": params,
+        }
+
+    def _rewrite_delegate_to_continue_if_retry(
+        self,
+        action_name: str,
+        params: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any], str]:
+        if action_name != "delegate_task":
+            return action_name, params, ""
+        if not bool(self.meta.get("prefer_continue_for_retry", True)):
+            return action_name, params, ""
+
+        instruction = str(params.get("task_instruction", "") or "")
+        context = str(params.get("context", "") or "")
+        override_text = f"{instruction}\n{context}".lower()
+        if any(token in override_text for token in ["force_new_session", "new_session", "重新开始", "新开session"]):
+            return action_name, params, ""
+
+        profile = self._infer_profile(instruction)
+        if profile not in self.RESEARCH_PROFILES:
+            return action_name, params, ""
+
+        fingerprint = self._task_fingerprint(instruction, profile)
+        candidate: Dict[str, Any] | None = None
+        for entry in reversed(self.task_entries):
+            if bool(entry.get("superseded", False)):
+                continue
+            session_id = str(entry.get("session_id", "") or "").strip()
+            if not session_id:
+                continue
+            if str(entry.get("worker_state", "") or "").strip().lower() == "running":
+                continue
+            entry_fingerprint = str(entry.get("fingerprint", "") or "").strip()
+            if not entry_fingerprint:
+                entry_fingerprint = self._task_fingerprint(
+                    str(entry.get("instruction", "")),
+                    str(entry.get("profile", "")),
+                )
+                entry["fingerprint"] = entry_fingerprint
+            if entry_fingerprint != fingerprint:
+                continue
+            if self._is_done_result(entry):
+                continue
+            candidate = entry
+            break
+
+        if not candidate:
+            return action_name, params, ""
+
+        issues = list(candidate.get("issues", []) or [])
+        prior_message = str(candidate.get("message", "") or "").strip()
+        prior_result = str(candidate.get("result", "") or "").strip()
+        continuation_notes = [
+            "Continue the existing partial research session instead of starting a duplicate session.",
+            f"Previous status: {candidate.get('status', '')}",
+        ]
+        if prior_message:
+            continuation_notes.append(f"Previous message: {prior_message}")
+        if issues:
+            continuation_notes.append(f"Previous issues: {issues}")
+        if prior_result:
+            continuation_notes.append(f"Previous partial result: {prior_result[:1200]}")
+
+        merged_context = context.strip()
+        continuation_context = "\n".join(continuation_notes)
+        if merged_context:
+            merged_context = f"{merged_context}\n\n{continuation_context}"
+        else:
+            merged_context = continuation_context
+
+        rewritten = dict(params)
+        rewritten["session_id"] = str(candidate.get("session_id", "") or "").strip()
+        rewritten["context"] = merged_context
+        if not rewritten.get("model") and candidate.get("model"):
+            rewritten["model"] = candidate.get("model")
+        if not rewritten.get("tools") and candidate.get("tools"):
+            rewritten["tools"] = candidate.get("tools")
+
+        reason = (
+            "delegate_task rewritten to continue_task because an unfinished research session "
+            f"with the same fingerprint already exists: {rewritten['session_id']}"
+        )
+        return "continue_task", rewritten, reason
+
     async def step(self, observation, history, **kwargs) -> tuple[Dict[str, Any], str]:
         self.attempt += 1
         subtask_history = self._format_subtask_history()
@@ -270,9 +641,13 @@ class MainAgent(BaseAgent):
             raise ValueError("MainAgent requires prompt_builder")
 
         prompt_meta = dict(self.meta)
+        forced_final_decision = bool(kwargs.get("forced_final_decision", False))
         prompt_meta["current_phase"] = self._current_phase()
+        prompt_meta["next_required_intent"] = self._next_required_intent()
+        prompt_meta["allowed_actions"] = self._allowed_actions_for_phase(forced_final_decision)
+        prompt_meta["phase_intent_guidance"] = self._phase_intent_guidance(forced_final_decision)
         prompt_meta["phase_guidance"] = self._phase_guidance()
-        prompt_meta["forced_final_decision"] = bool(kwargs.get("forced_final_decision", False))
+        prompt_meta["forced_final_decision"] = forced_final_decision
         prompt = self.prompt_builder.build_prompt(
             instruction=self.instruction,
             meta=prompt_meta,
@@ -286,11 +661,9 @@ class MainAgent(BaseAgent):
         logger.log_to_file(LogLevel.INFO, f"[MainAgent] Prompt:\n{prompt}\n")
        
         response = await self.llm(prompt)
-        logger.log_to_file(LogLevel.INFO, f"[MainAgent] Raw response:\n{response}\n")
         decision = parse_json_response(response)
         action_name = decision.get("action")
         params = decision.get("params", {})
-        forced_final_decision = bool(kwargs.get("forced_final_decision", False))
         if forced_final_decision and action_name != "complete_task":
             report_path = str(self.meta.get("report_path", "") or "")
             findings_path = str(self.meta.get("findings_path", "") or "")
@@ -318,10 +691,7 @@ class MainAgent(BaseAgent):
 
         if action_name == "delegate_task":
             params = self._apply_delegate_defaults(params, parallel_mode=False)
-            task_ids = self.task_plan_executor.create_or_extend([params])  # 创建task plan
-            self.latest_plan_task_ids = task_ids
-            if task_ids:
-                self.task_plan_executor.mark_running(task_ids[0])
+            self.latest_plan_task_ids = []
         elif action_name == "continue_task":
             params = self._apply_continue_defaults(params)
             self.latest_plan_task_ids = []
@@ -329,14 +699,60 @@ class MainAgent(BaseAgent):
             self.latest_plan_task_ids = []
         elif action_name == "delegate_tasks":
             params = self._apply_delegate_tasks_defaults(params)
-            task_ids = self.task_plan_executor.create_or_extend(params.get("tasks") or [])
-            self.latest_plan_task_ids = task_ids
-            for task_id in task_ids:
-                self.task_plan_executor.mark_running(task_id)
+            self.latest_plan_task_ids = []
         else:
             self.latest_plan_task_ids = []
 
         # 调用__call__
+        action_name, params, rewrite_reason = self._rewrite_delegate_to_continue_if_retry(action_name, params)
+        if rewrite_reason:
+            params = self._apply_continue_defaults(params)
+            decision = dict(decision)
+            decision["action"] = action_name
+            decision["params"] = params
+            decision["reasoning"] = (
+                str(decision.get("reasoning", "") or "").strip()
+                + f"\n{rewrite_reason}"
+            ).strip()
+
+        allowed_actions = self._allowed_actions_for_phase(forced_final_decision)
+        if action_name not in allowed_actions:
+            phase_block = (
+                f"action {action_name} blocked by phase intent {self._next_required_intent()}; "
+                f"allowed actions: {allowed_actions}"
+            )
+        else:
+            phase_block = self._blocked_by_phase(action_name, params, forced_final_decision=forced_final_decision)
+        if phase_block:
+            result = self._phase_guard_result(action_name, params, phase_block)
+            guard_params = {"requested_action": action_name, "params": params}
+            self._update_context("phase_guard", guard_params, result)
+            logger.log_to_file(
+                LogLevel.INFO,
+                f"[MainAgent] Parsed decision:\n{json.dumps(decision, ensure_ascii=False, indent=2)}\n",
+            )
+            return {
+                "action": "phase_guard",
+                "params": guard_params,
+                "result": result,
+                "subtask_history": subtask_history,
+            }, response
+
+        if action_name == "delegate_task":
+            task_ids = self.task_plan_executor.create_or_extend([params])
+            self.latest_plan_task_ids = task_ids
+            if task_ids:
+                self.task_plan_executor.mark_running(task_ids[0])
+        elif action_name == "delegate_tasks":
+            task_ids = self.task_plan_executor.create_or_extend(params.get("tasks") or [])
+            self.latest_plan_task_ids = task_ids
+            for task_id in task_ids:
+                self.task_plan_executor.mark_running(task_id)
+
+        if action_name == "complete_task":
+            params = dict(params or {})
+            params["orchestration"] = self._quality_gate_orchestration()
+
         tool = next((item for item in self.tools if item.name == action_name), None)
         if tool is None:
             raise ValueError(f"Unknown action from MainAgent: {action_name}")
@@ -357,9 +773,13 @@ class MainAgent(BaseAgent):
 
     def _append_task_entry(self, base_params: Dict[str, Any], task_result: Dict[str, Any]) -> None:
         finish_result = task_result.get("finish_result", {})
+        worker_state = str(task_result.get("worker_state", "") or "").strip().lower()
+        status = str(finish_result.get("status", "") or "").strip().lower()
+        if not status:
+            status = worker_state or "partial"
         entry = {
             "attempt": self.attempt,
-            "status": finish_result.get("status", "partial"),
+            "status": status,
             "instruction": base_params.get("task_instruction", ""),
             "model": base_params.get("model", "unknown"),
             "profile": self._infer_profile(str(base_params.get("task_instruction", ""))),
@@ -373,12 +793,83 @@ class MainAgent(BaseAgent):
             "session_id": task_result.get("session_id", ""),
             "session_rounds": task_result.get("session_rounds", 1),
             "worker_reused": task_result.get("worker_reused", False),
-            "worker_state": task_result.get("worker_state", ""),
+            "worker_state": worker_state,
         }
+        latest_verification = self._latest_verification_from_trace(entry.get("trace_summary", ""))
+        if latest_verification:
+            entry["latest_verification_passed"] = latest_verification["passed"]
+            entry["latest_verification_issues"] = latest_verification["issues"]
+            entry["latest_verification_step"] = latest_verification["step"]
+            if (
+                entry["profile"] in {"report_drafting", "verification"}
+                and not latest_verification["passed"]
+                and latest_verification["issues"]
+            ):
+                existing_issues = [str(item) for item in list(entry.get("issues", []) or [])]
+                for issue in latest_verification["issues"]:
+                    if issue not in existing_issues:
+                        existing_issues.append(issue)
+                entry["issues"] = existing_issues
+        entry["fingerprint"] = self._task_fingerprint(str(entry.get("instruction", "")), str(entry.get("profile", "")))
+        session_id = str(entry.get("session_id", "") or "").strip()
+        if session_id:
+            for idx, existing in enumerate(self.task_entries):
+                if str(existing.get("session_id", "") or "").strip() == session_id:
+                    merged = dict(existing)
+                    merged.update({key: value for key, value in entry.items() if value not in ("", [], {})})
+                    merged["status"] = status
+                    merged["worker_state"] = worker_state
+                    merged["fingerprint"] = merged.get("fingerprint") or entry["fingerprint"]
+                    self.task_entries[idx] = merged
+                    self._mark_superseded_retries(merged)
+                    return
         self.task_entries.append(entry)
+        self._mark_superseded_retries(entry)
+
+    def _mark_superseded_retries(self, new_entry: Dict[str, Any]) -> None:
+        if not self._is_done_result(new_entry):
+            return
+        fingerprint = str(new_entry.get("fingerprint", "") or "").strip()
+        session_id = str(new_entry.get("session_id", "") or "").strip()
+        if not fingerprint:
+            return
+        for existing in self.task_entries:
+            if existing is new_entry:
+                continue
+            if str(existing.get("session_id", "") or "").strip() == session_id:
+                continue
+            existing_fingerprint = str(existing.get("fingerprint", "") or "").strip()
+            if not existing_fingerprint:
+                existing_fingerprint = self._task_fingerprint(
+                    str(existing.get("instruction", "")),
+                    str(existing.get("profile", "")),
+                )
+                existing["fingerprint"] = existing_fingerprint
+            if existing_fingerprint != fingerprint:
+                continue
+            if self._is_done_result(existing):
+                continue
+            existing["superseded"] = True
+            existing["superseded_by"] = session_id
+
+    def _mark_matching_plan_finished(self, item: Dict[str, Any]) -> None:
+        finish = item.get("finish_result", {}) or {}
+        status = str(finish.get("status", "") or "").strip().lower()
+        if not status or status == "running":
+            return
+        instruction = str(item.get("task_instruction", "") or "")
+        model = str(item.get("model", "") or "")
+        for task_id, spec in self.task_plan_executor.task_map.items():
+            record = self.task_plan_executor.runtime.get(task_id)
+            if record is None or record.state.value != "running":
+                continue
+            if spec.task_instruction == instruction and (not model or spec.model == model):
+                self.task_plan_executor.mark_finished(task_id, finish)
+                return
 
     def _update_context(self, action: str, params: Dict[str, Any], result: Dict[str, Any]) -> None:
         summary = [f"[attempt {self.attempt}] action={action}"]
+        event_summary: List[str] = []
 
         if action == "delegate_task":
             self._append_task_entry(params, result)
@@ -414,7 +905,28 @@ class MainAgent(BaseAgent):
                     },
                     item,
                 )
+                self._mark_matching_plan_finished(item)
             summary.append(f"wait_summary={result.get('summary', {})}")
+            event_type = str(params.get("_event_type", "") or "").strip()
+            if event_type in {"auto_wait", "final_wait", "forced_synthesis_wait"}:
+                wait_summary = result.get("summary", {}) if isinstance(result, dict) else {}
+                label = {
+                    "auto_wait": "auto_wait",
+                    "final_wait": "final_wait",
+                    "forced_synthesis_wait": "forced_synthesis_wait",
+                }.get(event_type, "worker_wait")
+                event_summary.extend(
+                    [
+                        f"[attempt {self.attempt}] event={label}",
+                        f"waited_for={wait_summary.get('waited_for', [])}",
+                        f"completed={wait_summary.get('completed', 0)}",
+                        f"still_running={wait_summary.get('still_running', 0)}",
+                    ]
+                )
+                if wait_summary.get("merged_findings"):
+                    event_summary.append(f"merged_findings={wait_summary.get('merged_findings')}")
+                if wait_summary.get("merged_scratchpads"):
+                    event_summary.append(f"merged_scratchpads={wait_summary.get('merged_scratchpads')}")
 
         if action == "close_worker_session":
             summary.append(f"closed_session={result.get('session_id', params.get('session_id', ''))}")
@@ -435,12 +947,26 @@ class MainAgent(BaseAgent):
             summary.append(f"confidence={params.get('confidence', '')}")
             if not result.get("quality_gate_passed", False):
                 summary.append(f"quality_issues={result.get('issues', [])}")
+                event_summary.extend(
+                    [
+                        f"[attempt {self.attempt}] event=quality_gate_issue",
+                        f"issues={result.get('issues', [])}",
+                    ]
+                )
 
-        plan_snapshot = self.task_plan_executor.snapshot()
-        summary.append(f"current_phase={self._current_phase()}")
-        summary.append(f"plan_state={json.dumps(plan_snapshot, ensure_ascii=False)}")
+        if action == "phase_guard":
+            summary.append(f"requested_action={params.get('requested_action', '')}")
+            summary.append(f"blocked_reason={result.get('message', '')}")
+            event_summary.extend(
+                [
+                    f"[attempt {self.attempt}] event=phase_guard",
+                    f"requested_action={params.get('requested_action', '')}",
+                    f"blocked_reason={result.get('message', '')}",
+                ]
+            )
 
-        self.context = "\n".join(summary) + "\n\n" + self.context
+        if event_summary:
+            self.context = ("\n".join(event_summary) + "\n\n" + self.context)[:6000]
         self.history.append({"attempt": self.attempt, "action": action, "result": result})
 
     async def run(self, request: Optional[str] = None) -> str:
@@ -449,4 +975,5 @@ class MainAgent(BaseAgent):
 
 # Backward compatibility alias
 MainOrchestratorAgent = MainAgent
+
 

@@ -9,18 +9,13 @@ from typing import Any, Dict, List
 from agents.sub_agent import SubAgent
 from base.engine.async_llm import LLMsConfig, create_llm_instance
 from core.runner import AgentRunner
+from core.trace import summarize_trace_for_decision
 from project.build_project import _build_runtime_components, _resolve_profile
 from project.prompts import GenericSubPromptBuilder
 
 
 def _format_trace(trace) -> str:
-    if not trace:
-        return "No steps executed."
-    lines: List[str] = []
-    for idx, step in enumerate(trace, 1):
-        lines.append(f"Step {idx}: {step.action}")
-        lines.append(f"  Observation: {step.observation}")
-    return "\n".join(lines)
+    return summarize_trace_for_decision(trace)
 
 
 async def _run_worker(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -44,6 +39,10 @@ async def _run_worker(request: Dict[str, Any]) -> Dict[str, Any]:
         max_subagent_steps=max_steps,
         profile=profile,
     )
+    if hasattr(env, "meta_data") and isinstance(env.meta_data, dict):
+        env.meta_data["task_label"] = str(request.get("task_label", "") or "")
+        env.meta_data["worker_session_id"] = str(request.get("session_id", "") or "")
+        env.meta_data["parallel_task_index"] = int(request.get("parallel_task_index", 0) or 0)
 
     llm = create_llm_instance(LLMsConfig.default().get(model))
     agent = SubAgent(

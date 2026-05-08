@@ -22,14 +22,14 @@ class WriteReportSectionTool(BaseAction):
         }
     )
     report_path: Path = Field(default=Path("report.md"), exclude=True)
-    report_title: str = Field(default="任务分析报告", exclude=True)
+    report_title: str = Field(default="Task Analysis Report", exclude=True)
 
     class Config:
         arbitrary_types_allowed = True
 
     @staticmethod
     def _build_default_report_header(title: str) -> str:
-        safe_title = str(title or "任务分析报告").strip() or "任务分析报告"
+        safe_title = str(title or "Task Analysis Report").strip() or "Task Analysis Report"
         return f"# {safe_title}\n"
 
     async def __call__(self, section_title: str, content: str) -> Dict[str, Any]:

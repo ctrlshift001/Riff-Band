@@ -558,6 +558,7 @@ class AOrchestraShell:
                 sources_dir=self._cfg.sources_dir,
                 output_dir=output_dir,
                 max_subagent_steps=self._cfg.max_subagent_steps,
+                max_parallel_subtasks=self._cfg.max_parallel_subtasks,
                 subagent_process_timeout_seconds=self._cfg.subagent_process_timeout_seconds,
                 profile_name=self._profile_name,
             )
@@ -571,6 +572,7 @@ class AOrchestraShell:
                 output_dir=output_dir,
                 max_attempts=self._cfg.max_attempts,
                 max_subagent_steps=self._cfg.max_subagent_steps,
+                max_parallel_subtasks=self._cfg.max_parallel_subtasks,
                 subagent_process_timeout_seconds=self._cfg.subagent_process_timeout_seconds,
                 profile_name=self._profile_name,
             )

@@ -3,14 +3,51 @@ from __future__ import annotations
 from typing import Any, List, Optional
 
 from pydantic import Field
+import json
 import re
 from base.agent.base_agent import BaseAgent
 from base.engine.logs import LogLevel, logger
-from base.engine.utils import parse_llm_action_response, parse_llm_output
+from base.engine.utils import parse_llm_action_response
 from agents.memory import Memory
 from core.interfaces import Action, TaskContext
 from core.message import ContentPart
 
+
+
+def _extract_optional_memory(resp: str) -> Optional[str]:
+    """Best-effort extraction for the optional memory field without warning noise."""
+    if not resp:
+        return None
+
+    candidates: list[str] = []
+    json_block = re.search(r"```json\s*([\s\S]*?)```", resp)
+    if json_block:
+        candidates.append(json_block.group(1).strip())
+    generic_block = re.search(r"```\s*([\s\S]*?)```", resp)
+    if generic_block:
+        candidates.append(generic_block.group(1).strip())
+    if "{" in resp and "}" in resp:
+        blob = re.search(r"\{[\s\S]*\}", resp)
+        if blob:
+            candidates.append(blob.group(0))
+    candidates.append(resp.strip())
+
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(payload, dict) and "memory" in payload:
+            value = payload.get("memory")
+            return str(value) if value is not None else None
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict) and "memory" in item:
+                    value = item.get("memory")
+                    return str(value) if value is not None else None
+
+    match = re.search(r"memory\s*[:=]\s*(.+)", resp)
+    return match.group(1).strip() if match else None
 
 
 class SubAgent(BaseAgent):
@@ -131,6 +168,35 @@ class SubAgent(BaseAgent):
         }
     
 
+    def _build_search_disabled_finish(self) -> Action:
+        return {
+            "action": "finish",
+            "params": {
+                "status": "partial",
+                "message": "联网搜索未启用，无法完成需要外部信息的任务。",
+                "completed": [],
+                "issues": [
+                    "缺少可用联网搜索能力。",
+                    "请配置 SERPER_API_KEY，或启用可用的搜索后端。",
+                ],
+                "result": "请配置可用搜索凭据后重试。",
+            },
+            "memory": "由于联网搜索不可用，执行已提前停止。",
+        }
+
+    def _build_search_access_finish(self, error: str) -> Action:
+        return {
+            "action": "finish",
+            "params": {
+                "status": "partial",
+                "message": "联网搜索授权失败，无法继续收集外部证据。",
+                "completed": [],
+                "issues": [f"联网搜索错误: {error}"],
+                "result": "请修复 Serper 授权或启用可用搜索后端后重试。",
+            },
+            "memory": "由于联网搜索授权失败，执行已停止。",
+        }
+
     async def step(
         self,
         observation: Any,
@@ -145,8 +211,9 @@ class SubAgent(BaseAgent):
             source_count = int(observation.get("source_count", 0))
             search_enabled = bool(observation.get("search_enabled", False))
             if source_count == 0 and not search_enabled:
-                action = self._build_fast_partial_finish()
+                action = self._build_search_disabled_finish()
                 raw_response = "自动结束：本地资料为空且联网搜索未启用。"
+                raw_response = "auto finish: web search is not enabled."
                 label = f"[{self.task_label}]" if self.task_label else "[task_unknown]"
                 logger.agent_action(f"[ResearchSubAgent] {label}Action: {action}")
                 return action, raw_response, "No prompt sent due to fast-finish guard."
@@ -163,8 +230,9 @@ class SubAgent(BaseAgent):
                 first_obs = history[0].observation if history else {}
                 source_count = int(first_obs.get("source_count", 0)) if isinstance(first_obs, dict) else 0
                 if source_count == 0 and unauthorized:
-                    action = self._build_no_access_finish(error_text)
+                    action = self._build_search_access_finish(error_text)
                     raw_response = "自动结束：本地资料为空且联网搜索未授权。"
+                    raw_response = "auto finish: web search is unauthorized."
                     label = f"[{self.task_label}]" if self.task_label else "[task_unknown]"
                     logger.agent_action(f"[ResearchSubAgent] {label}Action: {action}")
                     return action, raw_response, "No prompt sent due to web-access guard."
@@ -187,8 +255,7 @@ class SubAgent(BaseAgent):
         
 
         # Parse response
-        memory_content = parse_llm_output(response, "memory")
-        thinking = memory_content.get("memory") if isinstance(memory_content, dict) else None
+        thinking = _extract_optional_memory(response)
         action = parse_llm_action_response(response)
 
         
@@ -222,8 +289,9 @@ class SubAgent(BaseAgent):
             source_count = int(observation.get("source_count", 0))
             search_enabled = bool(observation.get("search_enabled", False))
             if source_count == 0 and not search_enabled:
-                action = self._build_fast_partial_finish()
+                action = self._build_search_disabled_finish()
                 raw_response = "自动结束：本地资料为空且联网搜索未启用。"
+                raw_response = "auto finish: web search is not enabled."
                 yield action, raw_response, "No prompt sent due to fast-finish guard."
                 return
 
@@ -239,8 +307,9 @@ class SubAgent(BaseAgent):
                 first_obs = history[0].observation if history else {}
                 source_count = int(first_obs.get("source_count", 0)) if isinstance(first_obs, dict) else 0
                 if source_count == 0 and unauthorized:
-                    action = self._build_no_access_finish(error_text)
+                    action = self._build_search_access_finish(error_text)
                     raw_response = "自动结束：本地资料为空且联网搜索未授权。"
+                    raw_response = "auto finish: web search is unauthorized."
                     yield action, raw_response, "No prompt sent due to web-access guard."
                     return
 
@@ -264,8 +333,7 @@ class SubAgent(BaseAgent):
         full_response = "".join(full_response_parts)
 
         # Parse response
-        memory_content = parse_llm_output(full_response, "memory")
-        thinking = memory_content.get("memory") if isinstance(memory_content, dict) else None
+        thinking = _extract_optional_memory(full_response)
         action = parse_llm_action_response(full_response)
 
         # Memory
