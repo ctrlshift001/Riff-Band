@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional
 
 from rich.console import Console, Group, RenderableType
@@ -29,16 +30,17 @@ from core.message import (
     WorkerWaitEnd,
     WorkerWaitStart,
 )
+from ui import theme
 
 # Mapping status → icon
 _STATUS_ICONS: Dict[str, str] = {
-    "done": "[bold green]✓[/]",
-    "partial": "[bold yellow]~[/]",
-    "blocked": "[bold red]✗[/]",
-    "timeout": "[bold red]⏱[/]",
-    "failed": "[bold red]✗[/]",
-    "running": "[bold cyan]◎[/]",
-    "succeeded": "[bold green]✓[/]",
+    "done": f"[{theme.SUCCESS_BOLD}]✓[/]",
+    "partial": f"[{theme.WARNING_BOLD}]~[/]",
+    "blocked": f"[{theme.ERROR_BOLD}]✗[/]",
+    "timeout": f"[{theme.ERROR_BOLD}]⏱[/]",
+    "failed": f"[{theme.ERROR_BOLD}]✗[/]",
+    "running": f"[{theme.INFO_BOLD}]◎[/]",
+    "succeeded": f"[{theme.SUCCESS_BOLD}]✓[/]",
 }
 
 
@@ -59,6 +61,70 @@ class MessageRenderer:
     def _label_for(self, session_id: str) -> str:
         return self._worker_labels.get(session_id, session_id[:8])
 
+    @staticmethod
+    def _collapse_text(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()
+
+    @classmethod
+    def _short_task_label(cls, label: str, fallback: str = "task") -> str:
+        text = cls._collapse_text(label)
+        match = re.search(r"\btask[_-]?\d+\b", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(0).replace("-", "_")
+        return text.split(" ", 1)[0] if text else fallback
+
+    @classmethod
+    def _task_summary(cls, instruction: str, label: str = "", limit: int = 96) -> str:
+        label_text = cls._collapse_text(label)
+        label_match = re.match(r"^(task[_-]?\d+)\s+(.+)$", label_text, flags=re.IGNORECASE)
+        if label_match:
+            summary = label_match.group(2).strip()
+            if len(summary) > limit:
+                summary = summary[: max(0, limit - 1)].rstrip() + "..."
+            return summary
+
+        text = str(instruction or "").strip()
+        for marker in ("具体任务:", "具体任务：", "task:", "Task:"):
+            if marker in text:
+                text = text.split(marker, 1)[1].strip()
+                break
+
+        lines: List[str] = []
+        skip_prefixes = (
+            "任务类型:",
+            "任务类型：",
+            "期望产出:",
+            "期望产出：",
+            "完成标准:",
+            "完成标准：",
+            "context:",
+            "Context:",
+        )
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or any(line.startswith(prefix) for prefix in skip_prefixes):
+                continue
+            lines.append(line)
+
+        summary = cls._collapse_text(" ".join(lines) if lines else text)
+        if label_text and summary.startswith(label_text):
+            summary = summary[len(label_text):].strip()
+        if len(summary) > limit:
+            summary = summary[: max(0, limit - 1)].rstrip() + "..."
+        return summary
+
+    @staticmethod
+    def _format_cost(cost: float, cost_known: bool = True) -> str:
+        return f"${cost:.4f}" if cost_known else "N/A"
+
+    @staticmethod
+    def _format_tokens(total: int, input_tokens: int = 0, output_tokens: int = 0) -> str:
+        if total <= 0:
+            return "0"
+        if input_tokens or output_tokens:
+            return f"{total:,} (in={input_tokens:,}, out={output_tokens:,})"
+        return f"{total:,}"
+
     # ── per-message renderers ─────────────────────────────────────
 
     def render(self, msg) -> Optional[RenderableType]:
@@ -72,7 +138,7 @@ class MessageRenderer:
         self._step_buf = ""
         self._in_json = False
         return Text.assemble(
-            ("  ◌ ", "bold cyan"),
+            ("  ◌ ", theme.ACCENT),
             (f"[{msg.attempt}/{msg.max_attempts}] ", "dim"),
             ("MainAgent planning...", "bold"),
         )
@@ -92,8 +158,8 @@ class MessageRenderer:
         lines: List[RenderableType] = [
             Text.assemble(
                 ("  ", ""),
-                (" → ", "bold cyan"),
-                (action, "bold cyan"),
+                (" → ", theme.ACCENT),
+                (action, theme.ACCENT),
             )
         ]
         if reasoning:
@@ -103,7 +169,7 @@ class MessageRenderer:
     def _render_PhaseTransition(self, msg: PhaseTransition) -> RenderableType:
         return Rule(
             f"[bold]Phase: {msg.from_phase} → {msg.to_phase}[/]",
-            style="yellow",
+            style=theme.BORDER,
             align="left",
         )
 
@@ -112,7 +178,7 @@ class MessageRenderer:
             self._worker_labels[msg.session_id] = msg.label
         short_task = (msg.task_instruction or "")[:60]
         return Text.assemble(
-            ("  [>] ", "bold cyan"),
+            ("  [>] ", theme.ACCENT),
             (f"{msg.label}", "bold"),
             (f"\n      {short_task}" if short_task else "", "dim"),
         )
@@ -148,21 +214,26 @@ class MessageRenderer:
         return None
 
     def _render_SubAgentCreated(self, msg: SubAgentCreated) -> RenderableType:
-        """Show agent assembly with four-tuple info."""
+        """Show compact agent assembly info."""
+        task_label = self._short_task_label(msg.task_label, fallback=msg.agent_id or "task")
+        summary = self._task_summary(msg.task_instruction, msg.task_label)
+        task_text = f"{task_label}  {summary}" if summary else task_label
         lines: List[RenderableType] = [
             Text.assemble(
-                ("  [+] ", "bold blue"),
+                ("  [+] ", theme.ACCENT),
                 (f"Agent {msg.agent_id or 'sub'} assembled", "bold"),
             ),
             Text.assemble(
-                ("      Task:  ", "dim"),
-                (msg.task_label or msg.task_instruction[:40], ""),
+                ("      Task: ", "dim"),
+                (task_text, ""),
             ),
+        ]
+        lines.append(
             Text.assemble(
                 ("      Model: ", "dim"),
                 (msg.model or "default", ""),
-            ),
-        ]
+            )
+        )
         if msg.tools:
             lines.append(
                 Text.assemble(
@@ -184,7 +255,7 @@ class MessageRenderer:
 
     def _render_SubAgentStart(self, msg: SubAgentStart) -> RenderableType:
         return Text.assemble(
-            ("  [sub] ", "cyan"),
+            ("  [sub] ", theme.ACCENT),
             (f"{msg.label} ", "bold"),
             (f"({msg.model})", "dim"),
         )
@@ -211,33 +282,60 @@ class MessageRenderer:
         return text
 
     def _render_TaskComplete(self, msg: TaskComplete) -> RenderableType:
-        icon = "[bold green]✓[/]" if msg.success else "[bold red]✗[/]"
+        final = msg.final_result or {}
+        result_status = str(final.get("status", "") or "").lower()
+        has_result = bool(final)
+        if msg.quality_gate_passed:
+            icon = f"[{theme.SUCCESS_BOLD}]✓[/]"
+            status_text = "PASSED"
+            border_style = theme.SUCCESS
+        elif has_result and result_status in {"partial", "blocked"}:
+            icon = f"[{theme.WARNING_BOLD}]~[/]"
+            status_text = result_status.upper()
+            border_style = theme.WARNING
+        elif has_result:
+            icon = f"[{theme.WARNING_BOLD}]![/]"
+            status_text = "COMPLETED WITH ISSUES"
+            border_style = theme.WARNING
+        else:
+            icon = f"[{theme.ERROR_BOLD}]✗[/]"
+            status_text = "FAILED"
+            border_style = theme.ERROR
+
         table = Table.grid(padding=(0, 2))
         table.add_column(style="dim")
         table.add_column()
-        table.add_row("Status", f"{icon} {'PASSED' if msg.quality_gate_passed else 'FAILED'}")
+        table.add_row("Status", f"{icon} {status_text}")
         table.add_row("Attempts", str(msg.attempts))
-        table.add_row("Total cost", f"${msg.total_cost:.4f}")
+        table.add_row("Cost", self._format_cost(msg.total_cost, msg.cost_known))
+        table.add_row(
+            "Total token",
+            self._format_tokens(msg.total_tokens, msg.input_tokens, msg.output_tokens),
+        )
+        if final.get("report_path"):
+            table.add_row("Report", str(final.get("report_path")))
+        if final.get("issues"):
+            table.add_row("Issues", "; ".join(str(item) for item in list(final.get("issues", []))[:3]))
         if msg.summary:
             table.add_row("Summary", msg.summary[:200])
         return Panel(
             table,
             title="[bold]Task Complete[/]",
-            border_style="green" if msg.success else "red",
+            border_style=border_style,
         )
 
     def _render_TaskCancelled(self, msg: TaskCancelled) -> RenderableType:
         return Panel(
-            Text(msg.message, style="yellow"),
-            title="[bold yellow]Cancelled[/]",
-            border_style="yellow",
+            Text(msg.message, style=theme.MUTED),
+            title=f"[{theme.ACCENT}]Cancelled[/]",
+            border_style=theme.BORDER,
         )
 
     def _render_ErrorMessage(self, msg: ErrorMessage) -> RenderableType:
         return Panel(
-            Text(f"{msg.error_type}: {msg.message}", style="red"),
-            border_style="red",
-            title="[bold red]Error[/]",
+            Text(f"{msg.error_type}: {msg.message}", style=theme.ERROR),
+            border_style=theme.ERROR,
+            title=f"[{theme.ERROR_BOLD}]Error[/]",
         )
 
 
@@ -287,11 +385,13 @@ class SimpleRenderer:
 
     def _render_SubAgentCreated(self, msg):
         tools = ", ".join(msg.tools[:4]) if msg.tools else "all"
-        task = msg.task_label or msg.task_instruction[:30]
-        print(f"  [+] Agent {msg.agent_id or 'sub'} | {task} | {msg.model} | {tools}")
+        task = MessageRenderer._short_task_label(msg.task_label, fallback=msg.agent_id or "task")
+        summary = MessageRenderer._task_summary(msg.task_instruction, msg.task_label, limit=72)
+        task_text = f"{task}  {summary}" if summary else task
+        print(f"  [+] Agent {msg.agent_id or 'sub'} | {task_text} | {msg.model} | {tools}")
 
     def _render_ContentPart(self, msg):
-        pass  # suppress raw LLM tokens in TUI
+        pass  # suppress raw LLM tokens in the CLI
 
     def _render_SubAgentStart(self, msg):
         print(f"  [sub] start: {msg.label} ({msg.model})")
@@ -307,7 +407,16 @@ class SimpleRenderer:
 
     def _render_TaskComplete(self, msg):
         icon = "✓" if msg.success else "✗"
-        print(f"\n  [{icon}] Task complete | quality_gate_passed={msg.quality_gate_passed} | attempts={msg.attempts} | cost=${msg.total_cost:.4f}")
+        cost = MessageRenderer._format_cost(msg.total_cost, msg.cost_known)
+        tokens = MessageRenderer._format_tokens(
+            msg.total_tokens,
+            msg.input_tokens,
+            msg.output_tokens,
+        )
+        print(
+            f"\n  [{icon}] Task complete | quality_gate_passed={msg.quality_gate_passed} "
+            f"| attempts={msg.attempts} | Cost: {cost} | Total token: {tokens}"
+        )
 
     def _render_TaskCancelled(self, msg):
         print(f"\n  [!] Cancelled — {msg.message}")

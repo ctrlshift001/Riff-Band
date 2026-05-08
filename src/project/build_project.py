@@ -843,8 +843,11 @@ class AgentProject:
 
         attempts: List[Dict[str, Any]] = []
         final_result = None
+        last_complete_result = None
         prev_phase = ""
         accumulated_cost = 0.0
+        accumulated_input_tokens = 0
+        accumulated_output_tokens = 0
 
         for attempt_idx in range(self.max_attempts):
             if cancel_event is not None and cancel_event.is_set():
@@ -911,6 +914,8 @@ class AgentProject:
                     for item in wait_results:
                         finish = item.get("finish_result", {}) or {}
                         accumulated_cost += float(item.get("cost", 0.0) or 0.0)
+                        accumulated_input_tokens += int(item.get("input_tokens", 0) or 0)
+                        accumulated_output_tokens += int(item.get("output_tokens", 0) or 0)
 
             # Emit token status after each orchestration step
             llm_summary = (
@@ -930,6 +935,7 @@ class AgentProject:
                 continue
 
             result = action.get("result", {})
+            last_complete_result = result
             if result.get("done") and result.get("quality_gate_passed"):
                 final_result = result
                 break
@@ -974,12 +980,22 @@ class AgentProject:
             attempts.append({"action": action, "raw_response": raw_response})
             if action["action"] == "complete_task":
                 result = action.get("result", {})
+                last_complete_result = result
                 if result.get("done") and result.get("quality_gate_passed"):
                     final_result = result
 
         # Aggregate main agent's own LLM cost
-        accumulated_cost += self.main_agent.get_usage_cost()
+        main_usage = (
+            self.main_agent.llm.get_usage_summary()
+            if getattr(self.main_agent, "llm", None)
+            else {}
+        )
+        accumulated_cost += float(main_usage.get("total_cost", 0.0) or 0.0)
+        accumulated_input_tokens += int(main_usage.get("total_input_tokens", 0) or 0)
+        accumulated_output_tokens += int(main_usage.get("total_output_tokens", 0) or 0)
+        total_tokens = accumulated_input_tokens + accumulated_output_tokens
 
+        display_result = final_result or last_complete_result
         passed = (
             final_result is not None
             and final_result.get("quality_gate_passed", False)
@@ -989,15 +1005,19 @@ class AgentProject:
             quality_gate_passed=passed,
             attempts=len(attempts),
             total_cost=accumulated_cost,
+            cost_known=not (total_tokens > 0 and accumulated_cost == 0),
+            total_tokens=total_tokens,
+            input_tokens=accumulated_input_tokens,
+            output_tokens=accumulated_output_tokens,
             summary=str(
-                (final_result or {}).get("executive_summary", "")
+                (display_result or {}).get("executive_summary", "")
             ),
-            final_result=final_result,
+            final_result=display_result,
         )
 
         self._run_result = {
             "attempts": attempts,
-            "final_result": final_result,
+            "final_result": display_result,
         }
 
     async def run(self):
@@ -1076,6 +1096,10 @@ class SingleAgentProject:
             quality_gate_passed=passed,
             attempts=1,
             total_cost=result.cost,
+            cost_known=not ((result.input_tokens + result.output_tokens) > 0 and result.cost == 0),
+            total_tokens=result.input_tokens + result.output_tokens,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
             summary=str(complete.get("executive_summary", "")),
             final_result=complete,
         )

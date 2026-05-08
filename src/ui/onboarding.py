@@ -1,4 +1,4 @@
-"""First-run onboarding wizard for AOrchestra."""
+"""First-run onboarding wizard for Riff Band."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.text import Text
+from ui import theme
 
 
 YAML_TEMPLATE = """\
@@ -57,12 +58,12 @@ def run_onboarding(config_path: Path, env_path: Path) -> bool:
         Panel(
             Text.assemble(
                 ("Welcome to ", "bold"),
-                ("AOrchestra", "bold green"),
+                (theme.APP_NAME, theme.BRAND),
                 ("\n\n", ""),
                 ("Looks like this is your first run.\n", "dim"),
                 ("Let's set things up in a few steps.", "dim"),
             ),
-            border_style="green",
+            border_style=theme.BORDER,
             title="[bold]Setup Wizard[/]",
         )
     )
@@ -70,7 +71,7 @@ def run_onboarding(config_path: Path, env_path: Path) -> bool:
 
     # ── step 1 — model ───────────────────────────────────────────
     console.print("[bold]Step 1/3[/] — LLM Model")
-    console.print("[dim]AOrchestra supports any OpenAI-compatible API.[/]")
+    console.print("[dim]Riff Band supports any OpenAI-compatible API.[/]")
 
     model = Prompt.ask(
         "  Model name",
@@ -100,9 +101,9 @@ def run_onboarding(config_path: Path, env_path: Path) -> bool:
     # ── step 3 — mode ───────────────────────────────────────────
     console.print("[bold]Step 3/3[/] — Default Mode")
     console.print("[dim]How should tasks be handled by default?[/]")
-    console.print("  [cyan]single[/]  — lightweight, one agent, low latency")
-    console.print("  [cyan]multi[/]   — orchestrated, parallel sub-agents")
-    console.print("  [cyan]auto[/]    — auto-detect based on task complexity [dim](recommended)[/]")
+    console.print(f"  [{theme.ACCENT}]single[/]  — lightweight, one agent, low latency")
+    console.print(f"  [{theme.ACCENT}]multi[/]   — orchestrated, parallel sub-agents")
+    console.print(f"  [{theme.ACCENT}]auto[/]    — auto-detect based on task complexity [dim](recommended)[/]")
 
     mode = Prompt.ask(
         "  Default mode",
@@ -117,12 +118,12 @@ def run_onboarding(config_path: Path, env_path: Path) -> bool:
             Text.assemble(
                 ("Model:     ", "dim"), (f"{model}\n", ""),
                 ("Base URL:  ", "dim"), (f"{base_url}\n", ""),
-                ("Key:       ", "dim"), ("****\n", "yellow"),
+                ("Key:       ", "dim"), ("****\n", theme.MUTED),
                 ("Workspace: ", "dim"), (f"{workspace}\n", ""),
                 ("Mode:      ", "dim"), (f"{mode}\n", ""),
             ),
             title="[bold]Summary[/]",
-            border_style="cyan",
+            border_style=theme.BORDER,
         )
     )
 
@@ -154,17 +155,17 @@ def run_onboarding(config_path: Path, env_path: Path) -> bool:
     console.print(
         Panel(
             Text.assemble(
-                ("[green]✓[/] Config saved to ", ""),
+                (f"[{theme.SUCCESS_BOLD}]✓[/] Config saved to ", ""),
                 (str(config_path), "bold"),
                 ("\n", ""),
-                ("[green]✓[/] API key saved to ", ""),
+                (f"[{theme.SUCCESS_BOLD}]✓[/] API key saved to ", ""),
                 (str(env_path), "bold"),
                 ("\n\n", ""),
                 ("Run [bold]python shell.py --config "),
-                (str(config_path), "bold cyan"),
+                (str(config_path), theme.ACCENT),
                 ("[/] to start.", "bold"),
             ),
-            border_style="green",
+            border_style=theme.BORDER,
             title="[bold]Ready[/]",
         )
     )

@@ -1,4 +1,4 @@
-"""Interactive shell for the AOrchestra multi-agent system."""
+"""Interactive CLI for the Riff Band multi-agent system."""
 
 from __future__ import annotations
 
@@ -30,18 +30,20 @@ from config import AgentConfig
 from core.session import ConversationSession
 from modes.router import ModeRouter
 from project import build_agent_project, build_single_agent_project
+from research import ResearchRequest, run_research
 from ui.render import MessageRenderer
+from ui import theme
 
 VALID_MODES = {"single", "multi", "auto"}
 
 
 class AOrchestraShell:
-    """Interactive REPL for the AOrchestra agent runtime."""
+    """Interactive REPL for the Riff Band agent runtime."""
 
     def __init__(self, config_path: str | Path):
         load_dotenv()
 
-        # Silence logger console output — TUI handles its own display
+        # Silence logger console output; the CLI handles its own display.
         from base.engine.logs import logger as base_logger
         base_logger.console_output = False
 
@@ -87,11 +89,11 @@ class AOrchestraShell:
                 self._cancel_event.set()
                 self._console.print()
                 self._console.print(
-                    "[yellow]Cancelling... (Ctrl+C again to exit)[/]"
+                    f"[{theme.MUTED}]Cancelling... (Ctrl+C again to exit)[/]"
                 )
             else:
                 self._console.print()
-                self._console.print("[yellow]Exiting...[/]")
+                self._console.print(f"[{theme.MUTED}]Exiting...[/]")
                 loop.stop()
 
         try:
@@ -186,6 +188,9 @@ class AOrchestraShell:
 
             # Slash commands
             if stripped.startswith("/"):
+                if stripped.lower().startswith("/research"):
+                    await self._handle_research_command(stripped)
+                    continue
                 if self._handle_command(stripped):
                     break
                 continue
@@ -202,9 +207,9 @@ class AOrchestraShell:
             except Exception as exc:
                 self._console.print(
                     Panel(
-                        Text(str(exc), style="red"),
-                        title="[bold red]Error[/]",
-                        border_style="red",
+                        Text(str(exc), style=theme.ERROR),
+                        title=f"[{theme.ERROR_BOLD}]Error[/]",
+                        border_style=theme.ERROR,
                     )
                 )
                 logger.error(f"Turn failed: {exc}")
@@ -219,11 +224,11 @@ class AOrchestraShell:
         """Read a single line from the user."""
         prompt_text = Text.assemble(
             ("\n", ""),
-            ("AOrchestra", "bold green"),
+            (theme.APP_NAME, theme.BRAND),
             (" [", "dim"),
-            (self._mode, "cyan"),
+            (self._mode, theme.ACCENT),
             ("]", "dim"),
-            (" [dim]Ctrl+C to cancel[/]", ""),
+            (" Ctrl+C to cancel", "dim"),
             (" > ", "dim"),
         )
         self._console.print(prompt_text, end="")
@@ -274,17 +279,18 @@ class AOrchestraShell:
             self._rerun_onboarding()
 
         else:
-            self._console.print(f"[red]Unknown command: {cmd}[/]")
+            self._console.print(f"[{theme.ERROR}]Unknown command: {cmd}[/]")
             self._console.print("[dim]Type /help for available commands.[/]")
 
         return False
 
     def _show_help(self):
-        table = Table(title="Commands", border_style="dim")
-        table.add_column("Command", style="bold cyan")
+        table = Table(title="Commands", border_style=theme.BORDER)
+        table.add_column("Command", style=theme.ACCENT)
         table.add_column("Description")
         for cmd, desc in [
             ("/help", "Show this help"),
+            ("/research topic", "Start research mode"),
             ("/mode single|multi|auto", "Switch execution mode"),
             ("/model name", "Switch LLM model for next turn"),
             ("/setup", "Re-run the setup wizard"),
@@ -298,11 +304,43 @@ class AOrchestraShell:
             table.add_row(cmd, desc)
         self._console.print(table)
 
+    async def _handle_research_command(self, raw: str) -> None:
+        parts = raw.split(maxsplit=1)
+        topic = parts[1].strip() if len(parts) > 1 else ""
+        if not topic:
+            self._console.print(f"[{theme.ERROR}]Usage: /research <topic>[/]")
+            return
+
+        try:
+            request = ResearchRequest(topic=topic, trigger="cli")
+        except ValueError as exc:
+            self._console.print(f"[{theme.ERROR}]Invalid research request: {exc}[/]")
+            return
+
+        result = await run_research(request, self._cfg)
+        table = Table.grid(padding=(0, 2))
+        table.add_column(style="dim")
+        table.add_column()
+        table.add_row("Topic", request.topic)
+        table.add_row("Status", result.status)
+        table.add_row("Depth", request.depth)
+        table.add_row("Format", request.output_format)
+        table.add_row("Summary", result.summary)
+        if result.open_issues:
+            table.add_row("Open issues", "; ".join(result.open_issues))
+        self._console.print(
+            Panel(
+                table,
+                title="[bold]Research Mode[/]",
+                border_style=theme.BORDER if result.status != "done" else theme.SUCCESS,
+            )
+        )
+
     def _set_mode(self, arg: str):
         mode = arg.strip().lower()
         if mode not in VALID_MODES:
             self._console.print(
-                f"[red]Invalid mode '{mode}'. Use: single, multi, auto[/]"
+                f"[{theme.ERROR}]Invalid mode '{mode}'. Use: single, multi, auto[/]"
             )
             return
         self._mode = mode
@@ -314,7 +352,7 @@ class AOrchestraShell:
         self._main_agent = None
         self._main_project = None
         self._console.print(
-            f"[green]Mode set to [bold]{mode}[/] (next turn)[/]"
+            f"[{theme.MUTED}]Mode set to [bold]{mode}[/] (next turn)[/]"
         )
         if self._session and self._session.turn_count > 0:
             self._console.print(
@@ -338,11 +376,11 @@ class AOrchestraShell:
         sessions = ConversationSession.list_sessions(self._work_dir)
         matched = [s for s in sessions if s["session_id"].startswith(sid)]
         if not matched:
-            self._console.print(f"[red]Session not found: {sid}[/]")
+            self._console.print(f"[{theme.ERROR}]Session not found: {sid}[/]")
             return
         if len(matched) > 1:
             self._console.print(
-                f"[yellow]Multiple matches for '{sid}'. Be more specific:[/]"
+                f"[{theme.WARNING}]Multiple matches for '{sid}'. Be more specific:[/]"
             )
             for s in matched:
                 self._console.print(f"  [dim]{s['session_id']}[/]")
@@ -356,7 +394,7 @@ class AOrchestraShell:
         # Load target session
         new_session = ConversationSession.load(target_id, self._work_dir)
         if new_session is None:
-            self._console.print(f"[red]Failed to load session: {target_id}[/]")
+            self._console.print(f"[{theme.ERROR}]Failed to load session: {target_id}[/]")
             return
 
         self._session = new_session
@@ -368,10 +406,9 @@ class AOrchestraShell:
         self._main_agent = None
         self._main_project = None
 
-        # Try to restore agent state from session
-        # (state will be loaded on next _build_first_project if _main_agent is still None)
+        # The next submitted task will build a fresh project for this session.
         self._console.print(
-            f"[green]Resumed session [bold]{target_id}[/]"
+            f"[{theme.MUTED}]Resumed session [bold]{target_id}[/]"
             f" ({self._session.turn_count} turns)[/]"
         )
 
@@ -395,7 +432,7 @@ class AOrchestraShell:
         self._main_agent = None
         self._main_project = None
 
-        self._console.print(f"[green]Model set to [bold]{model}[/] (next turn)[/]")
+        self._console.print(f"[{theme.MUTED}]Model set to [bold]{model}[/] (next turn)[/]")
 
     def _rerun_onboarding(self):
         """Re-run the setup wizard to update config and .env."""
@@ -420,7 +457,7 @@ class AOrchestraShell:
             self._console.print("[dim]No active agent. Send a task to start.[/]")
             return
 
-        table = Table(title="Agent Status", border_style="dim")
+        table = Table(title="Agent Status", border_style=theme.BORDER)
         table.add_column("Field", style="bold")
         table.add_column("Value")
         table.add_row("Instruction", (self._main_agent.instruction or "")[:100])
@@ -439,8 +476,8 @@ class AOrchestraShell:
                 icon = {
                     "queued": "○",
                     "running": "◎",
-                    "succeeded": "[green]✓[/]",
-                    "failed": "[red]✗[/]",
+                    "succeeded": f"[{theme.SUCCESS_BOLD}]✓[/]",
+                    "failed": f"[{theme.ERROR_BOLD}]✗[/]",
                     "cancelled": "[dim]✗[/]",
                 }.get(task.get("state", ""), "?")
                 table.add_row(
@@ -453,7 +490,7 @@ class AOrchestraShell:
         if not self._session:
             self._console.print("[dim]No active session.[/]")
             return
-        table = Table(title="Session", border_style="dim")
+        table = Table(title="Session", border_style=theme.BORDER)
         table.add_column("Field", style="bold")
         table.add_column("Value")
         table.add_row("ID", self._session.session_id)
@@ -469,8 +506,8 @@ class AOrchestraShell:
         if not sessions:
             self._console.print("[dim]No saved sessions.[/]")
             return
-        table = Table(title="Saved Sessions", border_style="dim")
-        table.add_column("ID", style="bold cyan")
+        table = Table(title="Saved Sessions", border_style=theme.BORDER)
+        table.add_column("ID", style=theme.ACCENT)
         table.add_column("Turns")
         table.add_column("Updated")
         table.add_column("Instruction")
@@ -487,11 +524,9 @@ class AOrchestraShell:
 
     async def _execute_turn(self, user_input: str):
         """Run one conversation turn."""
-        # Build or reuse project
-        if self._main_agent is None:
-            await self._build_first_project(user_input)
-        else:
-            self._prepare_next_turn(user_input)
+        # Each submitted task gets isolated runtime state and artifacts.
+        # Reusing the previous project can make quality gates see stale reports.
+        await self._build_turn_project(user_input)
 
         # Reset cancellation state for this turn
         self._cancel_event.clear()
@@ -500,7 +535,7 @@ class AOrchestraShell:
         try:
             # Stream and render
             self._console.print(
-                Rule(style="dim", characters="─")
+                Rule(style=theme.BORDER, characters="─")
             )
 
             async for msg in self._main_project.stream(
@@ -521,8 +556,8 @@ class AOrchestraShell:
                             Text(
                                 final.get("executive_summary", "Task completed.")[:500],
                             ),
-                            title="[bold green]✓ Done[/]",
-                            border_style="green",
+                            title=f"[{theme.SUCCESS_BOLD}]✓ Done[/]",
+                            border_style=theme.SUCCESS,
                         )
                     )
 
@@ -533,11 +568,17 @@ class AOrchestraShell:
         finally:
             self._task_running = False
 
-    async def _build_first_project(self, user_input: str):
-        """Create the agent project on the first turn."""
+    def _next_turn_output_dir(self) -> Path:
+        """Return an artifact directory that is unique for this user turn."""
+        session_id = self._session.session_id if self._session else "adhoc"
+        turn_index = (self._session.turn_count + 1) if self._session else 1
+        return self._work_dir / "output" / f"session_{session_id}" / f"turn_{turn_index:03d}"
+
+    async def _build_turn_project(self, user_input: str):
+        """Create a fresh agent project for one submitted CLI task."""
         self._console.print(f"[dim]Routing mode: {self._mode}...[/]")
 
-        output_dir = self._work_dir / "output"
+        output_dir = self._next_turn_output_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if self._mode == "auto":
@@ -589,13 +630,6 @@ class AOrchestraShell:
 
         self._console.print(f"[dim]Profile: {self._profile_name}[/]")
 
-    def _prepare_next_turn(self, user_input: str):
-        """Prepare the agent for a subsequent conversation turn."""
-        self._main_agent.instruction = user_input
-        if hasattr(self._main_agent, "soft_reset"):
-            self._main_agent.soft_reset(user_input)
-        self._main_project._run_result = None
-
     def _save_state(self):
         """Persist session and agent state to disk."""
         if self._session and self._main_agent is not None:
@@ -611,13 +645,13 @@ class AOrchestraShell:
         self._console.print(
             Panel(
                 Text.assemble(
-                    ("AOrchestra  ", "bold green"),
-                    ("Multi-Agent Shell\n", "bold"),
+                    (f"{theme.APP_NAME}  ", theme.BRAND),
+                    ("Agent CLI\n", "bold"),
                     ("Type a task to start, or ", "dim"),
-                    ("/help", "bold cyan"),
+                    ("/help", theme.ACCENT),
                     (" for commands.", "dim"),
                 ),
-                border_style="green",
+                border_style=theme.BORDER,
             )
         )
 
@@ -628,7 +662,7 @@ class AOrchestraShell:
 async def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="AOrchestra interactive shell")
+    parser = argparse.ArgumentParser(description="Riff Band interactive CLI")
     parser.add_argument("--config", default="aorchestra.yaml", help="Path to config YAML")
     args = parser.parse_args()
 

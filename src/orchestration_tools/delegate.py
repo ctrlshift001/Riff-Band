@@ -719,6 +719,8 @@ class _DelegateBase(BaseAction):
             "steps_taken": result.get("steps_taken", 0),
             "done": result.get("done", False),
             "cost": result.get("cost", 0.0),
+            "input_tokens": int(result.get("input_tokens", 0) or 0),
+            "output_tokens": int(result.get("output_tokens", 0) or 0),
             "allowed_tools": allowed_tools or [],
             "finish_result": result.get("finish_result", {}),
             "schema_validation_error": result.get("schema_validation_error", ""),

@@ -174,6 +174,10 @@ class TaskComplete(ShellMessage):
     quality_gate_passed: bool = False
     attempts: int = 0
     total_cost: float = 0.0
+    cost_known: bool = True
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     summary: str = ""
     final_result: Optional[Dict[str, Any]] = None
 
