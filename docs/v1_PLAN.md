@@ -155,11 +155,11 @@ skills/
 
 ## 五、两种运行形态
 
-一个内核，两种状态。当前 TUI Agent 已能完成信息收集、多 Agent 并行、报告输出等研究任务，research mode 在此基础上增加固定流程和闸门校验。
+一个内核，两种状态。当前 CLI Agent 已能完成信息收集、多 Agent 并行、报告输出等研究任务，research mode 在此基础上增加固定流程和闸门校验。
 
 ### 普通任务状态
 
-单/多 Agent 模式，MainAgent 自由编排。当前 TUI 的默认形态：
+单/多 Agent 模式，MainAgent 自由编排。当前 CLI 的默认形态：
 
 - 报告输出、代码撰写、信息搜集
 - 对话式增量研究
@@ -167,10 +167,10 @@ skills/
 
 ### 研究任务状态
 
-走固定长程流程（Phase 1-4），每步有闸门校验。**TUI 和 MCP 均可触发**：
+走固定长程流程（Phase 1-4），每步有闸门校验。**CLI 和 MCP 均可触发**：
 
 ```
-TUI 触发:   AOrchestra [auto] > /research 研究 XX 问题
+CLI 触发:   Riff Band [auto] > /research 研究 XX 问题
 MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 ```
 
@@ -183,11 +183,11 @@ MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 
 ## 六、7 天实施路线图
 
-当前已完成：TUI 交互、流式消息、会话持久化、ContentPart 流式文本、Crash 中断、配置/工作区、首次引导。
+当前已完成：CLI 交互、流式消息、会话持久化、ContentPart 流式文本、Crash 中断、配置/工作区、首次引导。
 
 ### Day 1-2: 研究流程内核 + Skills
 
-**状态**: TUI 已稳定，直接进入开发
+**状态**: CLI 已稳定，直接进入开发
 
 - [ ] 创建 `src/research/` 模块，实现固定流程状态机
   - Phase 状态枚举 + 步骤调度器
@@ -218,8 +218,8 @@ MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 
 ### Day 5-6: MCP 集成
 
-- [ ] 实现 MCP Server 入口 (`aorchestra mcp-server`)
-- [ ] 研究流程封装为 MCP tool
+- [x] 实现最小 MCP Server 入口 (`python mcp_server.py --config aorchestra.yaml`)
+- [x] 研究流程封装为 MCP `research` tool
   - 暴露 `research`、`literature_search`、`hypothesis_gen` 等 tool
   - 流式进度推送
 - [ ] 与外部 Agent 对接测试（Claude Code / Codex）

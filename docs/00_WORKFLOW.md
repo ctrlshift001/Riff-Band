@@ -2,7 +2,7 @@
 
 ## Goal
 
-本仓库当前处在轻量级多 Agent 编排引擎产品化演进阶段，核心方向为 TUI 交互 + MCP 可插拔 + 科研模式。
+本仓库当前处在轻量级多 Agent 编排引擎产品化演进阶段，核心方向为 CLI 交互 + MCP 可插拔 + 科研模式。
 
 因此，本 workflow 的目标不是增加复杂流程，而是确保下面三件事同时成立：
 
@@ -19,7 +19,7 @@
   - 默认开发工作优先基于这条线展开
 - `product`
   - 面向未来通用型 Agent 系统的主力产品线
-  - 适合承接模式层、TUI、runtime、profile 化能力等持续演进工作
+  - 适合承接模式层、CLI、runtime、profile 化能力等持续演进工作
 - `demo/exploration`
   - 演示与探索分支
   - 允许保留阶段性实验、验证和非最终方案
@@ -47,7 +47,7 @@ chore/<short-topic>
 示例：
 
 ```text
-feature/tui-mode-switching
+feature/cli-mode-switching
 refactor/benchmark-layout
 docs/rewrite-readme
 fix/terminalbench-path-resolution

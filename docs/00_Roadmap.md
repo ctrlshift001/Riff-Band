@@ -2,7 +2,7 @@
 将 RiffBand 从"可运行原型"升级为"轻量级多 Agent 编排引擎 + 科研模式"。
 
 ## 当前状态
-已完成：TUI 交互式 Shell、流式消息协议、会话持久化、ContentPart 流式文本、Crash 中断、工作区配置、首次引导、Slash 命令、多模型支持。
+已完成：CLI 交互、流式消息协议、会话持久化、ContentPart 流式文本、Crash 中断、工作区配置、首次引导、Slash 命令、多模型支持。
 
 ## 能力差距清单
 
@@ -17,7 +17,7 @@
 | 跨模型交叉辩论 | MiniMax→Gemini 互审 | ❌ 当前单模型配置 |
 | LaTeX 输出 | NeurIPS 模板 | ❌ 只有 Markdown |
 | HTML 报告 | 响应式单页报告 | ❌ 只有 Markdown |
-| MCP Server | MCP 入口 + tool 封装 | ❌ 不存在 |
+| MCP Server | MCP 入口 + tool 封装 | 🔶 已有最小 stdio server，先暴露 `research` |
 | 流式进度推送 | ResearchProgress 消息 | 🔶 已有 StatusUpdate，research 专用消息未定义 |
 | 闸门校验 | 每步输出物检查 | 🔶 CompleteTaskTool 有基础质量门检，需接入 research 流程 |
 
@@ -34,7 +34,8 @@
 - LaTeX 输出模板 + HTML 报告模板
 
 ### Day 5-6: MCP 集成
-- MCP Server 入口 + 研究流程 tool 封装
+- 已完成最小 MCP stdio server：`python mcp_server.py --config aorchestra.yaml`
+- 继续完善研究流程 tool 封装
 - Claude Code / Codex 对接测试
 
 ### Day 7: 收尾

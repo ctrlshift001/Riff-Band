@@ -1,6 +1,6 @@
 # RiffBand
 
-A lightweight agent engine purpose-built for research tasks, based on [AOrchestra](https://arxiv.org/abs/2602.03786). TUI-native and callable via MCP.
+A lightweight agent engine purpose-built for research tasks, based on [AOrchestra](https://arxiv.org/abs/2602.03786). CLI-native and callable via MCP.
 
 ## Core Concept
 
@@ -19,7 +19,7 @@ A main orchestrator agent dynamically creates sub-agents with different `(I, C, 
 
 ## Current Focus
 
-Research task automation via a structured workflow of literature search, multi-agent hypothesis debate, and report generation. Accessible through the built-in TUI shell or as an MCP tool callable by external agents.
+Research task automation via a structured workflow of literature search, multi-agent hypothesis debate, and report generation. Accessible through the built-in CLI or as an MCP tool callable by external agents.
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ pip install -r requirements.txt
 cp .env.example .env          # fill in LLM API key + Serper key
 cp aorchestra.yaml.example aorchestra.yaml
 
-# 3. Run interactive shell
+# 3. Run interactive CLI
 python shell.py --config aorchestra.yaml
 ```
 
@@ -44,7 +44,7 @@ python shell.py --config aorchestra.yaml
 
 See `.env.example` and `aorchestra.yaml.example` for templates.
 
-## Shell Commands
+## CLI Commands
 
 | Command | Description |
 |---------|-------------|
@@ -69,11 +69,15 @@ RiffBand can be called by external agents (Claude Code, Codex, Gemini CLI) via M
   "mcpServers": {
     "riffband": {
       "command": "python",
-      "args": ["-m", "riffband.mcp"]
+      "args": ["mcp_server.py", "--config", "aorchestra.yaml"]
     }
   }
 }
 ```
+
+The first MCP tool is `research`. It currently calls the stable Research Mode
+interface; the dedicated long-running research pipeline can be upgraded behind
+the same MCP contract.
 
 ## Project Layout
 
@@ -85,7 +89,7 @@ src/
   orchestration_tools/  # Delegate, complete, task plan
   project/              # Project assembly, prompts, tools
   modes/                # Mode router (single / multi / auto)
-  ui/                   # Interactive shell + Rich renderer
+  ui/                   # Interactive CLI + Rich renderer
 ```
 
 ## Citation
