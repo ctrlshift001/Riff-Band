@@ -156,6 +156,10 @@ def _default_subtask_toolkits() -> Dict[str, List[str]]:
 
 def _default_worker_tools() -> List[str]:
     return [
+        "list_sources",
+        "search_sources",
+        "read_source",
+        "read_sources",
         "web_search",
         "record_finding",
         "write_scratchpad_note",
@@ -167,6 +171,35 @@ def _default_worker_tools() -> List[str]:
 
 def _default_parallel_forbidden_tools() -> List[str]:
     return ["write_report_section"]
+
+
+def _default_model_routing(sub_models: List[str]) -> Dict[str, str]:
+    """Backward-compatible default profile-to-model routing used by tests/config callers."""
+    if not sub_models:
+        model = ""
+        return {
+            "policy_research": model,
+            "company_research": model,
+            "supply_chain": model,
+            "financial_metrics": model,
+            "news_signals": model,
+            "report_drafting": model,
+            "verification": model,
+            "general_research": model,
+        }
+
+    primary = sub_models[0]
+    secondary = sub_models[1] if len(sub_models) > 1 else primary
+    return {
+        "policy_research": primary,
+        "company_research": secondary,
+        "supply_chain": primary,
+        "financial_metrics": primary,
+        "news_signals": secondary,
+        "report_drafting": secondary,
+        "verification": secondary,
+        "general_research": secondary,
+    }
 
 
 def _generic_profile(sub_models: List[str]) -> RuntimeProfile:
