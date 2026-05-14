@@ -246,3 +246,6 @@ async def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(main()))
+else:
+    def _entry():
+        raise SystemExit(asyncio.run(main()))

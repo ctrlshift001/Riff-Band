@@ -722,5 +722,8 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
-
     raise SystemExit(asyncio.run(main()))
+else:
+    def _entry():
+        import asyncio
+        raise SystemExit(asyncio.run(main()))

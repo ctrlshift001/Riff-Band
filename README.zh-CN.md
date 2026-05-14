@@ -41,15 +41,13 @@ RiffBand 在两个层级运行：**普通模式**用于通用 Agent 任务，**�
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
-pip install -r requirements.txt
-
-# 2. 配置
+# 1. 安装 + 一次性配置
+pip install -e .
 cp .env.example .env          # 填入 LLM API key 和 Serper key
 cp aorchestra.yaml.example aorchestra.yaml
 
-# 3. 启动交互式shell
-python shell.py --config aorchestra.yaml
+# 2. 任何目录一行启动
+riffband
 ```
 
 ## 配置
@@ -91,8 +89,9 @@ RiffBand 可通过 MCP 被外部 Agent（Claude Code、Codex、Gemini CLI 等）
 {
   "mcpServers": {
     "riffband": {
-      "command": "python",
-      "args": ["mcp_server.py", "--config", "aorchestra.yaml"]
+      "command": "riffband-mcp",
+      "args": ["--config", "aorchestra.yaml"],
+      "cwd": "/path/to/Riff-Band"
     }
   }
 }
@@ -141,6 +140,7 @@ src/
     runner.py           # 入口边界（CLI + MCP 共用）
   ui/                   # 交互式 shell + Rich 渲染器
   mcp_server.py         # MCP stdio 服务器
+pyproject.toml          # 包元数据 + 入口命令
 ```
 
 ## 引用

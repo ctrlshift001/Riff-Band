@@ -109,7 +109,7 @@ def test_mcp_research_visual_mode(tmp_path):
     payload = json.loads(result["content"][0]["text"])
     assert payload["metadata"]["mode"] == "visual"
     artifact_paths = [a["path"] for a in payload["artifacts"]]
-    assert any("report_visual.html" in p for p in artifact_paths)
+    assert any("_visual.html" in p for p in artifact_paths)
 
 
 def test_mcp_cancel_research_idle(tmp_path):

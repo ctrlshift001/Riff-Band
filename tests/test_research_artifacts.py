@@ -33,10 +33,12 @@ class TestResearchArtifacts(unittest.TestCase):
             artifacts = ResearchArtifacts.create(td, request)
             self.assertTrue(artifacts.run_dir.exists())
             self.assertTrue(artifacts.scratchpad.parent.exists())
-            self.assertEqual(artifacts.report_md.name, "research_report.md")
-            self.assertEqual(artifacts.paper_tex.name, "paper.tex")
-            self.assertEqual(artifacts.references_bib.name, "references.bib")
-            self.assertEqual(artifacts.report_html.name, "report.html")
+            self.assertTrue(artifacts.report_md.name.endswith("research_report.md"))
+            self.assertTrue(artifacts.paper_tex.name.endswith("_paper.tex"))
+            self.assertTrue(artifacts.references_bib.name.endswith("_references.bib"))
+            self.assertTrue(artifacts.report_html.name.endswith("_report.html"))
+            self.assertTrue(artifacts.paper_tex.parent.name == "output")
+            self.assertTrue(artifacts.report_md.parent.name.startswith("202"))
         finally:
             shutil.rmtree(td, ignore_errors=True)
 

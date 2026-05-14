@@ -47,7 +47,11 @@ profile_name: generic
 ### 4.1 CLI 交互模式
 
 ```bash
-python shell.py --config aorchestra.yaml
+# 首次：在项目目录安装为全局命令
+pip install -e .
+
+# 之后任何目录一行启动
+riffband
 ```
 
 进入 TUI 后：
@@ -100,9 +104,9 @@ python shell.py --config aorchestra.yaml
 {
   "mcpServers": {
     "riffband": {
-      "command": "python",
-      "args": ["mcp_server.py", "--config", "aorchestra.yaml"],
-      "cwd": "/path/to/Riff-Band/src"
+      "command": "riffband-mcp",
+      "args": ["--config", "aorchestra.yaml"],
+      "cwd": "/path/to/Riff-Band"
     }
   }
 }
@@ -165,15 +169,23 @@ workspace/output/session_<id>/turn_<N>/
 ### 研究模式
 
 ```
-workspace/output/research_<timestamp>_<slug>/
-├── research_report.md      # 中间 markdown 报告
-├── findings.jsonl          # 结构化发现
-├── papers.jsonl            # 文献记录 (academic)
-├── sources.jsonl           # 信息源记录 (visual)
-├── report_visual.html      # 视觉报告 (visual)
-├── paper.tex               # LaTeX 文献综述 (academic)
-├── references.bib          # BibTeX 引用 (academic)
-└── manifest.json           # 执行清单
+workspace/
+├── output/                          ← 只放最终报告
+│   ├── 20260514_120000_topic_paper.tex
+│   ├── 20260514_120000_topic_references.bib
+│   ├── 20260514_120000_topic_report.html
+│   └── 20260514_120000_topic_visual.html
+└── research/20260514_120000_topic/  ← 内部工作文件
+    ├── research_report.md
+    ├── findings.jsonl
+    ├── papers.jsonl / sources.jsonl
+    ├── paper_notes.jsonl / material_notes.jsonl
+    ├── claims.jsonl / insights.jsonl
+    ├── debate_log.md / review_notes.md
+    ├── outline.md
+    ├── review_report.md
+    ├── scratchpad/
+    └── manifest.json
 ```
 
 ## 8. 常见问题

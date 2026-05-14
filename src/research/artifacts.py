@@ -46,13 +46,16 @@ class ResearchArtifacts:
     def create(cls, workspace_dir: Path, request: ResearchRequest, mode: str | None = None) -> "ResearchArtifacts":
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         slug = _slugify(request.topic)
-        run_dir = workspace_dir / "output" / f"research_{stamp}_{slug}"
+        run_dir = workspace_dir / "research" / f"{stamp}_{slug}"
+        out_dir = workspace_dir / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        report_prefix = out_dir / f"{stamp}_{slug}"
         artifacts = cls(
             run_dir=run_dir,
             report_md=run_dir / "research_report.md",
-            paper_tex=run_dir / "paper.tex",
-            references_bib=run_dir / "references.bib",
-            report_html=run_dir / "report.html",
+            paper_tex=Path(str(report_prefix) + "_paper.tex"),
+            references_bib=Path(str(report_prefix) + "_references.bib"),
+            report_html=Path(str(report_prefix) + "_report.html"),
             findings=run_dir / "findings.jsonl",
             papers=run_dir / "papers.jsonl",
             paper_notes=run_dir / "paper_notes.jsonl",
@@ -62,8 +65,7 @@ class ResearchArtifacts:
             review=run_dir / "review_report.md",
             scratchpad=run_dir / "scratchpad" / "shared.md",
             manifest=run_dir / "manifest.json",
-            # visual
-            report_visual_html=run_dir / "report_visual.html",
+            report_visual_html=Path(str(report_prefix) + "_visual.html"),
             sources=run_dir / "sources.jsonl",
             material_notes=run_dir / "material_notes.jsonl",
             insights=run_dir / "insights.jsonl",

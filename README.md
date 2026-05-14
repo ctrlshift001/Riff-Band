@@ -41,15 +41,13 @@ The pipeline owns step order, artifact paths, and quality gates. Agents are used
 ## Quick Start
 
 ```bash
-# 1. Install
-pip install -r requirements.txt
-
-# 2. Configure
+# 1. Install + configure once
+pip install -e .
 cp .env.example .env          # fill in LLM API key + Serper key
 cp aorchestra.yaml.example aorchestra.yaml
 
-# 3. Run interactive CLI
-python shell.py --config aorchestra.yaml
+# 2. Run anywhere
+riffband
 ```
 
 ## Configuration
@@ -91,8 +89,9 @@ RiffBand can be called by external agents (Claude Code, Codex, Gemini CLI) via M
 {
   "mcpServers": {
     "riffband": {
-      "command": "python",
-      "args": ["mcp_server.py", "--config", "aorchestra.yaml"]
+      "command": "riffband-mcp",
+      "args": ["--config", "aorchestra.yaml"],
+      "cwd": "/path/to/Riff-Band"
     }
   }
 }
@@ -141,6 +140,7 @@ src/
     runner.py           # Entry boundary (CLI + MCP)
   ui/                   # Interactive CLI + Rich renderer
   mcp_server.py         # MCP stdio server
+pyproject.toml          # Package metadata + entry points
 ```
 
 ## Citation

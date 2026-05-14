@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "riffband"
+version = "0.2.0"
+description = "轻量级多 Agent 编排引擎 + 研究模式（CLI + MCP）"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.13",
+    "google-genai>=1.73",
+    "mistune>=3.1",
+    "openai>=1.99",
+    "pydantic>=2.12",
+    "pypdf>=6.10",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.2",
+    "rich>=13",
+]
+
+[project.scripts]
+riffband = "ui.shell:_entry"
+riffband-mcp = "mcp_server:_entry"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,55 +1,68 @@
-## 目标
-将 RiffBand 从"可运行原型"升级为"轻量级多 Agent 编排引擎 + 科研模式"。
+# Roadmap / 路线图
 
-## 当前状态
-已完成：CLI 交互、流式消息协议、会话持久化、ContentPart 流式文本、Crash 中断、工作区配置、首次引导、Slash 命令、多模型支持。
+> 双语 | Bilingual · Last updated 2026-05-14
 
-## 能力差距清单
+---
 
-以下硬能力完全缺失或仅部分支持：
+## 架构概览 Architecture Overview
 
-| 能力 | v1_PLAN 要求 | 现状 |
-|------|-------------|------|
-| 研究流程状态机 | `src/research/` 模块，Phase 1-4 固定流程 + 闸门 | ❌ 不存在 |
-| Skills MD 文件 | 8 个 core research skills | ❌ 不存在 |
-| `/research` 命令 | slash 命令触发研究模式 | ❌ 未实现 |
-| 多 Agent 并行观点生成 | delegate_tasks 复用 + 多视角 SubAgent | 🔶 底层有 delegate_tasks，未包装为 research skill |
-| 跨模型交叉辩论 | MiniMax→Gemini 互审 | ❌ 当前单模型配置 |
-| LaTeX 输出 | NeurIPS 模板 | ❌ 只有 Markdown |
-| HTML 报告 | 响应式单页报告 | ❌ 只有 Markdown |
-| MCP Server | MCP 入口 + tool 封装 | 🔶 已有最小 stdio server，先暴露 `research` |
-| 流式进度推送 | ResearchProgress 消息 | 🔶 已有 StatusUpdate，research 专用消息未定义 |
-| 闸门校验 | 每步输出物检查 | 🔶 CompleteTaskTool 有基础质量门检，需接入 research 流程 |
+RiffBand 当前有两条执行链路：
 
-## 阶段一：研究模式落地（7 天冲刺）
+```
+用户输入
+├── CLI 任意文本 ──→ [普通模式] MainAgent/SubAgent 自由编排
+│                        ├── /mode=single → build_single_agent_project
+│                        └── /mode=multi  → build_agent_project
+│
+├── CLI /research   ──→ [研究模式] ResearchPipeline 固定状态机
+│                        ├── mode=academic → RESEARCH_STEPS (9 步) → paper.tex
+│                        └── mode=visual   → VISUAL_STEPS (10 步) → report_visual.html
+│
+└── MCP "research" tool ──→ 同上 ResearchPipeline（对外唯一接口）
+```
 
-### Day 1-2: 研究流程内核 + Skills
-- 实现 `src/research/` 固定流程状态机（Phase 1-4，每步闸门校验）
-- 编写 8 个核心 skill MD 文件（文献检索、知识综合、观点生成、观点辩论、大纲、撰写、审稿）
-- `/research` slash 命令集成
+普通模式是通用 Agent 对话。研究模式是**基于同一套 Agent 运行时的上层编排器**：Pipeline 按固定步骤表依次委派任务给 Agent，每步由 gates 检查质量，最后导出格式化产物。
 
-### Day 3-4: 多 Agent 并行 + 输出格式
-- Step 4 多 Agent 并行观点生成（复用 delegate_tasks）
-- Step 5 跨模型交叉辩论
-- LaTeX 输出模板 + HTML 报告模板
+---
 
-### Day 5-6: MCP 集成
-- 已完成最小 MCP stdio server：`python mcp_server.py --config aorchestra.yaml`
-- 继续完善研究流程 tool 封装
-- Claude Code / Codex 对接测试
+## 已完成 Done
 
-### Day 7: 收尾
-- 端到端验证 + 文档 + demo
+- [x] **Core Agent 运行时** — MainAgent/SubAgent，单/多 Agent 模式路由，会话持久化
+- [x] **CLI Shell** — 基于 Rich 的交互式 TUI，slash 命令系统
+- [x] **MCP Server** — JSON-RPC stdio 协议，`research` tool 可被外部 Agent 调用
+- [x] **Research Mode v1 (academic)** — 9 步文献综述流水线：分解 → 检索 → 精读 → 综合 → 观点生成 → 辩论 → 大纲 → 草稿 → 多视角审校，产出 `paper.tex` + `references.bib`
+- [x] **Research Mode v2 (visual)** — 10 步通用研究流水线：在 academic 基础上新增 `visual_design` 步骤，去除学术术语，支持图表标记（ECharts），产出响应式 HTML 视觉报告（暗/亮主题切换、TOC 导航、卡片布局）
+- [x] **技能目录隔离** — `skills/visual/` 独立子目录，队友 9 个 academic skill 文件完全不受影响
+- [x] **双模式 Gates/Prompts/Artifacts** — 门禁、提示词、产物系统均按 mode 分支，默认 100% 向后兼容
+- [x] **测试** — 63 个单元测试全部通过，覆盖 academic/visual 双模式核心路径
 
-## 阶段二：质量提升（中期）
-1. 扩展证据链与引用管理  
-2. 强化质量门禁（一致性检查、证据匹配）  
-3. 联网检索容错与 fallback  
+---
 
-## 阶段三：产品化（中长期）
-1. 人机协同工作流  
-2. 任务历史与项目管理  
-3. 成本与权限治理  
+## 进行中 In Progress
 
-## 建议优先级
-`研究模式内核 -> MCP 集成 -> 质量门禁增强 -> 检索容错 -> 产品化`
+- [ ] **端到端验证** — CLI `/research --mode=visual` 完整流程 + MCP `mode=visual` 调用
+
+---
+
+## 计划中 Planned
+
+### 短期 Short-term
+
+- [ ] **Material reading skill 完善** — visual 模式 `material-reading` skill 目前为占位模板，需补齐为可用的阅读+抽取指令
+- [ ] **Visual design skill 完善** — `visual-design` skill 需写入图表生成、HTML 排版的详细指引
+- [ ] **Visual mode 产物工具扩展** — 增加 `record_source`、`record_insight` 等 visual 专用工具（当前复用 academic 工具）
+- [ ] **Shell `/research` 自动补全** — tab 补全 mode/depth/format 参数
+- [ ] **MCP 双向通信** — 研究进度实时推送给 MCP client（当前为一次性返回结果）
+
+### 中期 Mid-term
+
+- [ ] **Research 覆盖范围扩展** — 新增 mode=`market` 市场调研、mode=`policy` 政策分析等子模式
+- [ ] **Pipeline 可观测性** — 步骤级耗时统计、失败重试策略、partially-run 产物恢复
+- [ ] **多格式导出** — visual 模式下同时导出 `report_visual.html` + 独立 SVG/PNG 图表
+- [ ] **跨 session 知识复用** — 同一 topic 多次 research 的 findings/papers 增量积累，避免重复检索
+
+### 远期 Long-term
+
+- [ ] **自定义 Step 注册表** — 用户可通过 YAML 配置自定义研究流水线步骤
+- [ ] **Agent 多模态** — Pipeline 步骤支持图片生成、音频转录、视频分析
+- [ ] **分布式 pipeline** — 多台机器并行执行不同 research step

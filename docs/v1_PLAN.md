@@ -220,7 +220,7 @@ MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 
 ### Day 5-6: MCP 集成
 
-- [x] 实现最小 MCP Server 入口 (`python mcp_server.py --config aorchestra.yaml`)
+- [x] 实现最小 MCP Server 入口 (`riffband-mcp --config aorchestra.yaml`)
 - [x] 研究流程封装为 MCP `research` tool
   - 暴露 `research`、`literature_search`、`claim_generation` 等 tool
   - 流式进度推送
