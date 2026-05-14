@@ -29,6 +29,8 @@ class ResearchGatekeeper:
         findings_count = len(read_jsonl(self.artifacts.findings))
         papers_count = len(read_jsonl(self.artifacts.papers))
         paper_notes_count = len(read_jsonl(self.artifacts.paper_notes))
+        paper_cards_count = len(read_jsonl(self.artifacts.paper_cards))
+        synthesis_digest_text = self._read_text(self.artifacts.synthesis_digest)
         sources_count = len(read_jsonl(self.artifacts.sources))
         material_notes_count = len(read_jsonl(self.artifacts.material_notes))
         insights_count = len(read_jsonl(self.artifacts.insights))
@@ -46,8 +48,15 @@ class ResearchGatekeeper:
             issues.append(f"findings count {findings_count} < step minimum {step.min_findings}")
         if getattr(step, "min_papers", 0) and papers_count < step.min_papers:
             issues.append(f"papers count {papers_count} < step minimum {step.min_papers}")
-        if step.key == "paper_enrichment" and papers_count and paper_notes_count == 0:
-            issues.append("paper_enrichment produced no paper_notes.jsonl records")
+        if step.key == "paper_enrichment":
+            if papers_count and paper_notes_count == 0:
+                issues.append("paper_enrichment produced no paper_notes.jsonl records")
+            if papers_count and paper_cards_count == 0:
+                issues.append("paper_enrichment produced no paper_cards.jsonl records")
+            elif step.min_papers and paper_notes_count < min(step.min_papers, papers_count):
+                issues.append(
+                    f"paper_notes count {paper_notes_count} < expected enrichment minimum {min(step.min_papers, papers_count)}"
+                )
         if self.mode == "visual":
             if step.key in ("information_search",) and sources_count < getattr(step, "min_papers", 0):
                 issues.append(f"sources count {sources_count} < step minimum {getattr(step, 'min_papers', 0)}")
@@ -59,6 +68,8 @@ class ResearchGatekeeper:
                 issues.append("insight_review requires insights.jsonl and review_notes.md")
             if step.key == "visual_design" and not self.artifacts.report_visual_html.exists():
                 issues.append("visual_design did not produce report_visual.html")
+        if step.key == "knowledge_synthesis" and not synthesis_digest_text.strip():
+            issues.append("knowledge_synthesis produced no synthesis_digest.json content")
 
         stats: dict[str, int | bool | str] = {
             "report_exists": self.artifacts.report_md.exists(),
@@ -66,8 +77,10 @@ class ResearchGatekeeper:
             "findings_count": findings_count,
             "papers_count": papers_count,
             "paper_notes_count": paper_notes_count,
+            "paper_cards_count": paper_cards_count,
             "report_chars": len(report_text),
             "scratchpad_chars": len(scratchpad_text),
+            "synthesis_digest_chars": len(synthesis_digest_text),
         }
         if self.mode == "visual":
             stats["sources_count"] = sources_count

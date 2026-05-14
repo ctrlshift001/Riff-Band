@@ -35,6 +35,8 @@ class ResearchArtifacts:
     review: Path
     scratchpad: Path
     manifest: Path
+    paper_cards: Path
+    synthesis_digest: Path
     # visual-only paths
     report_visual_html: Path
     sources: Path
@@ -65,6 +67,8 @@ class ResearchArtifacts:
             review=run_dir / "review_report.md",
             scratchpad=run_dir / "scratchpad" / "shared.md",
             manifest=run_dir / "manifest.json",
+            paper_cards=run_dir / "paper_cards.jsonl",
+            synthesis_digest=run_dir / "synthesis_digest.json",
             report_visual_html=Path(str(report_prefix) + "_visual.html"),
             sources=run_dir / "sources.jsonl",
             material_notes=run_dir / "material_notes.jsonl",
@@ -98,10 +102,12 @@ class ResearchArtifacts:
                 ResearchArtifact(type="findings", path=str(self.findings), description="Structured research findings"),
                 ResearchArtifact(type="papers", path=str(self.papers), description="Literature records and citation candidates"),
                 ResearchArtifact(type="paper_notes", path=str(self.paper_notes), description="Lightweight structured notes extracted from paper abstracts or full text"),
+                ResearchArtifact(type="paper_cards", path=str(self.paper_cards), description="Structured paper knowledge cards for literature review drafting"),
                 ResearchArtifact(type="claims", path=str(self.claims), description="Generated literature-review claims, research gaps, and future directions"),
                 ResearchArtifact(type="debate", path=str(self.debate_log), description="Cross-perspective debate log"),
                 ResearchArtifact(type="outline", path=str(self.outline), description="Structured report or paper outline"),
                 ResearchArtifact(type="review", path=str(self.review), description="Multi-agent review notes"),
+                ResearchArtifact(type="synthesis_digest", path=str(self.synthesis_digest), description="Clustered literature synthesis, research gaps, and evidence-quality digest"),
             ]
             if output_format == "latex":
                 items.insert(0, ResearchArtifact(type="latex", path=str(self.paper_tex), description="LaTeX literature review draft"))
@@ -119,11 +125,13 @@ class ResearchArtifacts:
             "findings": str(self.findings),
             "papers": str(self.papers),
             "paper_notes": str(self.paper_notes),
+            "paper_cards": str(self.paper_cards),
             "claims": str(self.claims),
             "debate_log": str(self.debate_log),
             "outline": str(self.outline),
             "review": str(self.review),
             "scratchpad": str(self.scratchpad),
+            "synthesis_digest": str(self.synthesis_digest),
         }
         if request.mode == "visual":
             artifacts["report_visual_html"] = str(self.report_visual_html)

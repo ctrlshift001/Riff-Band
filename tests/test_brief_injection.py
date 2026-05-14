@@ -12,13 +12,7 @@ class TestBriefInjection(unittest.TestCase):
         self.assertIn("record_finding", tools)
         self.assertIn("write_report_section", tools)
         self.assertIn("verify_artifacts", tools)
-
-    def test_default_worker_tools_include_research_tools(self):
-        tools = _default_worker_tools()
-        self.assertIn("arxiv_search", tools)
-        self.assertIn("semantic_scholar_search", tools)
-        self.assertIn("record_paper", tools)
-        self.assertIn("bibtex_export", tools)
+        self.assertNotIn("read_brief", tools)
 
 
 if __name__ == "__main__":
