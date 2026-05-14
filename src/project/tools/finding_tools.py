@@ -112,3 +112,62 @@ class RecordFindingTool(BaseAction):
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         scope = topic or entity or city or industry or "generic_scope"
         return {"success": True, "output": f"Recorded finding for {scope} ({key})"}
+
+
+class ReadFindingsTool(BaseAction):
+    name: str = "read_findings"
+    description: str = "Read structured records from the runtime findings.jsonl artifact."
+    parameters: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Optional keyword filter."},
+                "limit": {"type": "integer", "default": 20},
+            },
+            "additionalProperties": False,
+        }
+    )
+    findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    async def __call__(self, query: str = "", limit: int = 20) -> Dict[str, Any]:
+        if not self.findings_path.exists():
+            return {"success": False, "message": f"Findings file not found: {self.findings_path}"}
+
+        q = str(query or "").strip().lower()
+        max_rows = max(1, int(limit or 20))
+        rows: list[Dict[str, Any]] = []
+        malformed = 0
+
+        for line in self.findings_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                malformed += 1
+                continue
+            if not isinstance(row, dict):
+                continue
+            if q and q not in json.dumps(row, ensure_ascii=False).lower():
+                continue
+            rows.append(row)
+            if len(rows) >= max_rows:
+                break
+
+        return {
+            "success": True,
+            "output": json.dumps(
+                {
+                    "path": str(self.findings_path),
+                    "count": len(rows),
+                    "malformed_skipped": malformed,
+                    "findings": rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        }

@@ -22,7 +22,7 @@ YAML_TEMPLATE = """\
 
 main_model: {model}
 mode: {mode}                       # single | multi | auto
-profile_name: generic              # generic | gba_industry_analysis
+profile_name: generic
 
 sub_models:
   - {model}

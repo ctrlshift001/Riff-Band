@@ -61,3 +61,102 @@ MainAgent 的动作主要包括：
 - 关键产出摘要。
 
 MainAgent 根据这些摘要判断是否继续研究、进入综合、进入校验，或对失败/部分完成任务调用 `continue_task`。
+
+
+## 7. Research Mode 执行逻辑
+
+Research Mode 是固定研究流程，不再由 MainAgent 自主决定“下一步做什么”。其入口是 `research.runner.run_research()`，内部创建 `ResearchPipeline`，由 `ResearchPipeline` 串通完整 research 流程。
+
+当前边界如下：
+
+- `ResearchPipeline`：负责研究流程顺序、每步产物路径、质量门禁和最终结果聚合。
+- MainAgent：只在需要并行/委派的研究步骤内作为执行协调器使用。
+- SubAgent：执行被 MainAgent 委派的具体搜索、综合、写作、审稿等子任务。
+- Skill Markdown：为每个研究步骤提供具体 prompt 语义，MainAgent/SubAgent 按当前步骤 skill 执行。
+
+也就是说，Research Mode 的控制权在程序状态机，而不是 MainAgent（mainagent控制下一步会出现跳步、长程任务容易出现漂移）：
+
+```text
+/research
+  -> run_research(request, config)
+  -> ResearchPipeline.run()
+  -> for step in RESEARCH_STEPS:
+       load step.skill
+       build step brief
+       execute step by single-agent or multi-agent project
+       run step gate
+  -> derive artifacts
+  -> export latex/html if requested
+  -> final gate
+  -> ResearchResult
+```
+
+### 7.1 固定步骤
+
+Research Mode 当前定义 8 个步骤：
+
+1. `decompose_topic`：研究问题拆解，加载 `decompose-topic` skill，输出 `研究问题拆解`。
+2. `literature_search`：文献检索与证据表，加载 `literature-search` skill，输出 `文献检索与证据表`。
+3. `knowledge_synthesis`：知识综合与研究空白，加载 `knowledge-synthesis` skill，输出 `知识综合与研究空白`。
+4. `claim_generation`：研究空白、未来方向与可检验问题生成，加载 `claim-generation` skill，输出 `研究空白、未来方向与可检验问题`。
+5. `claim_debate`：观点辩论与优先级评估，加载 `claim-debate` skill，输出 `观点辩论与优先级评估`。
+6. `outline_build`：结构化大纲，加载 `outline-build` skill，输出 `结构化大纲`。
+7. `section_draft`：研究报告正文，加载 `section-draft` skill，输出 `研究报告正文`。
+8. `multi_agent_review`：多视角审稿，加载 `multi-agent-review` skill，输出 `多视角审稿意见`。
+
+其中 `literature_search`、`knowledge_synthesis`、`claim_generation`、`claim_debate`、`multi_agent_review` 带有 `parallel_hint=True`，由 `ResearchPipeline` 调用 `build_agent_project()`，使用 MainAgent + 多 SubAgent 执行。其余步骤调用 `build_single_agent_project()`，直接用单个 SubAgent 执行。
+
+### 7.2 MainAgent 在 Research Mode 中的角色
+
+Research Mode 中的 MainAgent 不负责阶段推进。它只在单个 research step 内负责：
+
+- 根据当前 step brief 和 skill 拆分可并行子任务；
+- 使用 `delegate_task` 或 `delegate_tasks` 创建 SubAgent；
+- 使用 `wait_worker_sessions`、`inspect_worker_session` 收集执行结果；
+- 必要时用 `continue_task` 续跑未完成子任务；
+- 将结果综合到当前 step 要求的产物中。
+
+每个 step 的 brief 会由 `ResearchPipeline._build_step_brief()` 构造，包含：
+
+- 当前步骤名称和 key；
+- 研究主题、深度、输出格式、约束；
+- 统一产物路径，如 `report_path`、`findings_path`、`scratchpad_path`、`papers_path`、`claims_path`、`debate_log_path`；
+- 当前步骤对应的 skill Markdown；
+- 硬性要求：只执行当前步骤、写入指定 markdown 章节、记录带来源的 findings、不要编造来源。
+
+因此 MainAgent 的 prompt 仍复用通用 `GenericMainPromptBuilder`，但研究步骤语义来自 `src/research/skills/*.md`。
+
+### 7.3 SubAgent 在 Research Mode 中的角色
+
+SubAgent 仍复用通用 `GenericSubPromptBuilder`。由于 step brief 中显式包含 `任务类型: research`，SubAgent 会按 research 策略执行：
+
+- 搜索或读取本地资料；
+- 使用 `record_finding` 记录结构化发现；
+- 使用 `write_scratchpad_note` 留下可复用中间结论；
+- 按当前 skill 要求写入或协助写入报告章节；
+- 最后通过 `finish` 返回状态、完成事项、剩余问题和结果摘要。
+
+Research Mode 当前还没有单独的 `ResearchMainAgent` 或 `ResearchSubAgent` 类。它的第一版实现是：**固定流程在 `src/research`，执行能力复用现有 Agent Runtime**。
+
+### 7.4 产物与门禁
+
+每次 Research Mode 会创建独立运行目录：
+
+```text
+workspace/output/research_<timestamp>_<topic>/
+```
+
+主要产物包括：
+
+- `research_report.md`：canonical markdown 工作稿；
+- `findings.jsonl`：结构化发现；
+- `papers.jsonl`：文献记录；
+- `claims.jsonl`：研究空白、未来方向、可检验问题和综述观点；
+- `debate_log.md`：辩论记录；
+- `outline.md`：结构化大纲；
+- `review_report.md`：多视角审稿结果；
+- `paper.tex`：LaTeX 导出；
+- `report.html`：HTML 导出；
+- `manifest.json`：步骤结果和产物清单。
+
+`ResearchGatekeeper` 会在每个 step 后检查当前章节、scratchpad 和 findings 数量；最终再检查必需章节、来源链接、findings 数量和请求的导出格式是否存在。只有最终门禁通过，`ResearchResult.status` 才会是 `done`；否则返回 `partial` 并在 `open_issues` 中列出缺口。

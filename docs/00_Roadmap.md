@@ -13,7 +13,7 @@
 | 研究流程状态机 | `src/research/` 模块，Phase 1-4 固定流程 + 闸门 | ❌ 不存在 |
 | Skills MD 文件 | 8 个 core research skills | ❌ 不存在 |
 | `/research` 命令 | slash 命令触发研究模式 | ❌ 未实现 |
-| 多 Agent 并行假设生成 | delegate_tasks 复用 + 多视角 SubAgent | 🔶 底层有 delegate_tasks，未包装为 research skill |
+| 多 Agent 并行观点生成 | delegate_tasks 复用 + 多视角 SubAgent | 🔶 底层有 delegate_tasks，未包装为 research skill |
 | 跨模型交叉辩论 | MiniMax→Gemini 互审 | ❌ 当前单模型配置 |
 | LaTeX 输出 | NeurIPS 模板 | ❌ 只有 Markdown |
 | HTML 报告 | 响应式单页报告 | ❌ 只有 Markdown |
@@ -25,11 +25,11 @@
 
 ### Day 1-2: 研究流程内核 + Skills
 - 实现 `src/research/` 固定流程状态机（Phase 1-4，每步闸门校验）
-- 编写 8 个核心 skill MD 文件（文献检索、知识综合、假设生成、跨模型辩论、大纲、撰写、审稿）
+- 编写 8 个核心 skill MD 文件（文献检索、知识综合、观点生成、观点辩论、大纲、撰写、审稿）
 - `/research` slash 命令集成
 
 ### Day 3-4: 多 Agent 并行 + 输出格式
-- Step 4 多 Agent 并行假设生成（复用 delegate_tasks）
+- Step 4 多 Agent 并行观点生成（复用 delegate_tasks）
 - Step 5 跨模型交叉辩论
 - LaTeX 输出模板 + HTML 报告模板
 

@@ -40,6 +40,16 @@ def _normalize_context(context: Any) -> str:
     return str(context)
 
 
+def _normalize_tools_input(tools: Any) -> List[str]:
+    if not tools:
+        return []
+    if isinstance(tools, str):
+        return [item.strip() for item in re.split(r"[,;\s]+", tools) if item.strip()]
+    if isinstance(tools, (list, tuple, set)):
+        return [str(item).strip() for item in tools if str(item).strip()]
+    return [str(tools).strip()]
+
+
 def _format_trace(trace) -> str:
     return summarize_trace_for_decision(trace)
 
@@ -198,14 +208,15 @@ class _DelegateBase(BaseAction):
     class Config:
         arbitrary_types_allowed = True
 
-    def _resolve_allowed_tools(self, requested_tools: Optional[List[str]]) -> Optional[List[str]]:
-        if not requested_tools:
+    def _resolve_allowed_tools(self, requested_tools: Any) -> Optional[List[str]]:
+        normalized_tools = _normalize_tools_input(requested_tools)
+        if not normalized_tools:
             return None
         env_tools = getattr(self.env, "tools", {})
         env_names = list(env_tools.keys()) if isinstance(env_tools, dict) else []
         env_normalized = {_normalize_tool_name(item): item for item in env_names}
         resolved: List[str] = []
-        for raw in requested_tools:
+        for raw in normalized_tools:
             canonical = env_normalized.get(_normalize_tool_name(str(raw)))
             if canonical:
                 resolved.append(canonical)
@@ -254,7 +265,7 @@ class _DelegateBase(BaseAction):
             "task_instruction": task_instruction,
             "model": model,
             "context": _normalize_context(context),
-            "tools": list(tools or []),
+            "tools": _normalize_tools_input(tools),
             "result_schema": result_schema,
             "rounds": [],
             "agent": agent,
@@ -268,7 +279,7 @@ class _DelegateBase(BaseAction):
         if context is not None:
             session["last_context"] = _normalize_context(context)
         if tools is not None:
-            session["tools"] = list(tools)
+            session["tools"] = _normalize_tools_input(tools)
         if result_schema is not None:
             session["result_schema"] = result_schema
         if agent is not None:
@@ -313,7 +324,7 @@ class _DelegateBase(BaseAction):
                 "model": model,
                 "context": _normalize_context(context),
                 "last_context": _normalize_context(context),
-                "tools": list(tools or []),
+                "tools": _normalize_tools_input(tools),
                 "result_schema": result_schema,
                 "env": env,
                 "parallel_worker": parallel_worker,
@@ -1030,7 +1041,7 @@ class DelegateTasksTool(_DelegateBase):
 
         # Hard rule: writing report sections is forbidden in parallel phase.
         for idx, task in enumerate(tasks):
-            task_tools = [str(item) for item in (task.get("tools") or [])]
+            task_tools = _normalize_tools_input(task.get("tools"))
             if any(_normalize_tool_name(item) == _normalize_tool_name("write_report_section") for item in task_tools):
                 return {
                     "success": False,

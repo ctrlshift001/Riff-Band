@@ -11,7 +11,7 @@ from typing import Any, AsyncGenerator, Dict, List, Tuple
 from agents.main_agent import MainAgent
 from agents.sub_agent import SubAgent
 from base.engine.async_llm import LLMsConfig, create_llm_instance
-from base.engine.logs import logger
+from base.engine.logs import LogLevel, logger
 from core.message import (
     ErrorMessage,
     OrchestratorDecision,
@@ -43,14 +43,38 @@ from orchestration_tools.delegate import (
 )
 from project.prompts import GenericMainPromptBuilder, GenericSubPromptBuilder
 from project.tools import (
+    ArxivSearchTool,
+    BibtexExportTool,
+    BuildResearchOutlineTool,
+    CitationAuditTool,
+    CrossrefLookupTool,
+    DblpLookupTool,
     ListSourcesTool,
+    LocalPdfExtractTool,
+    NoveltyCheckTool,
+    ReadClaimDebateLogTool,
+    ReadPaperNotesTool,
+    ReadPapersTool,
+    ReadFindingsTool,
+    ReadResearchClaimsTool,
+    ReadResearchOutlineTool,
+    ReadResearchReportTool,
     ReadScratchpadTool,
     ReadSourceTool,
     ReadSourcesTool,
+    ReadUrlTool,
+    RecordClaimDebateTool,
+    RecordPaperNoteTool,
     RecordFindingTool,
+    RecordPaperTool,
+    RecordResearchClaimTool,
+    ReviewResearchReportTool,
     SearchSourcesTool,
+    SemanticScholarSearchTool,
+    SynthesizeFindingsTool,
     VerifyArtifactsTool,
     WebSearchTool,
+    WebFetchTool,
     WriteReportSectionTool,
     WriteScratchpadNoteTool,
 )
@@ -71,7 +95,6 @@ class RuntimeProfile:
     task_goal: str = "完成用户任务并交付可验证结果。"
     workflow_hints: List[str] = field(default_factory=list)
     completion_requirements: List[str] = field(default_factory=list)
-    subtask_toolkits: Dict[str, List[str]] = field(default_factory=dict)
     default_worker_tools: List[str] = field(default_factory=list)
     parallel_forbidden_tools: List[str] = field(default_factory=list)
 
@@ -91,69 +114,6 @@ def _normalize_sub_models(main_model: str, sub_models: List[Any]) -> List[str]:
     return normalized
 
 
-def _default_subtask_toolkits() -> Dict[str, List[str]]:
-    return {
-        "policy_research": [
-            "search_sources",
-            "read_sources",
-            "read_source",
-            "web_search",
-            "record_finding",
-            "write_scratchpad_note",
-        ],
-        "company_research": [
-            "search_sources",
-            "read_sources",
-            "read_source",
-            "web_search",
-            "record_finding",
-            "write_scratchpad_note",
-        ],
-        "supply_chain": [
-            "search_sources",
-            "read_sources",
-            "read_source",
-            "web_search",
-            "record_finding",
-            "write_scratchpad_note",
-        ],
-        "financial_metrics": [
-            "search_sources",
-            "read_sources",
-            "read_source",
-            "web_search",
-            "record_finding",
-            "write_scratchpad_note",
-        ],
-        "news_signals": [
-            "web_search",
-            "record_finding",
-            "write_scratchpad_note",
-        ],
-        "report_drafting": [
-            "read_scratchpad",
-            "search_sources",
-            "read_sources",
-            "read_source",
-            "write_report_section",
-            "write_scratchpad_note",
-        ],
-        "verification": [
-            "read_scratchpad",
-            "verify_artifacts",
-            "write_scratchpad_note",
-        ],
-        "general_research": [
-            "search_sources",
-            "read_sources",
-            "read_source",
-            "web_search",
-            "record_finding",
-            "write_scratchpad_note",
-        ],
-    }
-
-
 def _default_worker_tools() -> List[str]:
     return [
         "list_sources",
@@ -161,11 +121,32 @@ def _default_worker_tools() -> List[str]:
         "read_source",
         "read_sources",
         "web_search",
+        "web_fetch",
+        "read_url",
+        "arxiv_search",
+        "semantic_scholar_search",
+        "crossref_lookup",
+        "dblp_lookup",
+        "local_pdf_extract",
+        "novelty_check",
+        "record_paper",
+        "read_papers",
+        "record_paper_note",
+        "read_paper_notes",
+        "bibtex_export",
         "record_finding",
+        "read_findings",
+        "synthesize_findings",
+        "record_research_claim",
+        "read_research_claims",
+        "record_claim_debate",
+        "build_research_outline",
+        "review_research_report",
         "write_scratchpad_note",
         "read_scratchpad",
         "write_report_section",
         "verify_artifacts",
+        "citation_audit",
     ]
 
 
@@ -173,36 +154,7 @@ def _default_parallel_forbidden_tools() -> List[str]:
     return ["write_report_section"]
 
 
-def _default_model_routing(sub_models: List[str]) -> Dict[str, str]:
-    """Backward-compatible default profile-to-model routing used by tests/config callers."""
-    if not sub_models:
-        model = ""
-        return {
-            "policy_research": model,
-            "company_research": model,
-            "supply_chain": model,
-            "financial_metrics": model,
-            "news_signals": model,
-            "report_drafting": model,
-            "verification": model,
-            "general_research": model,
-        }
-
-    primary = sub_models[0]
-    secondary = sub_models[1] if len(sub_models) > 1 else primary
-    return {
-        "policy_research": primary,
-        "company_research": secondary,
-        "supply_chain": primary,
-        "financial_metrics": primary,
-        "news_signals": secondary,
-        "report_drafting": secondary,
-        "verification": secondary,
-        "general_research": secondary,
-    }
-
-
-def _generic_profile(sub_models: List[str]) -> RuntimeProfile:
+def _generic_profile() -> RuntimeProfile:
     return RuntimeProfile(
         workflow_hints=[
             "委派前先理解用户目标、约束和期望产物。",
@@ -215,45 +167,12 @@ def _generic_profile(sub_models: List[str]) -> RuntimeProfile:
             "如有重要产物或证据，需要列出。",
             "如果任务为 partial 或 blocked，需要说明剩余问题。",
         ],
-        subtask_toolkits=_default_subtask_toolkits(),
-        default_worker_tools=_default_worker_tools(),
-        parallel_forbidden_tools=_default_parallel_forbidden_tools(),
-    )
-
-
-def _gba_profile(sub_models: List[str]) -> RuntimeProfile:
-    return RuntimeProfile(
-        name="gba_industry_analysis",
-        report_filename="gba_industry_report.md",
-        required_sections=[
-            "执行摘要",
-            "政策驱动与约束",
-            "城市与产业比较",
-            "投资机会与风险",
-        ],
-        min_findings=5,
-        task_goal="生成一份结构化的粤港澳大湾区产业分析报告，并给出可行动结论。",
-        workflow_hints=[
-            "先收集证据；优先记录带来源链接或明确证据的发现。",
-            "政策、城市比较、机会和风险等独立研究线索应优先并行委派。",
-            "写入可复用的 scratchpad 笔记，便于综合阶段复用中间结论。",
-            "收集到足够发现后再撰写报告章节。",
-            "完成前检查报告章节、来源覆盖和 findings 数量。",
-        ],
-        completion_requirements=[
-            "在 report_path 生成 markdown 报告。",
-            "包含所有必需报告章节。",
-            "在 findings.jsonl 中保留足够的有来源发现。",
-            "报告或 findings 中应包含明确来源链接或证据。",
-        ],
-        subtask_toolkits=_default_subtask_toolkits(),
         default_worker_tools=_default_worker_tools(),
         parallel_forbidden_tools=_default_parallel_forbidden_tools(),
     )
 
 
 def _resolve_profile(
-    sub_models: List[str],
     profile_name: str | None = None,
     report_filename: str | None = None,
     required_sections: List[str] | None = None,
@@ -261,16 +180,11 @@ def _resolve_profile(
     task_goal: str | None = None,
     workflow_hints: List[str] | None = None,
     completion_requirements: List[str] | None = None,
-    subtask_toolkits: Dict[str, List[str]] | None = None,
     default_worker_tools: List[str] | None = None,
     parallel_forbidden_tools: List[str] | None = None,
 ) -> RuntimeProfile:
     normalized_name = (profile_name or "generic").strip() or "generic"
-    base = (
-        _gba_profile(sub_models)
-        if normalized_name == "gba_industry_analysis"
-        else _generic_profile(sub_models)
-    )
+    base = _generic_profile()
 
     if normalized_name != base.name:
         base = RuntimeProfile(
@@ -281,7 +195,6 @@ def _resolve_profile(
             task_goal=base.task_goal,
             workflow_hints=list(base.workflow_hints),
             completion_requirements=list(base.completion_requirements),
-            subtask_toolkits=dict(base.subtask_toolkits),
             default_worker_tools=list(base.default_worker_tools),
             parallel_forbidden_tools=list(base.parallel_forbidden_tools),
         )
@@ -294,34 +207,9 @@ def _resolve_profile(
         task_goal=task_goal or base.task_goal,
         workflow_hints=list(workflow_hints or base.workflow_hints),
         completion_requirements=list(completion_requirements or base.completion_requirements),
-        subtask_toolkits=dict(subtask_toolkits or base.subtask_toolkits),
         default_worker_tools=list(default_worker_tools or base.default_worker_tools),
         parallel_forbidden_tools=list(parallel_forbidden_tools or base.parallel_forbidden_tools),
     )
-
-
-def _infer_required_sections_from_brief(brief_text: str) -> List[str]:
-    text = str(brief_text or "")
-    candidates = [
-        "执行摘要",
-        "城市比较",
-        "政策驱动",
-        "政策驱动与约束",
-        "城市与产业比较",
-        "投资机会与风险",
-        "关键发现",
-        "行动建议",
-        "Executive Summary",
-        "City Comparison",
-        "Policy Drivers and Constraints",
-        "Key Findings",
-        "Actionable Recommendations",
-    ]
-    found: List[str] = []
-    for title in candidates:
-        if title in text and title not in found:
-            found.append(title)
-    return found
 
 
 @dataclass
@@ -333,7 +221,23 @@ class AgentProject:
 
     def _main_report_exists(self) -> bool:
         report_path = str(self.main_agent.meta.get("report_path", "") or "").strip()
-        return bool(report_path) and Path(report_path).exists()
+        if not report_path:
+            return False
+        path = Path(report_path)
+        if not path.exists():
+            return False
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            return False
+
+        required_sections = [
+            str(item).strip()
+            for item in list(self.main_agent.meta.get("required_sections", []) or [])
+            if str(item).strip()
+        ]
+        if not required_sections:
+            return True
+        return all(f"## {title}" in text for title in required_sections)
 
     def _build_synthesis_instruction(self) -> str:
         required_sections = list(self.main_agent.meta.get("required_sections", []) or [])
@@ -636,6 +540,8 @@ class AgentProject:
         return self._merge_wait_results(result, retry_result)
 
     async def _run_synthesis_if_needed(self, attempts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if self.main_agent.meta.get("research_completion_scope") == "current_step_only":
+            return {}
         if self._main_report_exists():
             return {}
         if not self.main_agent.task_entries:
@@ -652,6 +558,7 @@ class AgentProject:
             "model": self.main_agent.sub_models[0] if self.main_agent.sub_models else "",
             "tools": [
                 "read_scratchpad",
+                "read_findings",
                 "read_sources",
                 "read_source",
                 "record_finding",
@@ -936,6 +843,9 @@ class AgentProject:
 
             result = action.get("result", {})
             last_complete_result = result
+            if self.main_agent.meta.get("research_completion_scope") == "current_step_only":
+                final_result = result
+                break
             if result.get("done") and result.get("quality_gate_passed"):
                 final_result = result
                 break
@@ -1038,6 +948,20 @@ class SingleAgentProject:
         cancel_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[ShellMessage, None]:
         """Run single-agent mode, yielding ShellMessages."""
+        meta = self.env.meta_data or {}
+        model = getattr(getattr(self.sub_agent, "llm", None), "model_name", "")
+        logger.log_to_file(
+            LogLevel.INFO,
+            (
+                "[SingleAgentProject] Start "
+                f"label={getattr(self.sub_agent, 'task_label', '')} "
+                f"model={model} "
+                f"max_steps={self.env.max_steps} "
+                f"research_step={meta.get('research_step_key', '')} "
+                f"expected_section={meta.get('current_step_expected_section', '')} "
+                f"report_path={meta.get('report_path', '')}"
+            ),
+        )
         runner = AgentRunner()
         async for msg in runner.stream(
             self.sub_agent, self.env, cancel_event=cancel_event
@@ -1059,38 +983,86 @@ class SingleAgentProject:
                 if result.trace[-1].info.get("finished")
                 else {}
             )
+        logger.log_to_file(
+            LogLevel.INFO,
+            (
+                "[SingleAgentProject] Agent finished "
+                f"steps={result.steps} done={result.done} "
+                f"finish_status={finish_result.get('status', '')} "
+                f"finish_message={finish_result.get('message', '')}"
+            ),
+        )
 
-        meta = self.env.meta_data or {}
         report_path = str(
             meta.get("report_path", str(self.env.output_dir / "task_report.md"))
         )
         findings_path = str(
             meta.get("findings_path", str(self.env.output_dir / "findings.jsonl"))
         )
-        complete = await CompleteTaskTool()(
-            executive_summary=str(
-                finish_result.get("message", "")
-                or "single-agent execution finished"
-            ),
-            confidence="medium",
-            status="done" if finish_result.get("status") == "done" else "partial",
-            report_path=report_path,
-            artifacts=[
-                {
-                    "type": "report",
-                    "path": report_path,
-                    "description": "single-agent report output",
-                }
-            ],
-            verification=[
-                "single-agent run completed; report quality gate evaluated"
-            ],
-            open_issues=list(finish_result.get("issues", []) or []),
-            findings_path=findings_path,
-            required_sections=list(meta.get("required_sections", []) or []),
-            min_findings=int(meta.get("min_findings", 0) or 0),
-        )
+        research_step_mode = meta.get("research_completion_scope") == "current_step_only"
+        if research_step_mode:
+            status = "done" if finish_result.get("status") == "done" else "partial"
+            complete = {
+                "success": status == "done",
+                "done": status == "done",
+                "status": status,
+                "executive_summary": str(
+                    finish_result.get("message", "")
+                    or "single-agent execution finished"
+                ),
+                "report_path": report_path,
+                "confidence": "medium",
+                "artifacts": [
+                    {
+                        "type": "report",
+                        "path": report_path,
+                        "description": "single-agent research step output",
+                    }
+                ],
+                "verification": [
+                    "single-agent run completed; ResearchPipeline step gate will evaluate artifacts"
+                ],
+                "open_issues": list(finish_result.get("issues", []) or []),
+                "findings_path": findings_path,
+                "quality_gate_passed": status == "done",
+                "issues": list(finish_result.get("issues", []) or []),
+                "step_gate_deferred": True,
+            }
+        else:
+            complete = await CompleteTaskTool()(
+                executive_summary=str(
+                    finish_result.get("message", "")
+                    or "single-agent execution finished"
+                ),
+                confidence="medium",
+                status="done" if finish_result.get("status") == "done" else "partial",
+                report_path=report_path,
+                artifacts=[
+                    {
+                        "type": "report",
+                        "path": report_path,
+                        "description": "single-agent report output",
+                    }
+                ],
+                verification=[
+                    "single-agent run completed; report quality gate evaluated"
+                ],
+                open_issues=list(finish_result.get("issues", []) or []),
+                findings_path=findings_path,
+                required_sections=list(meta.get("required_sections", []) or []),
+                min_findings=int(meta.get("min_findings", 0) or 0),
+            )
         passed = complete.get("quality_gate_passed", False)
+        logger.log_to_file(
+            LogLevel.INFO,
+            (
+                "[SingleAgentProject] Completion gate "
+                f"passed={passed} done={complete.get('done')} "
+                f"issues={complete.get('issues', [])} "
+                f"step_gate_deferred={complete.get('step_gate_deferred', False)} "
+                f"required_sections={meta.get('required_sections', [])}"
+            ),
+        )
         yield TaskComplete(
             success=passed,
             quality_gate_passed=passed,
@@ -1126,6 +1098,7 @@ class SingleAgentProject:
             pass
         return self._run_result or {"attempts": [], "final_result": None}
 
+
 # 创建runtime，确定产物路径、工具实例、环境变量等，并注入到工具中以实现状态共享
 def _build_runtime_components(
     sub_models: List[str],
@@ -1136,11 +1109,19 @@ def _build_runtime_components(
     profile: RuntimeProfile,
     max_parallel_subtasks: int = 3,
     subagent_process_timeout_seconds: int = 180,
+    runtime_metadata: Dict[str, Any] | None = None,
 ) -> Tuple[TaskExecutionEnvironment, List[object]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / profile.report_filename
     findings_path = output_dir / "findings.jsonl"
     scratchpad_path = output_dir / "scratchpad" / "shared.md"
+    papers_path = output_dir / "papers.jsonl"
+    paper_notes_path = output_dir / "paper_notes.jsonl"
+    claims_path = output_dir / "claims.jsonl"
+    debate_log_path = output_dir / "debate_log.md"
+    outline_path = output_dir / "outline.md"
+    review_path = output_dir / "review_report.md"
+    references_bib_path = output_dir / "references.bib"
     ddg_available = bool(
         importlib.util.find_spec("ddgs")
         or importlib.util.find_spec("duckduckgo_search")
@@ -1153,7 +1134,41 @@ def _build_runtime_components(
         ReadSourceTool(sources_dir=sources_dir),
         ReadSourcesTool(sources_dir=sources_dir),
         WebSearchTool(),
+        WebFetchTool(),
+        ReadUrlTool(),
+        ArxivSearchTool(),
+        SemanticScholarSearchTool(),
+        CrossrefLookupTool(),
+        DblpLookupTool(),
+        LocalPdfExtractTool(root_dir=sources_dir),
+        NoveltyCheckTool(
+            default_papers_path=papers_path,
+            default_findings_path=findings_path,
+        ),
+        RecordPaperTool(papers_path=papers_path),
+        ReadPapersTool(papers_path=papers_path),
+        RecordPaperNoteTool(paper_notes_path=paper_notes_path),
+        ReadPaperNotesTool(paper_notes_path=paper_notes_path),
+        BibtexExportTool(
+            papers_path=papers_path,
+            default_output_path=references_bib_path,
+        ),
         RecordFindingTool(findings_path=findings_path),
+        ReadFindingsTool(findings_path=findings_path),
+        SynthesizeFindingsTool(scratchpad_path=scratchpad_path),
+        RecordResearchClaimTool(claims_path=claims_path),
+        ReadResearchClaimsTool(claims_path=claims_path),
+        RecordClaimDebateTool(debate_log_path=debate_log_path),
+        BuildResearchOutlineTool(outline_path=outline_path),
+        ReadClaimDebateLogTool(debate_log_path=debate_log_path),
+        ReadResearchOutlineTool(outline_path=outline_path),
+        ReadResearchReportTool(report_path=report_path),
+        ReviewResearchReportTool(
+            report_path=report_path,
+            findings_path=findings_path,
+            claims_path=claims_path,
+            review_path=review_path,
+        ),
         WriteScratchpadNoteTool(scratchpad_path=scratchpad_path),
         ReadScratchpadTool(scratchpad_path=scratchpad_path),
         WriteReportSectionTool(report_path=report_path),
@@ -1162,7 +1177,38 @@ def _build_runtime_components(
             default_findings_path=findings_path,
             default_scratchpad_path=scratchpad_path,
         ),
+        CitationAuditTool(
+            default_report_path=report_path,
+            default_findings_path=findings_path,
+        ),
     ]
+
+    meta_data = {
+        "profile_name": profile.name,
+        "report_path": str(report_path),
+        "findings_path": str(findings_path),
+        "scratchpad_path": str(scratchpad_path),
+        "papers_path": str(papers_path),
+        "paper_notes_path": str(paper_notes_path),
+        "claims_path": str(claims_path),
+        "debate_log_path": str(debate_log_path),
+        "outline_path": str(outline_path),
+        "review_path": str(review_path),
+        "references_bib_path": str(references_bib_path),
+        "required_sections": list(profile.required_sections),
+        "min_findings": profile.min_findings,
+        "search_enabled": search_enabled,
+        "default_worker_tools": list(profile.default_worker_tools),
+        "parallel_forbidden_tools": list(profile.parallel_forbidden_tools),
+        "brief_injection_mode": "direct_prompt_context",
+        "max_parallel_subtasks": max(1, int(max_parallel_subtasks or 3)),
+        "subagent_process_timeout_seconds": int(subagent_process_timeout_seconds or 180),
+        "task_goal": profile.task_goal,
+        "workflow_hints": list(profile.workflow_hints),
+        "completion_requirements": list(profile.completion_requirements),
+    }
+    if runtime_metadata:
+        meta_data.update(dict(runtime_metadata))
 
     env = TaskExecutionEnvironment(
         brief_text=brief_text,
@@ -1170,24 +1216,7 @@ def _build_runtime_components(
         output_dir=output_dir,
         tools=task_tools,
         max_steps=max_subagent_steps,
-        meta_data={
-            "profile_name": profile.name,
-            "report_path": str(report_path),
-            "findings_path": str(findings_path),
-            "scratchpad_path": str(scratchpad_path),
-            "required_sections": list(profile.required_sections),
-            "min_findings": profile.min_findings,
-            "search_enabled": search_enabled,
-            "subtask_toolkits": dict(profile.subtask_toolkits),
-            "default_worker_tools": list(profile.default_worker_tools),
-            "parallel_forbidden_tools": list(profile.parallel_forbidden_tools),
-            "brief_injection_mode": "direct_prompt_context",
-            "max_parallel_subtasks": max(1, int(max_parallel_subtasks or 3)),
-            "subagent_process_timeout_seconds": int(subagent_process_timeout_seconds or 180),
-            "task_goal": profile.task_goal,
-            "workflow_hints": list(profile.workflow_hints),
-            "completion_requirements": list(profile.completion_requirements),
-        },
+        meta_data=meta_data,
     )
     return env, task_tools
 
@@ -1206,16 +1235,14 @@ def build_agent_project(
     report_filename: str = "task_report.md",
     required_sections: List[str] | None = None,
     min_findings: int = 5,
+    main_prompt_builder: Any = GenericMainPromptBuilder,
+    sub_prompt_builder: Any = GenericSubPromptBuilder,
+    runtime_metadata: Dict[str, Any] | None = None,
 ) -> AgentProject:
     # 1.标准化模型列表，确保主模型在首位
     sub_models = _normalize_sub_models(main_model, sub_models)
-    if required_sections is None:
-        inferred_sections = _infer_required_sections_from_brief(brief_text)
-        if inferred_sections:
-            required_sections = inferred_sections
     #解析运行profile
     profile = _resolve_profile(
-        sub_models=sub_models,
         profile_name=profile_name,
         report_filename=report_filename,
         required_sections=required_sections,
@@ -1231,17 +1258,18 @@ def build_agent_project(
         profile=profile,
         max_parallel_subtasks=max_parallel_subtasks,
         subagent_process_timeout_seconds=subagent_process_timeout_seconds,
+        runtime_metadata=runtime_metadata,
     )
 
     delegate_tool = DelegateTaskTool(
         env=env,
         models=sub_models,
-        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=GenericSubPromptBuilder, **kwargs),
+        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=sub_prompt_builder, **kwargs),
     )
     delegate_tasks_tool = DelegateTasksTool(
         env=env,
         models=sub_models,
-        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=GenericSubPromptBuilder, **kwargs),
+        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=sub_prompt_builder, **kwargs),
     )
 
     # 显式设置session_store以实现工具间的状态共享
@@ -1250,35 +1278,35 @@ def build_agent_project(
     continue_task_tool = ContinueTaskTool(
         env=env,
         models=sub_models,
-        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=GenericSubPromptBuilder, **kwargs),
+        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=sub_prompt_builder, **kwargs),
     )
     continue_task_tool.session_store = delegate_tool.session_store
     continue_task_tool.process_manager = delegate_tool.process_manager
     list_worker_sessions_tool = ListWorkerSessionsTool(
         env=env,
         models=sub_models,
-        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=GenericSubPromptBuilder, **kwargs),
+        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=sub_prompt_builder, **kwargs),
     )
     list_worker_sessions_tool.session_store = delegate_tool.session_store
     list_worker_sessions_tool.process_manager = delegate_tool.process_manager
     inspect_worker_session_tool = InspectWorkerSessionTool(
         env=env,
         models=sub_models,
-        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=GenericSubPromptBuilder, **kwargs),
+        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=sub_prompt_builder, **kwargs),
     )
     inspect_worker_session_tool.session_store = delegate_tool.session_store
     inspect_worker_session_tool.process_manager = delegate_tool.process_manager
     wait_worker_sessions_tool = WaitWorkerSessionsTool(
         env=env,
         models=sub_models,
-        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=GenericSubPromptBuilder, **kwargs),
+        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=sub_prompt_builder, **kwargs),
     )
     wait_worker_sessions_tool.session_store = delegate_tool.session_store
     wait_worker_sessions_tool.process_manager = delegate_tool.process_manager
     close_worker_session_tool = CloseWorkerSessionTool(
         env=env,
         models=sub_models,
-        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=GenericSubPromptBuilder, **kwargs),
+        subagent_factory=lambda **kwargs: SubAgent(prompt_builder=sub_prompt_builder, **kwargs),
     )
     close_worker_session_tool.session_store = delegate_tool.session_store
     close_worker_session_tool.process_manager = delegate_tool.process_manager
@@ -1299,7 +1327,7 @@ def build_agent_project(
             complete_tool,
         ],
         subagent_tools=task_tools,
-        prompt_builder=GenericMainPromptBuilder,
+        prompt_builder=main_prompt_builder,
         max_attempts=max_attempts,
     )
     main_agent.reset(env.get_task_context())
@@ -1323,10 +1351,11 @@ def build_single_agent_project(
     report_filename: str = "task_report.md",
     required_sections: List[str] | None = None,
     min_findings: int = 0,
+    sub_prompt_builder: Any = GenericSubPromptBuilder,
+    runtime_metadata: Dict[str, Any] | None = None,
 ) -> SingleAgentProject:
     sub_models = _normalize_sub_models(main_model, sub_models)
     profile = _resolve_profile(
-        sub_models=sub_models,
         profile_name=profile_name,
         report_filename=report_filename,
         required_sections=required_sections,
@@ -1341,6 +1370,7 @@ def build_single_agent_project(
         profile=profile,
         max_parallel_subtasks=max_parallel_subtasks,
         subagent_process_timeout_seconds=subagent_process_timeout_seconds,
+        runtime_metadata=runtime_metadata,
     )
     sub_llm = create_llm_instance(LLMsConfig.default().get(main_model))
     sub_agent = SubAgent(
@@ -1348,7 +1378,7 @@ def build_single_agent_project(
         task_instruction=brief_text,
         context="",
         original_question=brief_text,
-        prompt_builder=GenericSubPromptBuilder,
+        prompt_builder=sub_prompt_builder,
         task_label="single_mode",
     )
     sub_agent.reset(env.get_task_context())
@@ -1419,31 +1449,3 @@ async def build_project_by_mode(
         min_findings=min_findings,
     )
     return project, decision
-
-
-GBAAnalysisProject = AgentProject
-
-
-def build_gba_analysis_project(
-    main_model: str,
-    sub_models: List[str],
-    brief_text: str,
-    sources_dir: Path,
-    output_dir: Path,
-    max_attempts: int = 6,
-    max_subagent_steps: int = 10,
-    max_parallel_subtasks: int = 3,
-    subagent_process_timeout_seconds: int = 180,
-) -> AgentProject:
-    return build_agent_project(
-        main_model=main_model,
-        sub_models=sub_models,
-        brief_text=brief_text,
-        sources_dir=sources_dir,
-        output_dir=output_dir,
-        max_attempts=max_attempts,
-        max_subagent_steps=max_subagent_steps,
-        max_parallel_subtasks=max_parallel_subtasks,
-        subagent_process_timeout_seconds=subagent_process_timeout_seconds,
-        profile_name="gba_industry_analysis",
-    )

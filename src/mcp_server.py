@@ -50,9 +50,9 @@ class RiffBandMCPServer:
             {
                 "name": "research",
                 "description": (
-                    "Run Riff Band research mode for a topic. The current "
-                    "implementation exposes the stable interface; the full "
-                    "research pipeline can be upgraded behind this tool."
+                    "Run Riff Band fixed research mode for a topic. The "
+                    "pipeline performs literature search, synthesis, "
+                    "claim generation, claim debate, drafting, and review."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -68,7 +68,7 @@ class RiffBandMCPServer:
                         },
                         "output_format": {
                             "type": "string",
-                            "enum": ["markdown", "latex", "json"],
+                            "enum": ["markdown", "latex", "html", "json"],
                             "default": "markdown",
                         },
                         "sources": {

@@ -263,6 +263,31 @@ class CompleteTaskTool(BaseAction):
         if confidence not in {"high", "medium", "low"}:
             issues.append("confidence must be one of high|medium|low")
 
+        orchestration_data = dict(orchestration or {})
+        if bool(orchestration_data.get("research_step_mode", False)):
+            if not executive_summary.strip():
+                issues.append("executive_summary cannot be empty")
+            if status == "done" and open_issues:
+                issues.append("status is done but open_issues is not empty")
+            passed = not issues and status == "done"
+            return {
+                "success": passed,
+                "done": passed,
+                "status": status,
+                "executive_summary": executive_summary,
+                "report_path": report_path,
+                "confidence": confidence,
+                "artifacts": artifacts,
+                "verification": verification,
+                "open_issues": open_issues,
+                "findings_path": findings_path,
+                "findings_count": 0,
+                "quality_gate_passed": passed,
+                "issues": issues,
+                "orchestration": orchestration_data,
+                "step_gate_deferred": True,
+            }
+
         findings_rows: List[Dict[str, Any]] = []
         path_for_findings = findings_path.strip()
         if path_for_findings:

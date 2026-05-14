@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional
 
 from pydantic import Field
@@ -117,6 +118,8 @@ class MainAgent(BaseAgent):
         return "general_research"
 
     def _current_phase(self) -> str:
+        if self._is_research_step_mode():
+            return "research_step"
         if not self._phase_entries_done(self.RESEARCH_PROFILES):
             return "research"
         if not self._phase_entries_done({"report_drafting"}):
@@ -245,7 +248,57 @@ class MainAgent(BaseAgent):
             if str(item.get("profile", "") or "general_research") in profiles
         ]
 
+    def _is_research_step_mode(self) -> bool:
+        return (
+            str(self.meta.get("profile_name", "") or "").strip() == "research_mode"
+            and str(self.meta.get("research_completion_scope", "") or "").strip() == "current_step_only"
+        )
+
+    def _has_running_entries(self) -> bool:
+        return any(
+            str(item.get("worker_state", "") or "").strip().lower() == "running"
+            for item in self._effective_task_entries()
+        )
+
+    @staticmethod
+    def _jsonl_count(path_value: Any) -> int:
+        path_text = str(path_value or "").strip()
+        if not path_text:
+            return 0
+        path = Path(path_text)
+        if not path.exists():
+            return 0
+        count = 0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict):
+                count += 1
+        return count
+
+    def _research_artifact_stats(self) -> Dict[str, int]:
+        findings_count = self._jsonl_count(self.meta.get("findings_path", ""))
+        papers_count = self._jsonl_count(self.meta.get("papers_path", ""))
+        min_findings = int(self.meta.get("min_findings", 0) or 0)
+        return {
+            "findings_count": findings_count,
+            "papers_count": papers_count,
+            "min_findings": min_findings,
+            "findings_remaining": max(0, min_findings - findings_count),
+        }
+
     def _next_required_intent(self) -> str:
+        if self._is_research_step_mode():
+            if self._has_running_entries():
+                return "wait_current_step"
+            if not self._effective_task_entries():
+                return "execute_current_step"
+            return "complete_current_step"
         if not self._phase_entries_done(self.RESEARCH_PROFILES):
             return "finish_research"
         if not self._phase_entries_done({"report_drafting"}):
@@ -259,9 +312,17 @@ class MainAgent(BaseAgent):
             return ["complete_task"]
         intent = self._next_required_intent()
         inspect_actions = ["wait_worker_sessions", "inspect_worker_session", "list_worker_sessions", "close_worker_session"]
+        if self._is_research_step_mode():
+            if intent == "wait_current_step":
+                return ["wait_worker_sessions", *inspect_actions, "complete_task"]
+            if intent == "execute_current_step":
+                return ["delegate_task", "delegate_tasks", *inspect_actions]
+            return ["complete_task", "delegate_task", "delegate_tasks", "continue_task", *inspect_actions]
         if intent == "finish_research":
             return ["delegate_task", "delegate_tasks", "continue_task", *inspect_actions]
-        if intent in {"draft_report", "delegate_verification"}:
+        if intent == "draft_report":
+            return ["delegate_task", *inspect_actions]
+        if intent == "delegate_verification":
             return ["delegate_task", "continue_task", *inspect_actions]
         return ["complete_task", "inspect_worker_session", "list_worker_sessions"]
 
@@ -269,6 +330,12 @@ class MainAgent(BaseAgent):
         if forced_final_decision:
             return "强制最终决策轮：只能调用 complete_task，并由质量门决定 done/partial/blocked。"
         intent = self._next_required_intent()
+        if self._is_research_step_mode():
+            if intent == "wait_current_step":
+                return "当前 Research step 有运行中的子任务：优先等待或检查会话；不要进入报告型综合/验证阶段。"
+            if intent == "execute_current_step":
+                return "当前 Research step 尚未执行：只委派当前 step 内的 research/write/review 子任务，不规划后续 step。"
+            return "当前 Research step 已有执行结果：若 expected_section 和本步产物已满足，直接 complete_task；不足时只补当前 step。"
         if intent == "finish_research":
             return (
                 "下一步必须完成研究阶段：只能启动、继续、检查或等待 research 子任务；"
@@ -289,6 +356,11 @@ class MainAgent(BaseAgent):
 
     def _phase_guidance(self) -> str:
         phase = self._current_phase()
+        if self._is_research_step_mode():
+            return (
+                "Research Mode 当前 step：外层 ResearchPipeline 负责全局步骤推进；"
+                "MainAgent 只协调本 step 的委派、等待和完成判断，不执行报告型 synthesis/verification 阶段机。"
+            )
         if phase == "research":
             return (
                 "阶段 1 / 研究：收集证据、记录 findings、写入共享 scratchpad 笔记。"
@@ -394,6 +466,183 @@ class MainAgent(BaseAgent):
                     return model
         return ""
 
+    def _should_start_literature_parallel_search(self, forced_final_decision: bool = False) -> bool:
+        if forced_final_decision or not self._is_research_step_mode():
+            return False
+        if str(self.meta.get("research_step_key", "") or "").strip() != "literature_search":
+            return False
+        if self._next_required_intent() != "execute_current_step":
+            return False
+        return not self._effective_task_entries()
+
+    def _extract_research_topic(self) -> str:
+        text = str(self.instruction or "")
+        for pattern in [
+            r"\[研究主题\]\s*(.+?)(?:\n\[|\Z)",
+            r"\[鐮旂┒涓婚\]\s*(.+?)(?:\n\[|\Z)",
+        ]:
+            match = re.search(pattern, text, flags=re.S)
+            if match:
+                topic = re.sub(r"\s+", " ", match.group(1)).strip()
+                if topic:
+                    return topic
+        return re.sub(r"\s+", " ", text).strip()[:160]
+
+    def _read_research_scratchpad(self) -> str:
+        path_text = str(self.meta.get("scratchpad_path", "") or "").strip()
+        if not path_text:
+            return ""
+        path = Path(path_text)
+        if not path.is_file():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _clean_search_term(value: str) -> str:
+        text = re.sub(r"^[\s\-*+\d.、]+", "", str(value or "")).strip()
+        text = re.sub(r"^(中文关键词|英文关键词|关键词|检索式|查询|query|search terms?)[:：]\s*", "", text, flags=re.I)
+        text = text.strip(" `\"'“”[]()")
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _extract_search_terms_from_scratchpad(self, limit: int = 24) -> List[str]:
+        text = self._read_research_scratchpad()
+        if not text.strip():
+            return []
+        terms: List[str] = []
+        seen: set[str] = set()
+        keyword_markers = (
+            "关键词",
+            "检索词",
+            "检索式",
+            "查询",
+            "search",
+            "keyword",
+            "query",
+        )
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            lower = line.lower()
+            if not any(marker in lower for marker in keyword_markers):
+                continue
+            candidates = re.split(r"[,，;；、/]|(?:\s+\|\s+)", line)
+            for candidate in candidates:
+                term = self._clean_search_term(candidate)
+                if not term or len(term) < 2:
+                    continue
+                key = term.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                terms.append(term)
+                if len(terms) >= limit:
+                    return terms
+        return terms
+
+    @staticmethod
+    def _chunk_terms(terms: List[str], size: int) -> List[List[str]]:
+        chunks: List[List[str]] = []
+        for index in range(0, len(terms), max(1, size)):
+            chunk = terms[index : index + max(1, size)]
+            if chunk:
+                chunks.append(chunk)
+        return chunks
+
+    def _literature_parallel_search_params(self) -> Dict[str, Any]:
+        topic = self._extract_research_topic()
+        min_papers = int(self.meta.get("step_min_papers", 0) or self.meta.get("target_papers_for_literature_review", 30) or 30)
+        min_findings = int(self.meta.get("min_findings", 0) or 8)
+        per_task_papers = max(8, min(15, (min_papers + 2) // 3))
+        tools = [
+            "semantic_scholar_search",
+            "arxiv_search",
+            "crossref_lookup",
+            "dblp_lookup",
+            "record_paper",
+            "record_paper_note",
+            "record_finding",
+            "write_scratchpad_note",
+        ]
+        plan_terms = self._extract_search_terms_from_scratchpad()
+        if plan_terms:
+            plan_chunks = self._chunk_terms(plan_terms, 4)
+            group_names = ["Step 1 核心关键词", "Step 1 方法/场景关键词", "Step 1 扩展关键词", "Step 1 补充关键词"]
+            groups = [
+                {
+                    "name": group_names[index] if index < len(group_names) else f"Step 1 关键词组 {index + 1}",
+                    "queries": chunk,
+                    "focus": "严格基于 Step 1 scratchpad 生成的中英文关键词、检索式和研究线索检索论文。",
+                }
+                for index, chunk in enumerate(plan_chunks[:4])
+            ]
+        else:
+            groups = [
+            {
+                "name": "核心组合",
+                "queries": [
+                    f"{topic}",
+                    '"reconfigurable intelligent surface" AND "integrated sensing and communication"',
+                    '"RIS" AND "ISAC"',
+                ],
+                "focus": "直接覆盖 RIS/智能反射面 与 ISAC/通信感知一体化 的核心论文，优先高引用期刊和综述。",
+            },
+            {
+                "name": "波束赋形与物理层优化",
+                "queries": [
+                    '"RIS" "ISAC" beamforming',
+                    '"reconfigurable intelligent surface" sensing communication beamforming',
+                    '"intelligent reflecting surface" "physical layer" sensing communication',
+                ],
+                "focus": "覆盖联合主动/被动波束赋形、功率控制、安全通信、CRB/检测概率等方法论文。",
+            },
+            {
+                "name": "场景与系统架构",
+                "queries": [
+                    '"RIS" "ISAC" vehicular network',
+                    '"reconfigurable intelligent surface" "vehicular" "integrated sensing and communication"',
+                    '"RIS aided" "sensing and communication" "UAV" OR "vehicular"',
+                ],
+                "focus": "覆盖车联网、UAV、低空网络、MIMO/MISO 等应用场景和系统架构论文。",
+            },
+            {
+                "name": "综述与相邻主题补充",
+                "queries": [
+                    '"reconfigurable intelligent surface" survey integrated sensing communication',
+                    '"integrated sensing and communication" survey "RIS"',
+                    '"intelligent reflecting surface" survey wireless communications sensing',
+                ],
+                "focus": "覆盖 survey、taxonomy、挑战与开放问题，用于补足背景和研究空白。",
+            },
+            ]
+        tasks: List[Dict[str, Any]] = []
+        for group in groups:
+            query_text = "\n".join(f"- {query}" for query in group["queries"])
+            instruction = (
+                "任务类型: research\n"
+                f"期望产出: 围绕“{group['name']}”检索并记录约 {per_task_papers} 篇合格论文，"
+                "同时记录 2-4 条有 source_url 的关键 finding，并为高相关论文记录轻量 paper note。\n"
+                "完成标准: 对每篇合格论文调用 record_paper；对高相关论文基于摘要/网页/PDF调用 record_paper_note；对关键结论调用 record_finding；"
+                "如果主工具失败，按工具串行兜底，不原样重复失败工具。\n"
+                f"具体任务: {group['focus']}\n"
+                "工具顺序: semantic_scholar_search -> arxiv_search -> crossref_lookup -> dblp_lookup。"
+                "同一工具 429/timeout/SSL 失败后立即切换下一工具或缩小查询。"
+            )
+            context = (
+                f"研究主题: {topic}\n"
+                f"本关键词组: {group['name']}\n"
+                f"候选查询:\n{query_text}\n"
+                "只处理本关键词组，不撰写报告章节，不进入后续 research step。"
+                "优先记录 DOI、arXiv ID、source_url、年份、venue、citation_count 和简短相关性说明。"
+                "paper note 至少包含 problem、method、scenario、main_findings、limitations、relevance_to_topic 和 evidence_source；"
+                "如果只能看到摘要，evidence_source 使用 abstract，避免声称已阅读全文。"
+            )
+            tasks.append({"task_instruction": instruction, "context": context, "tools": tools})
+        return {"tasks": tasks, "max_concurrency": min(len(tasks), int(self.meta.get("max_parallel_subtasks", 4) or 4))}
+
     def _apply_delegate_defaults(
         self,
         params: Dict[str, Any],
@@ -406,11 +655,7 @@ class MainAgent(BaseAgent):
 
         default_worker_tools = list(self.meta.get("default_worker_tools", []) or [])
         if not fixed.get("tools"):
-            if default_worker_tools:
-                fixed["tools"] = default_worker_tools
-            else:
-                legacy_toolkits = self.meta.get("subtask_toolkits", {}) or {}
-                fixed["tools"] = list(legacy_toolkits.get(profile, []) or [])
+            fixed["tools"] = default_worker_tools
 
         if parallel_mode and fixed.get("tools"):
             forbidden = set(str(item) for item in (self.meta.get("parallel_forbidden_tools", []) or []))
@@ -473,16 +718,30 @@ class MainAgent(BaseAgent):
         return params
 
     def _quality_gate_orchestration(self) -> Dict[str, Any]:
+        research_step_mode = self._is_research_step_mode()
         return {
             "task_entries": list(self.task_entries),
             "current_phase": self._current_phase(),
-            "require_flow_integrity": bool(self.meta.get("require_flow_integrity", True)),
-            "require_verification_passed": bool(self.meta.get("require_verification_passed", True)),
+            "require_flow_integrity": bool(self.meta.get("require_flow_integrity", not research_step_mode)),
+            "require_verification_passed": bool(self.meta.get("require_verification_passed", not research_step_mode)),
             "check_duplicate_delegation": bool(self.meta.get("check_duplicate_delegation", True)),
+            "research_step_mode": research_step_mode,
         }
 
     def _blocked_by_phase(self, action_name: str, params: Dict[str, Any], forced_final_decision: bool = False) -> str:
         if forced_final_decision:
+            return ""
+        if self._is_research_step_mode():
+            if action_name == "complete_task" and self._has_running_entries():
+                return "complete_task blocked: current Research step still has running subtasks; wait or inspect them first."
+            if action_name == "complete_task":
+                stats = self._research_artifact_stats()
+                if stats["findings_remaining"] > 0:
+                    return (
+                        "complete_task blocked: current Research step has "
+                        f"{stats['findings_count']} findings, below min_findings "
+                        f"{stats['min_findings']}; delegate or continue current-step evidence collection first."
+                    )
             return ""
         phase = self._current_phase()
 
@@ -529,6 +788,11 @@ class MainAgent(BaseAgent):
                     "before starting write, verification, or completion."
                 )
         elif phase == "synthesis":
+            if action_name == "continue_task":
+                return (
+                    "continue_task blocked: synthesis phase must start a fresh write "
+                    "delegate_task for the main report_path instead of continuing a research session."
+                )
             invalid = [p for p in requested_profiles if p != "report_drafting"]
             if invalid:
                 return "delegation blocked: current phase is synthesis; start or finish a write subtask before verification/completion."
@@ -642,28 +906,54 @@ class MainAgent(BaseAgent):
 
         prompt_meta = dict(self.meta)
         forced_final_decision = bool(kwargs.get("forced_final_decision", False))
+        if self._should_start_literature_parallel_search(forced_final_decision):
+            action_name = "delegate_tasks"
+            params = self._literature_parallel_search_params()
+            decision = {
+                "action": action_name,
+                "reasoning": (
+                    "literature_search step uses deterministic keyword-group parallel search: "
+                    "parallelize by query group, and each subagent falls back through tools serially."
+                ),
+                "params": params,
+            }
+            response = json.dumps(decision, ensure_ascii=False)
+        else:
+            action_name = ""
+            params: Dict[str, Any] = {}
+            decision: Dict[str, Any] = {}
+            response = ""
+
         prompt_meta["current_phase"] = self._current_phase()
         prompt_meta["next_required_intent"] = self._next_required_intent()
         prompt_meta["allowed_actions"] = self._allowed_actions_for_phase(forced_final_decision)
         prompt_meta["phase_intent_guidance"] = self._phase_intent_guidance(forced_final_decision)
         prompt_meta["phase_guidance"] = self._phase_guidance()
         prompt_meta["forced_final_decision"] = forced_final_decision
-        prompt = self.prompt_builder.build_prompt(
-            instruction=self.instruction,
-            meta=prompt_meta,
-            prior_context=self.context,
-            attempt_index=self.attempt,
-            max_attempts=self.max_attempts,
-            sub_models=self.sub_models,
-            subtask_history=subtask_history,
-            tools=self.subagent_tools,
-        )
-        logger.log_to_file(LogLevel.INFO, f"[MainAgent] Prompt:\n{prompt}\n")
-       
-        response = await self.llm(prompt)
-        decision = parse_json_response(response)
-        action_name = decision.get("action")
-        params = decision.get("params", {})
+        if self._is_research_step_mode():
+            prompt_meta.update(self._research_artifact_stats())
+        if not decision:
+            prompt = self.prompt_builder.build_prompt(
+                instruction=self.instruction,
+                meta=prompt_meta,
+                prior_context=self.context,
+                attempt_index=self.attempt,
+                max_attempts=self.max_attempts,
+                sub_models=self.sub_models,
+                subtask_history=subtask_history,
+                tools=self.subagent_tools,
+            )
+            logger.log_to_file(LogLevel.INFO, f"[MainAgent] Prompt:\n{prompt}\n")
+
+            response = await self.llm(prompt)
+            decision = parse_json_response(response)
+            action_name = decision.get("action")
+            params = decision.get("params", {})
+        else:
+            logger.log_to_file(
+                LogLevel.INFO,
+                "[MainAgent] Deterministic literature_search delegation selected; skipped LLM planning prompt.\n",
+            )
         if forced_final_decision and action_name != "complete_task":
             report_path = str(self.meta.get("report_path", "") or "")
             findings_path = str(self.meta.get("findings_path", "") or "")

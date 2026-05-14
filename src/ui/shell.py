@@ -317,7 +317,10 @@ class AOrchestraShell:
             self._console.print(f"[{theme.ERROR}]Invalid research request: {exc}[/]")
             return
 
-        result = await run_research(request, self._cfg)
+        def show_progress(message: str) -> None:
+            self._console.print(f"[dim][research] {message}[/]")
+
+        result = await run_research(request, self._cfg, progress_callback=show_progress)
         table = Table.grid(padding=(0, 2))
         table.add_column(style="dim")
         table.add_column()

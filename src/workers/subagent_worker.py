@@ -18,6 +18,18 @@ def _format_trace(trace) -> str:
     return summarize_trace_for_decision(trace)
 
 
+def _resolve_prompt_builder(profile_name: str, requested: str = ""):
+    name = str(requested or "").strip()
+    if name == "ResearchSubPromptBuilder" or str(profile_name or "").strip() == "research_mode":
+        try:
+            from research.prompts import ResearchSubPromptBuilder
+
+            return ResearchSubPromptBuilder
+        except Exception:
+            return GenericSubPromptBuilder
+    return GenericSubPromptBuilder
+
+
 async def _run_worker(request: Dict[str, Any]) -> Dict[str, Any]:
     model = str(request.get("model", "")).strip()
     output_dir = Path(str(request.get("output_dir", "workspace/output")))
@@ -25,7 +37,6 @@ async def _run_worker(request: Dict[str, Any]) -> Dict[str, Any]:
     max_steps = int(request.get("max_subagent_steps", 10) or 10)
 
     profile = _resolve_profile(
-        sub_models=[model] if model else [],
         profile_name=str(request.get("profile_name", "generic") or "generic"),
         report_filename=str(request.get("report_filename", "task_report.md") or "task_report.md"),
         required_sections=list(request.get("required_sections") or []),
@@ -45,6 +56,10 @@ async def _run_worker(request: Dict[str, Any]) -> Dict[str, Any]:
         env.meta_data["parallel_task_index"] = int(request.get("parallel_task_index", 0) or 0)
 
     llm = create_llm_instance(LLMsConfig.default().get(model))
+    prompt_builder = _resolve_prompt_builder(
+        profile_name=str(request.get("profile_name", "generic") or "generic"),
+        requested=str(request.get("sub_prompt_builder", "") or ""),
+    )
     agent = SubAgent(
         llm=llm,
         task_instruction=str(request.get("task_instruction", "")),
@@ -52,7 +67,7 @@ async def _run_worker(request: Dict[str, Any]) -> Dict[str, Any]:
         original_question=str(request.get("original_question", "")),
         allowed_tools=list(request.get("allowed_tools") or []),
         task_label=str(request.get("task_label", "")),
-        prompt_builder=GenericSubPromptBuilder,
+        prompt_builder=prompt_builder,
     )
     result = await AgentRunner().run(agent, env)
     finish_result = {}

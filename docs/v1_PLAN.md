@@ -6,7 +6,7 @@
 
 AOrchestra 是一个**可被外部 Agent 调用的 Research Skills + 编排引擎**。
 
-定位三角：**文献检索 · 多视角辩论 · 结构化输出**
+定位三角：**文献检索 · 观点生成与辩论 · 结构化输出**
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -15,7 +15,7 @@ AOrchestra 是一个**可被外部 Agent 调用的 Research Skills + 编排引�
 │  ① 文献检索 + 知识综合                        │
 │     真实引用，证据链，不编造                    │
 │                                               │
-│  ② 多 Agent 假设生成 + 辩论（★ 核心亮点）      │
+│  ② 多 Agent 观点生成 + 辩论（★ 核心亮点）      │
 │     3-5 个独立视角 SubAgent 并行，跨模型协作    │
 │                                               │
 │  ③ 结构化研究报告输出                          │
@@ -29,7 +29,7 @@ AOrchestra 是一个**可被外部 Agent 调用的 Research Skills + 编排引�
 
 ### 为什么不做实验和论文全文
 
-不同学科的实验环境差异巨大（CV 要 GPU + PyTorch，NLP 要 TPU，系统要 Linux 内核），做一套通用实验框架的工程量远超 Agent 编排本身。一项能稳定产出结构化文献综述 + 可验证假设 + 多视角辩论记录的系统，比赛展示效果强于"理论上能发论文但各种报错"的系统。
+不同学科的实验环境差异巨大（CV 要 GPU + PyTorch，NLP 要 TPU，系统要 Linux 内核），做一套通用实验框架的工程量远超 Agent 编排本身。一项能稳定产出结构化文献综述 + 研究空白/未来方向 + 多视角辩论记录的系统，比赛展示效果强于"理论上能发论文但各种报错"的系统。
 
 AO 的边界清晰：**聚焦信息收集、推理与结构化输出**。实验留给外部 Agent，论文排版留给 Overleaf。
 
@@ -68,20 +68,21 @@ STORM 的"多视角提问"和 AO 的多 Agent 辩论在理念上同源——都�
 
 ## 二、Research Mode 工作流
 
-**4 个阶段、8 个步骤**。聚焦文献检索、假设生成与结构化输出。
+**4 个阶段、9 个步骤**。聚焦文献检索、轻量论文阅读、观点生成与结构化输出。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Phase 1: 文献检索 (Literature Search)                       │
 │                                                             │
 │  Step 1  课题拆解        decompose_topic                    │
-│  Step 2  多源并行检索    literature_search ★ 多 Agent 并行   │
+│  Step 2  多源并行检索    literature_search ★ 按关键词组并行  │
+│  Step 2.5 论文轻量阅读   paper_enrichment  摘要/网页/PDF抽取 │
 │  Step 3  多视角知识综合  knowledge_synthesis ★ 跨角度交叉对比 │
 │                                                             │
-│ Phase 2: 假设生成 (Hypothesis Generation)                   │
+│ Phase 2: 观点生成与辩论 (Claim Formation)                   │
 │                                                             │
-│  Step 4  多 Agent 生成   hypothesis_gen   ★ 核心亮点        │
-│  Step 5  多 Agent 辩论   hypothesis_debate ★ 跨模型评审      │
+│  Step 4  观点生成       claim_generation  核心亮点            │
+│  Step 5  观点辩论       claim_debate     ★ 多视角评审        │
 │                                                             │
 │ Phase 3: 结构化写作 (Structured Writing)                    │
 │                                                             │
@@ -94,7 +95,8 @@ STORM 的"多视角提问"和 AO 的多 Agent 辩论在理念上同源——都�
 │                                                             │
 │  产出:   科研任务 → paper.tex (LaTeX 文献综述)               │
 │          行业任务 → report.html (HTML 调研报告)              │
-│          findings.jsonl / debate_log.md                     │
+│          papers.jsonl / paper_notes.jsonl / findings.jsonl   │
+│          debate_log.md                                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -102,10 +104,11 @@ STORM 的"多视角提问"和 AO 的多 Agent 辩论在理念上同源——都�
 
 区别于 AutoResearchClaw 的固定 6 角色——AO 的**每个步骤的 SubAgent 角色是根据该步骤的实际内容动态合成的**，从 Phase 1 到 Phase 4 全流程都有多 Agent 参与：
 
-- **Step 2 (文献检索)**：MainAgent 同时创建多个 SubAgent，分别检索不同数据源（arXiv、Semantic Scholar、Web），各用不同模型并行搜索，最后合并去重。同一课题的文献覆盖率远超单 Agent 单次搜索
+- **Step 2 (文献检索)**：MainAgent 优先解析 Step 1 在 scratchpad 中生成的中英文关键词和检索式，按关键词组并行创建多个 SubAgent。每个 SubAgent 内部按工具顺序串行兜底（Semantic Scholar → arXiv → Crossref → DBLP），最后写入 `papers.jsonl`、`findings.jsonl`，并为高相关论文补充轻量 `paper_notes.jsonl`
+- **Step 2.5 (论文轻量阅读)**：不做完整向量库，先基于摘要、论文网页或本地 PDF 对高相关论文抽取 problem、method、scenario、main_findings、limitations、relevance_to_topic 和 evidence_source，写入 `paper_notes.jsonl`
 - **Step 3 (知识综合)**：多 Agent 从不同分析角度（方法论、实验结果、理论框架、应用场景）交叉对比检索结果，相互印证和质疑，识别研究空白和矛盾点
-- **Step 4 (假设生成)**：MainAgent 同时创建 3-5 个 SubAgent，每个持一种独立学术视角（创新者/务实者/理论家/质疑者/跨学科），不同视角可用不同模型，独立生成假设后汇总
-- **Step 5 (跨模型辩论)**：将各视角的假设分别发送给另一种模型的 Agent 进行批判性评审——例如 MiniMax 生成的假设由 Gemini 来质疑，Gemini 生成的由 MiniMax 来挑战。**交叉模型 + 交叉视角 = 打破单一模型的思维盲区**
+- **Step 4 (观点生成)**：MainAgent 同时创建 3-5 个 SubAgent，每个持一种独立综述视角（方法论、应用场景、证据强度、争议点、跨学科），不同视角可用不同模型，独立生成研究空白、未来方向、可检验研究问题和综述观点后汇总
+- **Step 5 (观点辩论)**：将各视角的观点发送给其他视角 Agent 进行批判性评审，重点检查证据覆盖、创新性、相关性、方法局限和优先级。**交叉模型 + 交叉视角 = 打破单一模型的综述盲区**
 - **Step 8 (审稿)**：多审稿 Agent 从方法正确性、逻辑完整性、表达清晰度独立评审
 
 ### 2.2 输出格式：按任务类型区分
@@ -131,7 +134,7 @@ SubAgent 在生成内容时自动匹配对应风格的 prompt 作为 Context 的
 
 ### 4.1 集成策略
 
-从 ARIS 60+ skills 中筛选 AO 能直接用的（文献搜索、假设生成、写作润色），对于需要特殊环境的能力（实验执行、GPU 调度、Docker 沙箱），不强行移植，在 Skill 文件中显式标注 `requires: external`，由调用方 Agent 决定是否执行。
+从 ARIS 60+ skills 中筛选 AO 能直接用的（文献搜索、观点生成、写作润色），对于需要特殊环境的能力（实验执行、GPU 调度、Docker 沙箱），不强行移植，在 Skill 文件中显式标注 `requires: external`，由调用方 Agent 决定是否执行。
 
 ### 4.2 Skill 文件结构
 
@@ -141,8 +144,8 @@ SubAgent 在生成内容时自动匹配对应风格的 prompt 作为 Context 的
 skills/
 ├── literature-search.md      # 多源文献检索
 ├── knowledge-synthesis.md    # 知识综合与空白识别
-├── hypothesis-gen.md         # 多视角假设生成
-├── cross-model-debate.md     # 跨模型交叉辩论
+├── claim-generation.md       # 研究空白、未来方向与可检验问题生成
+├── claim-debate.md           # 多视角观点辩论与优先级评估
 ├── outline-build.md          # 结构化大纲
 ├── section-draft.md          # 章节撰写
 ├── multi-agent-review.md     # 多 Agent 审稿
@@ -179,7 +182,7 @@ MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 | 触发方式 | 直接对话 | `/research` 命令 或 MCP 调用 |
 | 流程控制 | MainAgent 自由编排 | 固定 Phase 序列 + 闸门 |
 | 稳定性 | 依赖 LLM 决策质量 | 程序化 pipeline 保证 |
-| 适用任务 | 日常问答、写代码、搜信息 | 文献综述、假设辩论、结构化报告 |
+| 适用任务 | 日常问答、写代码、搜信息 | 文献综述、观点辩论、结构化报告 |
 
 ## 六、7 天实施路线图
 
@@ -196,8 +199,8 @@ MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 - [ ] 编写 8 个核心 skill MD 文件
   - `skills/literature-search.md` — 多源文献检索
   - `skills/knowledge-synthesis.md` — 知识综合
-  - `skills/hypothesis-gen.md` — 多 Agent 假设生成
-  - `skills/cross-model-debate.md` — 跨模型辩论
+  - `skills/claim-generation.md` — 研究空白、未来方向与可检验问题生成
+  - `skills/claim-debate.md` — 多视角观点辩论与优先级评估
   - `skills/outline-build.md` — 大纲构建
   - `skills/section-draft.md` — 章节撰写
   - `skills/multi-agent-review.md` — 多 Agent 审稿
@@ -206,13 +209,13 @@ MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 
 ### Day 3-4: 多 Agent 并行 + 输出格式
 
-- [ ] Step 4 多 Agent 并行假设生成
+- [ ] Step 4 多 Agent 并行观点生成
   - 复用现有 `delegate_tasks` 机制
   - 每个视角一个 SubAgent，不同 (I,C,T,M)
   - 汇总 + 去重逻辑
-- [ ] Step 5 跨模型交叉辩论
-  - MiniMax 生成的假设 → Gemini 审稿
-  - Gemini 生成的假设 → MiniMax 审稿
+- [ ] Step 5 多视角观点辩论
+  - 方法论视角生成的观点 → 证据强度视角审稿
+  - 应用场景视角生成的观点 → 争议点视角审稿
 - [ ] LaTeX 输出模板（NeurIPS 格式）
 - [ ] HTML 报告模板（响应式单页）
 
@@ -220,14 +223,14 @@ MCP 触发:   外部 Agent 调用 aorchestra.research("研究 XX 问题")
 
 - [x] 实现最小 MCP Server 入口 (`python mcp_server.py --config aorchestra.yaml`)
 - [x] 研究流程封装为 MCP `research` tool
-  - 暴露 `research`、`literature_search`、`hypothesis_gen` 等 tool
+  - 暴露 `research`、`literature_search`、`claim_generation` 等 tool
   - 流式进度推送
 - [ ] 与外部 Agent 对接测试（Claude Code / Codex）
 - [ ] 生命周期管理：启动 → 执行 → 返回结果 → 清理
 
 ### Day 7: 收尾
 
-- [ ] 端到端验证：输入课题 → 文献综述 → 假设辩论 → LaTeX/HTML 输出
+- [ ] 端到端验证：输入课题 → 文献综述 → 观点辩论 → LaTeX/HTML 输出
 - [ ] 多 Agent 并行步骤验证（Step 4-5）
 - [ ] README + 文档更新
 - [ ] 示例 demo

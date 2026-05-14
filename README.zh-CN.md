@@ -19,7 +19,7 @@
 
 ## 当前重点
 
-通过结构化工作流实现研究任务自动化，涵盖文献检索、多 Agent 假设辩论与报告生成。可通过内置 TUI shell 使用，也可作为 MCP tool 被外部 Agent 调用。
+通过结构化工作流实现研究任务自动化，涵盖文献检索、多 Agent 观点辩论与报告生成。可通过内置 TUI shell 使用，也可作为 MCP tool 被外部 Agent 调用。
 
 ## 快速开始
 
@@ -74,6 +74,7 @@ RiffBand 可通过 MCP 被外部 Agent（Claude Code、Codex、Gemini CLI 等）
   }
 }
 ```
+
 
 ## 项目结构
 

@@ -158,7 +158,7 @@ CLI 应承担的不只是“命令输入”功能，还应承担工作台角色�
 
 产业研究场景下，当前已经形成一条较完整的执行链路：
 
-`run_agents.py -> build_gba_analysis_project -> MainOrchestratorAgent -> delegate_task/delegate_tasks -> ResearchSubAgent -> Environment/Tools -> complete_task`
+`run_agents.py -> build_project_by_mode -> build_agent_project -> MainAgent -> delegate_task/delegate_tasks -> SubAgent -> Environment/Tools -> complete_task`
 
 这条链路说明，系统并不是停留在概念层，而是已经具备从任务输入、任务拆解、子任务执行、工具调用到最终收尾检查的原型能力。
 

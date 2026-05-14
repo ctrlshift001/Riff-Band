@@ -6,9 +6,10 @@ from pydantic import BaseModel, Field, field_validator
 
 
 ResearchDepth = Literal["quick", "standard", "deep"]
-ResearchOutputFormat = Literal["markdown", "latex", "json"]
+ResearchOutputFormat = Literal["markdown", "latex", "html", "json"]
 ResearchStatus = Literal["done", "partial", "blocked"]
 ResearchTrigger = Literal["cli", "mcp", "internal"]
+ResearchStepStatus = Literal["pending", "running", "done", "partial", "blocked"]
 
 
 class ResearchRequest(BaseModel):
@@ -16,7 +17,7 @@ class ResearchRequest(BaseModel):
 
     topic: str = Field(description="Research topic or question.")
     depth: ResearchDepth = Field(default="standard")
-    output_format: ResearchOutputFormat = Field(default="markdown")
+    output_format: ResearchOutputFormat = Field(default="latex")
     sources: list[str] = Field(default_factory=list)
     constraints: str = Field(default="")
     trigger: ResearchTrigger = Field(default="internal")
@@ -39,6 +40,17 @@ class ResearchArtifact(BaseModel):
     description: str = Field(default="")
 
 
+class ResearchStepResult(BaseModel):
+    """Execution summary for one fixed research pipeline step."""
+
+    step: str
+    status: ResearchStepStatus = Field(default="pending")
+    summary: str = Field(default="")
+    artifacts: list[ResearchArtifact] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ResearchResult(BaseModel):
     """Stable result schema returned by research mode and future MCP tools."""
 
@@ -46,5 +58,6 @@ class ResearchResult(BaseModel):
     summary: str = Field(default="")
     report_path: str = Field(default="")
     artifacts: list[ResearchArtifact] = Field(default_factory=list)
+    steps: list[ResearchStepResult] = Field(default_factory=list)
     open_issues: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
