@@ -6,4 +6,5 @@ pydantic>=2.12.5
 pypdf>=6.10.2
 PyYAML>=6.0.3
 python-dotenv>=1.2.1
+mistune>=3.1
 

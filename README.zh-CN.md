@@ -17,9 +17,26 @@
 
 > 基于 [AOrchestra](https://arxiv.org/abs/2602.03786)。原论文代码详见 [fork 仓库](https://github.com/franknobox/AOrchestra-Agent)。
 
-## 当前重点
+## 模式体系
 
-通过结构化工作流实现研究任务自动化，涵盖文献检索、多 Agent 观点辩论与报告生成。可通过内置 TUI shell 使用，也可作为 MCP tool 被外部 Agent 调用。
+RiffBand 在两个层级运行：**普通模式**用于通用 Agent 任务，**研究模式**用于结构化多步研究流水线。
+
+### 普通模式
+
+通用的 Agent 编排。CLI 中输入任意任务，MainAgent 负责规划、委派 SubAgent、合并结果。支持单 Agent（`/mode single`）和多 Agent（`/mode multi`）执行。
+
+### 研究模式
+
+基于同一套 Agent 运行时的**固定流水线编排器**。按预设步骤序列驱动 Agent，内置质量门禁、技能文件和结构化产物管理。
+
+两种子模式：
+
+| 模式 | 步骤数 | 输出 | 适用场景 |
+|------|--------|------|----------|
+| `academic`（默认） | 9 步 | `paper.tex` + `references.bib` | 文献综述 |
+| `visual` | 10 步 | `report_visual.html` | 通用研究 + 视觉报告 |
+
+流水线掌管步骤顺序、产物路径和质量门禁，Agent 是每步的**执行者**而非控制流来源。
 
 ## 快速开始
 
@@ -49,9 +66,10 @@ python shell.py --config aorchestra.yaml
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示帮助 |
-| `/mode single|multi|auto` | 切换执行模式 |
+| `/mode single\|multi\|auto` | 切换执行模式 |
 | `/model name` | 切换 LLM 模型 |
-| `/research topic` | 启动研究模式 |
+| `/research topic` | 启动研究模式（默认 academic） |
+| `/research topic --mode=visual --depth=deep --format=html` | 可视化研究，自定义参数 |
 | `/setup` | 重新运行配置向导 |
 | `/status` | 查看 Agent 状态 |
 | `/session` | 查看当前会话 |
@@ -59,6 +77,11 @@ python shell.py --config aorchestra.yaml
 | `/resume id` | 恢复历史会话 |
 | `/clear` | 清屏 |
 | `/exit` | 退出 |
+
+Research 参数：
+- `--mode=academic|visual` — 流水线模式（默认 academic）
+- `--depth=quick|standard|deep` — 研究深度（默认 standard）
+- `--format=markdown|latex|html|json` — 输出格式（academic 默认 latex，visual 默认 html）
 
 ## MCP 集成
 
@@ -69,12 +92,30 @@ RiffBand 可通过 MCP 被外部 Agent（Claude Code、Codex、Gemini CLI 等）
   "mcpServers": {
     "riffband": {
       "command": "python",
-      "args": ["-m", "riffband.mcp"]
+      "args": ["mcp_server.py", "--config", "aorchestra.yaml"]
     }
   }
 }
 ```
 
+MCP server 暴露单个 `research` tool：
+
+```json
+{
+  "name": "research",
+  "inputSchema": {
+    "properties": {
+      "topic": {},
+      "mode": { "enum": ["academic", "visual"], "default": "academic" },
+      "depth": { "enum": ["quick", "standard", "deep"], "default": "standard" },
+      "output_format": { "enum": ["markdown", "latex", "html", "json"], "default": "latex" },
+      "sources": {},
+      "constraints": {}
+    },
+    "required": ["topic"]
+  }
+}
+```
 
 ## 项目结构
 
@@ -84,9 +125,22 @@ src/
   core/                 # Runner、消息协议、会话持久化
   environments/         # 任务执行环境
   orchestration_tools/  # 委派、完成、任务计划
-  project/              # 项目组装、prompt、工具集
+  project/              # 项目组装、prompt、工具集（所有模式共用）
   modes/                # 模式路由器 (single / multi / auto)
+  research/             # 研究模式流水线
+    schema.py           # 请求/结果模型、mode 枚举
+    steps.py            # RESEARCH_STEPS (9 步) + VISUAL_STEPS (10 步)
+    skills.py           # 技能注册表，按 mode 路由
+    skills/             # Markdown 技能文件（每步的 prompt）
+      *.md              # Academic 模式技能（9 个文件，完全不动）
+      visual/           # Visual 模式技能（10 个文件）
+    pipeline.py         # 流水线编排器
+    gates.py            # 质量门禁（单步 + 最终）
+    prompts.py          # MainAgent/SubAgent prompt 构建器
+    artifacts.py        # 文件布局、导出（LaTeX、HTML、可视化 HTML）
+    runner.py           # 入口边界（CLI + MCP 共用）
   ui/                   # 交互式 shell + Rich 渲染器
+  mcp_server.py         # MCP stdio 服务器
 ```
 
 ## 引用
@@ -103,9 +157,8 @@ src/
       primaryClass={cs.AI},
       url={https://arxiv.org/abs/2602.03786},
 }
+```
 
 ## 许可协议
 
 本项目基于 [AOrchestra](https://github.com/franknobox/AOrchestra-Agent) 开发，原始代码使用 Apache 2.0 许可。原始 LICENSE 文件已保留。修改及新增代码版权归 franknobox 所有。
-
-```

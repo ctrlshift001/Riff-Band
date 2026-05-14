@@ -16,6 +16,7 @@ from research import ResearchRequest, run_research
 
 JSONRPC_VERSION = "2.0"
 MCP_PROTOCOL_VERSION = "2024-11-05"
+ERROR_CODE_CANCELLED = -32000
 
 
 class RiffBandMCPServer:
@@ -29,6 +30,7 @@ class RiffBandMCPServer:
         load_dotenv()
         self.config_path = Path(config_path)
         self.config = AgentConfig.load(self.config_path)
+        self._current_task: asyncio.Task | None = None
 
     @staticmethod
     def _success(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -45,14 +47,26 @@ class RiffBandMCPServer:
     def _text_content(text: str) -> list[dict[str, str]]:
         return [{"type": "text", "text": text}]
 
+    def _emit_progress(self, message: str) -> None:
+        """Emit a progress notification on stdout for MCP clients."""
+        notification = {
+            "jsonrpc": JSONRPC_VERSION,
+            "method": "notifications/progress",
+            "params": {"message": message},
+        }
+        sys.stdout.write(json.dumps(notification, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
     def _tool_definitions(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "research",
                 "description": (
-                    "Run Riff Band fixed research mode for a topic. The "
-                    "pipeline performs literature search, synthesis, "
-                    "claim generation, claim debate, drafting, and review."
+                    "Run Riff Band fixed research pipeline for a topic. "
+                    "Supports two modes: academic (9-step literature review, "
+                    "outputs paper.tex + references.bib) and visual "
+                    "(10-step general research, outputs report_visual.html "
+                    "with ECharts, TOC, dark/light toggle)."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -88,7 +102,15 @@ class RiffBandMCPServer:
                     },
                     "required": ["topic"],
                 },
-            }
+            },
+            {
+                "name": "cancel_research",
+                "description": "Cancel the currently running research task.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
         ]
 
     async def handle_request(self, message: dict[str, Any]) -> dict[str, Any] | None:
@@ -130,6 +152,10 @@ class RiffBandMCPServer:
     async def _handle_tool_call(self, request_id: Any, params: dict[str, Any]) -> dict[str, Any]:
         name = str(params.get("name", ""))
         arguments = params.get("arguments") or {}
+
+        if name == "cancel_research":
+            return self._handle_cancel(request_id)
+
         if name != "research":
             return self._error(request_id, -32602, f"Unknown tool: {name}")
         if not isinstance(arguments, dict):
@@ -158,7 +184,18 @@ class RiffBandMCPServer:
                 },
             )
 
-        result = await run_research(request, self.config)
+        try:
+            self._current_task = asyncio.current_task()
+            self._emit_progress(f"Research started: {request.topic!r} mode={request.mode}")
+            result = await run_research(
+                request, self.config, progress_callback=self._emit_progress
+            )
+        except asyncio.CancelledError:
+            self._emit_progress("Research cancelled by client")
+            return self._error(request_id, ERROR_CODE_CANCELLED, "Research cancelled")
+        finally:
+            self._current_task = None
+
         payload = result.model_dump()
         return self._success(
             request_id,
@@ -170,6 +207,12 @@ class RiffBandMCPServer:
                 "isError": result.status == "blocked",
             },
         )
+
+    def _handle_cancel(self, request_id: Any) -> dict[str, Any]:
+        if self._current_task is not None and not self._current_task.done():
+            self._current_task.cancel()
+            return self._success(request_id, {"cancelled": True})
+        return self._success(request_id, {"cancelled": False, "reason": "No running research"})
 
     async def serve_stdio(self) -> int:
         for raw_line in sys.stdin:

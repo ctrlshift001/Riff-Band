@@ -336,112 +336,74 @@ def export_html(markdown_path: Path, html_path: Path, title: str) -> None:
 
 
 
-def _parse_visual_markdown(markdown: str) -> list[dict[str, Any]]:
-    """Parse markdown into visual blocks, detecting chart/table annotations."""
-    blocks: list[dict[str, Any]] = []
-    current_paras: list[str] = []
-    current_heading: str = ""
+import mistune
 
-    def flush() -> None:
-        if current_paras:
-            text = "\n".join(current_paras).strip()
-            if text:
-                blocks.append({"type": "text", "heading": current_heading, "content": text})
-            current_paras.clear()
+CSS_PATH = Path(__file__).resolve().parent / "visual_report.css"
+JS_PATH = Path(__file__).resolve().parent / "visual_report.js"
 
-    for raw in markdown.splitlines():
-        stripped = raw.strip()
-        if not stripped:
-            if current_paras:
-                current_paras.append("")
-            continue
+
+def _preprocess_visual_markdown(markdown: str) -> str:
+    """Convert custom chart/table annotations to HTML blocks before mistune."""
+    lines: list[str] = []
+    for line in markdown.splitlines():
+        stripped = line.strip()
         chart_match = re.match(r"!\[chart\]\(data:(\w+)\|(.*)\)\s*", stripped)
         if chart_match:
-            flush()
-            blocks.append({"type": "chart", "chart_type": chart_match.group(1), "data": chart_match.group(2), "heading": current_heading})
+            chart_type = chart_match.group(1)
+            chart_data = chart_match.group(2)
+            lines.append(
+                f'<div class="chart-container" data-chart-type="{chart_type}">{chart_data}</div>'
+            )
             continue
         table_match = re.match(r"!\[table\]\(data:(.*)\)\s*", stripped)
         if table_match:
-            flush()
-            blocks.append({"type": "table", "data": table_match.group(1), "heading": current_heading})
+            lines.append(f'<div class="table-container" data-table-data=\'{table_match.group(1)}\'></div>')
             continue
-        if stripped.startswith("# "):
-            flush()
-            current_heading = stripped[2:].strip()
-            blocks.append({"type": "h1", "content": current_heading})
-            continue
-        if stripped.startswith("## "):
-            flush()
-            current_heading = stripped[3:].strip()
-            blocks.append({"type": "h2", "content": current_heading})
-            continue
-        if stripped.startswith("### "):
-            flush()
-            current_heading = stripped[4:].strip()
-            blocks.append({"type": "h3", "content": current_heading})
-            continue
-        if stripped.startswith("- "):
-            current_paras.append(f"<li>{escape(stripped[2:])}</li>")
-            continue
-        current_paras.append(escape(stripped))
-    flush()
-
-    merged: list[dict[str, Any]] = []
-    list_buffer: list[str] = []
-    for b in blocks:
-        if b["type"] == "text" and b["content"].startswith("<li>"):
-            list_buffer.append(b["content"])
-            continue
-        if list_buffer:
-            merged.append({"type": "list", "heading": current_heading, "items": list_buffer})
-            list_buffer = []
-        merged.append(b)
-    if list_buffer:
-        merged.append({"type": "list", "heading": current_heading, "items": list_buffer})
-    return merged
+        lines.append(line)
+    return "\n".join(lines)
 
 
-def _render_visual_blocks(blocks: list[dict[str, Any]], chart_id_base: str = "chart") -> list[str]:
-    out: list[str] = []
-    chart_idx = 0
-    for b in blocks:
-        typ = b["type"]
-        if typ == "h1":
-            out.append(f'<h1 id="{b["content"].replace(" ", "-")}">{escape(b["content"])}</h1>')
-        elif typ == "h2":
-            out.append(f'<h2 id="{b["content"].replace(" ", "-")}">{escape(b["content"])}</h2>')
-        elif typ == "h3":
-            out.append(f'<h3 id="{b["content"].replace(" ", "-")}">{escape(b["content"])}</h3>')
-        elif typ == "text":
-            out.append(f"<p>{b['content']}</p>")
-        elif typ == "list":
-            out.append("<ul>")
-            for item in b["items"]:
-                out.append(item)
-            out.append("</ul>")
-        elif typ == "chart":
-            cid = f"{chart_id_base}_{chart_idx}"
-            chart_idx += 1
-            out.append(f'<div class="chart-container" id="{cid}"></div>')
-            out.append(f'<script>try {{ renderChart("{cid}", "{b["chart_type"]}", {b["data"]}); }} catch(e) {{ console.error(e); }}</script>')
-        elif typ == "table":
-            out.append('<div class="table-container">')
-            out.append("<table>")
-            try:
-                td = json.loads(b["data"])
-                headers = td.get("headers", [])
-                rows = td.get("rows", [])
-                if headers:
-                    out.append("<thead><tr>" + "".join(f"<th>{escape(str(h))}</th>" for h in headers) + "</tr></thead>")
-                if rows:
-                    out.append("<tbody>")
-                    for row in rows:
-                        out.append("<tr>" + "".join(f"<td>{escape(str(c))}</td>" for c in row) + "</tr>")
-                    out.append("</tbody>")
-            except json.JSONDecodeError:
-                out.append(f"<tr><td>{escape(b['data'])}</td></tr>")
-            out.append("</table></div>")
-    return out
+def _postprocess_visual_html(html: str) -> str:
+    """Wrap h2 sections in <section class='card'> for card layout."""
+    result: list[str] = []
+    parts = re.split(r"(<h2\b[^>]*>.*?</h2>)", html, flags=re.DOTALL)
+    in_section = False
+    for part in parts:
+        if re.match(r"<h2\b", part):
+            if in_section:
+                result.append("</section>")
+            result.append(f"<section>{part}")
+            in_section = True
+        else:
+            result.append(part)
+    if in_section:
+        result.append("</section>")
+    return "".join(result)
+
+
+def _extract_toc_items(html: str) -> str:
+    """Extract h1-h3 headings from HTML and build TOC links with IDs."""
+    items: list[str] = []
+    for m in re.finditer(r"<(h[123])\b[^>]*>(.*?)</\1>", html, flags=re.DOTALL):
+        level = int(m.group(1)[1])
+        text = re.sub(r"<[^>]+>", "", m.group(2)).strip()
+        anchor = text.lower().replace(" ", "-")
+        anchor = re.sub(r"[^\w\u4e00-\u9fff-]", "", anchor)
+        items.append(f'<a href="#{anchor}" class="toc-l{level}">{escape(text)}</a>')
+    return "\n".join(items)
+
+
+def _add_anchor_ids(html: str) -> str:
+    """Add id attributes to h1-h3 elements based on text content."""
+    def repl(m: re.Match) -> str:
+        tag = m.group(1)
+        level = m.group(2)
+        rest = m.group(3)
+        text = re.sub(r"<[^>]+>", "", m.group(4)).strip()
+        anchor = text.lower().replace(" ", "-")
+        anchor = re.sub(r"[^\w\u4e00-\u9fff-]", "", anchor)
+        return f"<{tag}{level} id=\"{anchor}\"{rest}>{m.group(4)}</{tag}{level}>"
+    return re.sub(r"<(h)([123])([^>]*)>(.*?)</h\2>", repl, html)
 
 
 def export_visual_html(
@@ -450,24 +412,26 @@ def export_visual_html(
     title: str,
     artifacts: "ResearchArtifacts" | None = None,
 ) -> None:
-    """Generate a responsive visual HTML report from markdown.
+    """Generate a styled visual HTML report from markdown.
 
-    Supports chart/table annotations and produces a single-page
-    report with TOC, card sections, and dark/light toggle.
+    Uses mistune for GFM-compatible markdown conversion, standalone
+    CSS/JS for styling, and adds cover header, TOC with scroll
+    highlighting, card sections, callout blocks, print support.
     """
     markdown = markdown_path.read_text(encoding="utf-8") if markdown_path.exists() else ""
-    blocks = _parse_visual_markdown(markdown)
-    body_html = "\n".join(_render_visual_blocks(blocks))
 
-    toc_items: list[str] = []
-    for b in blocks:
-        if b["type"] in ("h1", "h2", "h3"):
-            level = int(b["type"][1])
-            cid = b["content"].replace(" ", "-")
-            toc_items.append(f'<a href="#{cid}" class="toc-l{level}">{escape(b["content"])}</a>')
+    markdown = _preprocess_visual_markdown(markdown)
+    body_html = mistune.html(markdown)
+    body_html = _add_anchor_ids(body_html)
+    body_html = _postprocess_visual_html(body_html)
+    toc_html = _extract_toc_items(body_html)
 
-    toc_html = "\n".join(toc_items)
+    css = CSS_PATH.read_text(encoding="utf-8") if CSS_PATH.exists() else ""
+    js = JS_PATH.read_text(encoding="utf-8") if JS_PATH.exists() else ""
+
     run_dir = str(artifacts.run_dir) if artifacts else ""
+    mode_label = "Visual" if (artifacts and hasattr(artifacts, "run_dir")) else "Research"
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     html = f"""<!doctype html>
 <html lang="zh-CN">
@@ -476,86 +440,55 @@ def export_visual_html(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape(title)}</title>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-  <style>
-    :root {{ --bg: #f7f8fa; --fg: #172026; --card: #ffffff; --muted: #59636e; --accent: #2563eb; --border: #d8dee4; --shadow: rgba(0,0,0,0.06); }}
-    [data-theme="dark"] {{ --bg: #0d1117; --fg: #c9d1d9; --card: #161b22; --muted: #8b949e; --accent: #58a6ff; --border: #30363d; --shadow: rgba(0,0,0,0.25); }}
-    * {{ box-sizing: border-box; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; color: var(--fg); background: var(--bg); transition: background .25s, color .25s; }}
-    .navbar {{ position: sticky; top: 0; z-index: 50; background: var(--card); border-bottom: 1px solid var(--border); box-shadow: 0 2px 8px var(--shadow); }}
-    .navbar-inner {{ max-width: 1100px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }}
-    .navbar h1 {{ font-size: 16px; margin: 0; flex: 1; }}
-    .theme-toggle {{ cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--fg); padding: 6px 12px; border-radius: 6px; font-size: 12px; }}
-    .layout {{ max-width: 1100px; margin: 0 auto; display: flex; gap: 24px; padding: 24px 20px 72px; }}
-    .sidebar {{ width: 220px; flex-shrink: 0; position: sticky; top: 60px; align-self: flex-start; max-height: calc(100vh - 80px); overflow: auto; }}
-    .toc {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: 0 2px 8px var(--shadow); }}
-    .toc a {{ display: block; color: var(--muted); text-decoration: none; font-size: 13px; padding: 4px 0; border-bottom: 1px solid transparent; }}
-    .toc a:hover {{ color: var(--accent); }}
-    .toc-l1 {{ font-weight: 600; color: var(--fg); }}
-    .toc-l2 {{ padding-left: 12px !important; }}
-    .toc-l3 {{ padding-left: 24px !important; }}
-    .content {{ flex: 1; min-width: 0; }}
-    .card {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px var(--shadow); }}
-    .card h1 {{ font-size: 28px; margin: 0 0 16px; }}
-    .card h2 {{ font-size: 20px; margin: 24px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }}
-    .card h3 {{ font-size: 16px; margin: 18px 0 8px; }}
-    .card p {{ line-height: 1.75; margin: 10px 0; }}
-    .card ul {{ margin: 8px 0; padding-left: 20px; }}
-    .card li {{ margin: 4px 0; }}
-    .chart-container {{ width: 100%; height: 360px; margin: 16px 0; }}
-    .table-container {{ overflow-x: auto; margin: 16px 0; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-    th, td {{ border: 1px solid var(--border); padding: 8px 10px; text-align: left; }}
-    th {{ background: rgba(37,99,235,0.08); font-weight: 600; }}
-    tr:nth-child(even) {{ background: rgba(0,0,0,0.02); }}
-    .footer {{ text-align: center; font-size: 12px; color: var(--muted); padding: 40px 0; }}
-    @media (max-width: 860px) {{ .sidebar {{ display: none; }} .layout {{ flex-direction: column; }} }}
-  </style>
+  <style>{css}</style>
 </head>
 <body>
   <div class="navbar">
     <div class="navbar-inner">
-      <h1>{escape(title)}</h1>
-      <button class="theme-toggle" onclick="toggleTheme()">🌓 切换主题</button>
+      <span class="navbar-title">{escape(title)}</span>
+      <span class="navbar-badge">{mode_label}</span>
+      <button class="navbar-btn" onclick="toggleTheme()">🌓</button>
     </div>
   </div>
   <div class="layout">
     <aside class="sidebar">
       <nav class="toc">
+        <div class="toc-title">Contents</div>
         {toc_html}
       </nav>
     </aside>
     <main class="content">
-      {body_html}
-      <div class="footer">Generated by Riff-Band Research Mode · {run_dir}</div>
+      <div class="cover">
+        <h1>{escape(title)}</h1>
+        <div class="cover-meta">
+          <span>{now_str}</span>
+          <span>RiffBand Research Mode</span>
+        </div>
+      </div>
+      <div class="prose">
+        {body_html}
+      </div>
+      <div class="footer">{run_dir}</div>
     </main>
   </div>
   <script>
-    function toggleTheme() {{
-      const html = document.documentElement;
-      html.dataset.theme = html.dataset.theme === "dark" ? "light" : "dark";
-      localStorage.setItem("theme", html.dataset.theme);
-    }}
-    (function() {{
-      const saved = localStorage.getItem("theme");
-      if (saved) document.documentElement.dataset.theme = saved;
-    }})();
+    {js}
     function renderChart(id, type, data) {{
-      const el = document.getElementById(id);
+      var el = document.getElementById(id);
       if (!el || !window.echarts) return;
-      const chart = echarts.init(el);
-      const option = {{
+      var chart = echarts.init(el);
+      chart.setOption({{
         tooltip: {{}},
+        legend: data.legend ? {{ data: data.legend }} : undefined,
         xAxis: {{ type: "category", data: data.categories || [] }},
         yAxis: {{ type: "value" }},
-        series: [{{ data: data.values || [], type: type === "bar" ? "bar" : "line" }}]
-      }};
-      chart.setOption(option);
-      window.addEventListener("resize", () => chart.resize());
+        series: data.series || [{{ data: data.values || [], type: type === "bar" ? "bar" : "line" }}]
+      }});
+      window.addEventListener("resize", function() {{ chart.resize(); }});
     }}
   </script>
 </body>
-</html>
-"""
+</html>"""
     html_path.write_text(html, encoding="utf-8")
 
 

@@ -53,14 +53,13 @@ AOrchestra 不替代外部 Agent——作为 MCP tool 被调用。外部 Agent �
 | 项目 | Stars | 定位 | 核心方法 | Agent 内核 | 我们借鉴什么 |
 |------|-------|------|---------|-----------|-------------|
 | [**STORM**](https://github.com/stanford-oval/storm) (Stanford) | ⭐28.2k | 知识策展系统 | 多视角提问 + 模拟对话 | 无 | 视角引导提问 ← 多 Agent 辩论 |
-| [**GPT Researcher**](https://github.com/assafelovic/gpt-researcher) | ⭐26.9k | Deep Research Agent | Planner + 执行 Agent 并行 | 无 | 同类架构，已有 MCP |
-| [**Open Deep Research**](https://github.com/dzhng/deep-research) | ⭐18.9k | 极简递归搜索 | 广度×深度递归，<500 行 | 无 | 极简设计理念 |
+| [**GPT Researcher**](https://github.com/assafelovic/gpt-researcher) | ⭐27.1k | Deep Research Agent | Planner + 执行 Agent 并行 | 无 | 同类架构，已有 MCP |
+| [**Quarto**](https://quarto.org) (RStudio/Posit) | — | 科学出版系统 | 学术级 HTML/PDF/Word 输出 | 无 | **HTML 报告外观参考**：TOC 滚动高亮、callout block、tabset、anchor section、smooth scroll、打印样式、引用弹窗 |
 | [**AI Scientist v2**](https://github.com/SakanaAI/AI-Scientist-v2) (SakanaAI) | ⭐6.1k | 学术鼻祖 | BFTS 树搜索 | 无 | 多路径并行探索 |
 | [**AutoResearchClaw**](https://github.com/aiming-lab/AutoResearchClaw) | ⭐11.9k | 全自动 pipeline | 23 阶段线性流程 | 无 | 工作流步骤设计 |
 | [**ARIS**](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep) | ⭐8.1k | 科研 skills 工具箱 | 交叉模型 review | 无 | Skills 接入机制 |
 | [**awesome-ai-research-writing**](https://github.com/Leey21/awesome-ai-research-writing) | ⭐21.8k | Prompt 资源合集 | 论文写作模板 | 无 | 写作 prompt 参考 |
 | [**Sibyl**](https://github.com/Sibyl-Research-Team/sibyl-research-system) | ⭐238 | 全自主 AI 科学家 | 双循环自进化 | Claude Code | 自进化系统 |
-| [**Dr. Claw**](https://github.com/OpenLAIR/dr-claw) | ⭐925 | 研究工作站 GUI | 多 Agent 调度器 | 无 | 产品化 UI 参考 |
 | [**ResearchArena**](https://github.com/YouAreSpecialToMe/ResearchArena) | ⭐32 | 科研能力评测 | Benchmark | 无 | 输出质量评分 |
 | **AOrchestra** | — | **通用 Agent 编排引擎** | **动态 SubAgent 合成 × MCP** | **有** | — |
 
