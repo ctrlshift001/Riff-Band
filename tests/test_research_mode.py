@@ -12,7 +12,7 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             ResearchRequest(topic="")
 
-    async def test_run_research_returns_stable_placeholder_result(self):
+    async def test_run_research_returns_pipeline_result(self):
         cfg = AgentConfig(
             main_model="test-model",
             sub_models=["test-model"],
@@ -22,10 +22,14 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
 
         result = await run_research(request, cfg)
 
-        self.assertEqual(result.status, "partial")
-        self.assertIn("not been implemented", result.summary)
+        # With a fake model LLM config is unavailable, so pipeline falls back to
+        # offline scaffold mode and returns partial because gates fail.
+        self.assertIn(result.status, {"done", "partial"})
+        self.assertTrue(len(result.steps) > 0)
         self.assertEqual(result.metadata["topic"], request.topic)
         self.assertEqual(result.metadata["trigger"], "cli")
+        # Offline mode: no live agent execution, so final gate reports issues.
+        self.assertTrue(len(result.open_issues) > 0)
 
 
 if __name__ == "__main__":
