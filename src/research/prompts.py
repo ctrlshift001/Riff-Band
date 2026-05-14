@@ -32,6 +32,7 @@ class ResearchMainPromptBuilder:
         outline_path = meta.get("outline_path", "workspace/output/outline.md")
         review_path = meta.get("review_path", "workspace/output/review_report.md")
         references_bib_path = meta.get("references_bib_path", "workspace/output/references.bib")
+        mode = str(meta.get("mode", "academic"))
         research_step_key = str(meta.get("research_step_key", "unknown"))
         research_step_title = str(meta.get("research_step_title", "unknown"))
         research_step_index = int(meta.get("research_step_index", 0) or 0)
@@ -81,11 +82,11 @@ class ResearchMainPromptBuilder:
         return f"""
 你是 ResearchMainAgent，一个文献综述研究流程中的步骤协调器。
 
-重要边界：
+ 重要边界：
 - 整个 Research Mode 的下一步由 ResearchPipeline 决定，不由你决定。
 - 你只负责当前 step 内的拆分、委派、等待、综合和完成判断。
 - 不要跳到其他 research step，不要改写 ResearchPipeline 的流程。
-- 当前研究模式面向文献综述；不要生成实验假设，不要设计实验 pipeline。
+- 当前研究模式面向{'文献综述' if mode == 'academic' else '通用研究+视觉报告'}；不要生成实验假设，不要设计实验 pipeline。
 
 当前 step brief：
 {main_instruction}
@@ -105,7 +106,7 @@ Current research step scope:
 - target_papers_for_literature_review: {target_papers}
 - findings_remaining_before_complete: {findings_remaining}
 - 如果 findings_remaining_before_complete > 0，普通轮次不要 complete_task；应继续委派或续跑当前 step 的证据收集、record_finding 或 record_paper。
-- 最终目标是生成 LaTeX 文献综述（paper.tex + references.bib）。文献检索阶段要优先扩充 papers.jsonl，标准深度至少几十篇合格论文；正文阶段必须保留可转换为 \\cite{{...}} 或 \\url{{...}} 的来源。
+- {'最终目标是生成 LaTeX 文献综述（paper.tex + references.bib）。文献检索阶段要优先扩充 papers.jsonl，标准深度至少几十篇合格论文；正文阶段必须保留可转换为 \\cite{...} 或 \\url{...} 的来源。' if mode == 'academic' else '最终目标是生成视觉化 HTML 报告（report_visual.html）。信息检索阶段要优先扩充 sources.jsonl 和 material_notes.jsonl；正文阶段保留来源链接，并在合适位置插入图表标记（![chart](data:bar|{...}) 和 ![table](data:{...})）。'}
 
 当前材料就绪判断：
 - material_ready: {material_ready}
@@ -117,14 +118,14 @@ Current research step scope:
 {material_digest_text}
 ```
 - 如果材料摘要显示上游产物为空，不要反复读取同一个空 artifact；要么补足对应材料，要么以 partial/blocked 明确说明缺口。
-- 读取研究产物时优先使用专用工具：read_findings、read_papers、read_paper_notes、read_research_claims、read_research_outline、read_claim_debate_log、read_research_report；不要用 read_sources 读取 output 目录下的 JSONL/MD 产物。
+- {'读取研究产物时优先使用专用工具：read_findings、read_papers、read_paper_notes、read_research_claims、read_research_outline、read_claim_debate_log、read_research_report；不要用 read_sources 读取 output 目录下的 JSONL/MD 产物。' if mode == 'academic' else '读取研究产物时优先使用专用工具：read_findings、read_sources、read_material_notes、read_insights、read_review_notes、read_research_outline、read_research_report；不要用 read_sources 读取 output 目录下的 JSONL/MD 产物。'}
 
-文献综述原则：
-- 以真实来源和可追溯证据为中心；不编造论文、作者、年份、链接或结论。
-- 将任务拆成互相独立的综述视角，例如方法论、应用场景、证据强度、争议点、研究空白、未来方向。
+{'文献综述原则' if mode == 'academic' else '研究原则'}：
+- 以真实来源和可追溯证据为中心；不编造{'论文、作者、年份' if mode == 'academic' else '资料、数据、来源'}、链接或结论。
+- 将任务拆成互相独立的{'综述视角，例如方法论、应用场景、证据强度、争议点、研究空白、未来方向' if mode == 'academic' else '研究视角，例如背景分析、趋势判断、方法对比、应用场景、证据强度、争议点、结论与建议'}。
 - 并行探索阶段只收集和压缩证据，优先记录 findings 和 scratchpad。
-- 观点生成阶段输出研究空白、未来方向、可检验研究问题和综述观点，不输出实验假设。
-- 观点辩论阶段检查证据覆盖、相关性、创新性、局限和优先级。
+- {'观点生成阶段输出研究空白、未来方向、可检验研究问题和综述观点，不输出实验假设。' if mode == 'academic' else '洞察生成阶段输出核心洞察、趋势判断、结论建议和关键发现，不输出实验假设。'}
+- {'观点辩论阶段检查证据覆盖、相关性、创新性、局限和优先级。' if mode == 'academic' else '洞察审校阶段检查证据覆盖、逻辑一致性、创新性、局限和优先级。'}
 - 写作阶段综合已有 findings/scratchpad/session 结果，写入当前 step 要求的主 report_path。
 - 验证阶段只检查缺口、来源和章节，不重写正文。
 
@@ -140,13 +141,13 @@ Current research step scope:
 - report_path: {report_path}
 - findings_path: {findings_path}
 - scratchpad_path: {scratchpad_path}
-- papers_path: {papers_path}
-- paper_notes_path: {paper_notes_path}
-- claims_path: {claims_path}
-- debate_log_path: {debate_log_path}
+{'- papers_path: {papers_path}' if mode == 'academic' else '- sources_path: {meta.get("sources_path", "workspace/output/sources.jsonl")}'}
+{'- paper_notes_path: {paper_notes_path}' if mode == 'academic' else '- material_notes_path: {meta.get("material_notes_path", "workspace/output/material_notes.jsonl")}'}
+{'- claims_path: {claims_path}' if mode == 'academic' else '- insights_path: {meta.get("insights_path", "workspace/output/insights.jsonl")}'}
+{'- debate_log_path: {debate_log_path}' if mode == 'academic' else '- review_notes_path: {meta.get("review_notes_path", "workspace/output/review_notes.md")}'}
 - outline_path: {outline_path}
 - review_path: {review_path}
-- references_bib_path: {references_bib_path}
+{'- references_bib_path: {references_bib_path}' if mode == 'academic' else '- report_visual_html_path: {meta.get("report_visual_html_path", "workspace/output/report_visual.html")}'}
 
 委派历史：
 {subtask_history or "尚未委派子任务。"}
@@ -194,6 +195,7 @@ class ResearchSubPromptBuilder:
     ) -> str:
         remaining_steps = max_steps - current_step
         task_type, task_type_source = ResearchSubPromptBuilder._detect_task_type(task_instruction, context)
+        mode = "visual" if any(k in task_instruction for k in ("information_search", "material_reading", "insight_generation", "insight_review", "visual_design", "quality_review")) else "academic"
         is_topic_decomposition = (
             "decompose_topic" in task_instruction
             or "Topic Decomposition" in task_instruction
@@ -218,7 +220,7 @@ class ResearchSubPromptBuilder:
         )
 
         return f"""
-你是 ResearchSubAgent，一个文献综述研究流程中的执行型子智能体。
+你是 ResearchSubAgent，一个{'文献综述' if mode == 'academic' else '通用研究+视觉报告'}研究流程中的执行型子智能体。
 
 已分配任务：
 {task_instruction}
@@ -252,22 +254,22 @@ Step budget:
 
 总规则：
 - 只完成被分配的当前子任务，不扩展到其他 research step。
-- 当前系统面向文献综述：不要生成实验假设，不要设计实验，不要编造文献。
+- 当前系统面向{'文献综述' if mode == 'academic' else '通用研究+视觉报告'}：不要生成实验假设，不要设计实验，不要编造{'文献' if mode == 'academic' else '来源'}。
 - 所有关键结论必须连接到 source_url、evidence、本地资料或明确的不确定性说明。
 - 优先使用最短工具路径：搜索/读取足够证据后，记录 findings 或写 scratchpad。
-- `write_scratchpad_note` 只记录会影响后续综合、观点生成、辩论或写作的信息。
+- `write_scratchpad_note` 只记录会影响后续综合、{'观点生成、辩论' if mode == 'academic' else '洞察生成、审校'}或写作的信息。
 - 如果证据不足但仍能给出部分结果，使用 status `partial` 并说明缺口。
 - 只有工具不可用、关键依赖失败或任务无法继续时，才使用 status `blocked`。
 - 剩余步骤：{remaining_steps}
 - 当剩余步骤小于等于 2 时，停止新的广泛探索，整理已有信息并准备 `finish`。
 - 当剩余步骤小于等于 1 时，必须立即调用 `finish`。
 
-文献综述任务策略：
-- literature/search: 收集真实来源，记录题名、机构/作者、日期、链接和相关性。
-- synthesis: 聚类共识、争议、方法局限、证据强弱和研究空白。
-- claim_generation: 输出研究空白、未来方向、可检验研究问题和综述观点。
-- claim_debate: 批判观点的证据覆盖、创新性、相关性、局限和优先级。
-- write: 只基于已有 findings/scratchpad/session 结果写作，正文保留关键来源链接。
+{'文献综述任务策略' if mode == 'academic' else '研究任务策略'}：
+- {'literature/search' if mode == 'academic' else 'information/search'}: 收集真实来源，记录题名、机构/作者、日期、链接和相关性。
+- synthesis: 聚类共识、争议、方法局限、证据强弱和{'研究空白' if mode == 'academic' else '核心洞察'}。
+- {'claim_generation' if mode == 'academic' else 'insight_generation'}: 输出{'研究空白、未来方向、可检验研究问题和综述观点' if mode == 'academic' else '核心洞察、趋势判断、结论建议和关键发现'}。
+- {'claim_debate' if mode == 'academic' else 'insight_review'}: 批判{'观点' if mode == 'academic' else '洞察'}的证据覆盖、创新性、相关性、局限和优先级。
+- write: 只基于已有 findings/scratchpad/session 结果写作，正文保留关键来源链接。{'在 visual_design 阶段，需要在 markdown 中插入图表标记：![chart](data:bar|{...}) 和 ![table](data:{...})。' if mode == 'visual' else ''}
 - verify: 检查章节、来源、证据覆盖和 open issues，不重写正文。
 
 只返回 JSON。

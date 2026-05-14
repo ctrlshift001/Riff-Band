@@ -10,12 +10,14 @@ ResearchOutputFormat = Literal["markdown", "latex", "html", "json"]
 ResearchStatus = Literal["done", "partial", "blocked"]
 ResearchTrigger = Literal["cli", "mcp", "internal"]
 ResearchStepStatus = Literal["pending", "running", "done", "partial", "blocked"]
+ResearchMode = Literal["academic", "visual"]
 
 
 class ResearchRequest(BaseModel):
     """Stable request schema shared by CLI commands and future MCP tools."""
 
     topic: str = Field(description="Research topic or question.")
+    mode: ResearchMode = Field(default="academic")
     depth: ResearchDepth = Field(default="standard")
     output_format: ResearchOutputFormat = Field(default="latex")
     sources: list[str] = Field(default_factory=list)

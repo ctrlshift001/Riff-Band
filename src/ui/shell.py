@@ -308,11 +308,35 @@ class AOrchestraShell:
         parts = raw.split(maxsplit=1)
         topic = parts[1].strip() if len(parts) > 1 else ""
         if not topic:
-            self._console.print(f"[{theme.ERROR}]Usage: /research <topic>[/]")
+            self._console.print(f"[{theme.ERROR}]Usage: /research <topic> [--mode=academic|visual] [--depth=quick|standard|deep] [--format=markdown|latex|html|json][/]")
             return
 
+        # Parse optional flags
+        mode = "academic"
+        depth = "standard"
+        output_format = "latex"
+        import re
+        mode_match = re.search(r"--mode=(\w+)", topic)
+        if mode_match:
+            mode = mode_match.group(1)
+            topic = topic.replace(mode_match.group(0), "").strip()
+        depth_match = re.search(r"--depth=(\w+)", topic)
+        if depth_match:
+            depth = depth_match.group(1)
+            topic = topic.replace(depth_match.group(0), "").strip()
+        format_match = re.search(r"--format=(\w+)", topic)
+        if format_match:
+            output_format = format_match.group(1)
+            topic = topic.replace(format_match.group(0), "").strip()
+
         try:
-            request = ResearchRequest(topic=topic, trigger="cli")
+            request = ResearchRequest(
+                topic=topic,
+                mode=mode,
+                depth=depth,
+                output_format=output_format,
+                trigger="cli",
+            )
         except ValueError as exc:
             self._console.print(f"[{theme.ERROR}]Invalid research request: {exc}[/]")
             return

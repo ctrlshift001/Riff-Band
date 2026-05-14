@@ -17,8 +17,12 @@ class ResearchSkill:
 class ResearchSkillRegistry:
     """Loads markdown skills used by the fixed research workflow."""
 
-    def __init__(self, skills_dir: Path = SKILLS_DIR):
-        self.skills_dir = skills_dir
+    def __init__(self, mode: str = "academic", skills_dir: Path | None = None):
+        base = skills_dir or SKILLS_DIR
+        if mode == "visual":
+            self.skills_dir = base / "visual"
+        else:
+            self.skills_dir = base
 
     def load(self, name: str) -> ResearchSkill:
         path = self.skills_dir / f"{name}.md"

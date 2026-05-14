@@ -15,13 +15,14 @@ from research.artifacts import (
     ensure_text_artifact,
     export_html,
     export_latex,
+    export_visual_html,
     read_jsonl,
 )
 from research.gates import ResearchGatekeeper
 from research.prompts import ResearchMainPromptBuilder, ResearchSubPromptBuilder
 from research.schema import ResearchArtifact, ResearchRequest, ResearchResult, ResearchStepResult
 from research.skills import ResearchSkillRegistry
-from research.steps import RESEARCH_STEPS, ResearchStep, required_report_sections
+from research.steps import RESEARCH_STEPS, VISUAL_STEPS, ResearchStep, required_report_sections
 
 
 @dataclass(frozen=True)
@@ -57,32 +58,37 @@ class ResearchPipeline:
     ):
         self.request = request
         self.config = config
+        self.mode = str(request.mode or "academic").strip().lower()
         self.options = options or ResearchPipelineOptions()
         self.progress_callback = progress_callback
         self.artifacts = ResearchArtifacts.create(config.workspace_dir.resolve(), request)
-        self.skills = ResearchSkillRegistry()
-        self.gates = ResearchGatekeeper(self.artifacts)
+        self.skills = ResearchSkillRegistry(mode=self.mode)
+        self.gates = ResearchGatekeeper(self.artifacts, mode=self.mode)
         self.step_results: list[ResearchStepResult] = []
 
+    def _resolve_steps(self) -> tuple[ResearchStep, ...]:
+        return VISUAL_STEPS if self.mode == "visual" else RESEARCH_STEPS
+
     async def run(self) -> ResearchResult:
+        steps = self._resolve_steps()
         can_execute = self.options.execute_agents and self._has_llm_config()
         self._emit_progress(
             f"Research run start topic={self.request.topic!r} "
-            f"steps={len(RESEARCH_STEPS)} agent_execution={can_execute} "
+            f"mode={self.mode} steps={len(steps)} agent_execution={can_execute} "
             f"run_dir={self.artifacts.run_dir}"
         )
         if not can_execute:
             self._write_offline_scaffold("LLM configuration is unavailable; generated research scaffold only.")
 
-        for step in RESEARCH_STEPS:
+        for step in steps:
             if can_execute:
                 result = await self._run_agent_step(step)
             else:
                 result = self._offline_step_result(step)
             self.step_results.append(result)
-            step_index = list(RESEARCH_STEPS).index(step) + 1
+            step_index = list(steps).index(step) + 1
             self._emit_progress(
-                f"Step {step_index}/{len(RESEARCH_STEPS)} finished "
+                f"Step {step_index}/{len(steps)} finished "
                 f"key={step.key} status={result.status} issues={len(result.issues)}"
             )
 
@@ -118,7 +124,7 @@ class ResearchPipeline:
             status=status,
             summary=summary,
             report_path=report_path,
-            artifacts=self.artifacts.to_artifacts(self.request.output_format),
+            artifacts=self.artifacts.to_artifacts(self.request.output_format, mode=self.mode),
             steps=self.step_results,
             open_issues=issues,
             metadata={
@@ -126,7 +132,7 @@ class ResearchPipeline:
                 "depth": self.request.depth,
                 "output_format": self.request.output_format,
                 "trigger": self.request.trigger,
-                "mode": self.config.mode,
+                "mode": self.mode,
                 "profile_name": self.config.profile_name,
                 "run_dir": str(self.artifacts.run_dir),
                 "manifest_path": str(self.artifacts.manifest),
@@ -137,6 +143,7 @@ class ResearchPipeline:
         )
 
     async def _run_agent_step(self, step: ResearchStep) -> ResearchStepResult:
+        steps = self._resolve_steps()
         skill_text = self.skills.load_text(step.skill)
         readiness = self._assess_material_readiness(step)
         brief = self._build_step_brief(step, skill_text, readiness)
@@ -147,7 +154,7 @@ class ResearchPipeline:
         step_index = int(step_metadata["research_step_index"])
         executor = "multi-agent" if step.parallel_hint else "single-agent"
         self._emit_progress(
-            f"Step {step_index}/{len(RESEARCH_STEPS)} start "
+            f"Step {step_index}/{len(steps)} start "
             f"key={step.key} title={step.title!r} executor={executor} "
             f"expected_section={step.expected_section!r} min_findings={step_min_findings} "
             f"min_papers={step_min_papers} "
@@ -212,7 +219,7 @@ class ResearchPipeline:
         except Exception as exc:
             gate = self.gates.check_step(step)
             self._emit_progress(
-                f"Step {step_index}/{len(RESEARCH_STEPS)} blocked "
+                f"Step {step_index}/{len(self._resolve_steps())} blocked "
                 f"key={step.key} error={exc}"
             )
             return ResearchStepResult(
@@ -229,7 +236,7 @@ class ResearchPipeline:
 
         gate = self.gates.check_step(step)
         self._emit_progress(
-            f"Step {step_index}/{len(RESEARCH_STEPS)} gate "
+            f"Step {step_index}/{len(self._resolve_steps())} gate "
             f"key={step.key} passed={gate.passed} issues={gate.issues}"
         )
         return ResearchStepResult(
@@ -343,6 +350,41 @@ class ResearchPipeline:
                 f"必须在 scratchpad 中写入或更新: ## {step.expected_section}"
             )
         )
+        if self.mode == "visual":
+            artifact_paths = f"""- report_path: {self.artifacts.report_md}
+- report_visual_html_path: {self.artifacts.report_visual_html}
+- findings_path: {self.artifacts.findings}
+- scratchpad_path: {self.artifacts.scratchpad}
+- sources_path: {self.artifacts.sources}
+- material_notes_path: {self.artifacts.material_notes}
+- insights_path: {self.artifacts.insights}
+- review_notes_path: {self.artifacts.review_notes}
+- outline_path: {self.artifacts.outline}
+- review_path: {self.artifacts.review}"""
+            final_goal = f"""当前研究型任务的最终目标是一份视觉化 HTML 报告：report_visual.html；markdown 报告是中间稿。
+- 信息检索阶段要优先形成足够大的合格资料池；标准深度目标为至少 {self._min_papers()} 条 sources.jsonl 记录和至少 {self._min_findings()} 条结构化 findings。
+- 正文写作阶段必须写出完整的通用研究报告，并保留来源 URL。在 visual_design 阶段，需要在 markdown 中插入图表标记：
+  ![chart](data:bar|{{\"title\":\"...\",\"categories\":[],\"values\":[]}})
+  ![table](data:{{\"headers\":[],\"rows\":[]}})
+- 优先使用专用 artifact 工具读取研究产物：read_findings、read_sources、read_material_notes、read_insights、read_review_notes、read_research_outline、read_research_report。
+- 不要用 read_sources 读取 findings.jsonl、sources.jsonl、material_notes.jsonl、insights.jsonl、outline.md、review_notes.md 或 research_report.md。"""
+        else:
+            artifact_paths = f"""- report_path: {self.artifacts.report_md}
+- paper_tex_path: {self.artifacts.paper_tex}
+- references_bib_path: {self.artifacts.references_bib}
+- findings_path: {self.artifacts.findings}
+- scratchpad_path: {self.artifacts.scratchpad}
+- papers_path: {self.artifacts.papers}
+- paper_notes_path: {self.artifacts.paper_notes}
+- claims_path: {self.artifacts.claims}
+- debate_log_path: {self.artifacts.debate_log}
+- outline_path: {self.artifacts.outline}
+- review_path: {self.artifacts.review}"""
+            final_goal = f"""当前研究型任务的最终目标是一篇可引用的 LaTeX 文献综述：paper.tex + references.bib；markdown 报告是中间稿。
+- 文献检索阶段要优先形成足够大的合格论文池；标准深度目标为至少 {self._min_papers()} 篇 papers.jsonl 记录和至少 {self._min_findings()} 条结构化 findings。
+- 正文写作阶段必须写出“Abstract/Introduction/Related Work/Literature Synthesis/Research Gaps/Future Directions/Conclusion”等论文式内容，并保留来源 URL 或 citation key。
+- 优先使用专用 artifact 工具读取研究产物：read_findings、read_papers、read_paper_notes、read_research_claims、read_research_outline、read_claim_debate_log、read_research_report。
+- 不要用 read_sources 读取 findings.jsonl、papers.jsonl、paper_notes.jsonl、claims.jsonl、outline.md、debate_log.md 或 research_report.md。"""
 
         return f"""
 任务类型: research
@@ -365,17 +407,7 @@ class ResearchPipeline:
 {json.dumps(self.request.sources, ensure_ascii=False)}
 
 [产物路径]
-- report_path: {self.artifacts.report_md}
-- paper_tex_path: {self.artifacts.paper_tex}
-- references_bib_path: {self.artifacts.references_bib}
-- findings_path: {self.artifacts.findings}
-- scratchpad_path: {self.artifacts.scratchpad}
-- papers_path: {self.artifacts.papers}
-- paper_notes_path: {self.artifacts.paper_notes}
-- claims_path: {self.artifacts.claims}
-- debate_log_path: {self.artifacts.debate_log}
-- outline_path: {self.artifacts.outline}
-- review_path: {self.artifacts.review}
+{artifact_paths}
 
 [进入本步骤前的材料就绪判断]
 - ready: {readiness.ready}
@@ -394,11 +426,7 @@ class ResearchPipeline:
 [硬性要求]
 - 只执行当前步骤，不要跳到后续步骤。
 {report_requirement}
-- 当前研究型任务的最终目标是一篇可引用的 LaTeX 文献综述：paper.tex + references.bib；markdown 报告是中间稿。
-- 文献检索阶段要优先形成足够大的合格论文池；标准深度目标为至少 {self._min_papers()} 篇 papers.jsonl 记录和至少 {self._min_findings()} 条结构化 findings。
-- 正文写作阶段必须写出“Abstract/Introduction/Related Work/Literature Synthesis/Research Gaps/Future Directions/Conclusion”等论文式内容，并保留来源 URL 或 citation key。
-- 优先使用专用 artifact 工具读取研究产物：read_findings、read_papers、read_paper_notes、read_research_claims、read_research_outline、read_claim_debate_log、read_research_report。
-- 不要用 read_sources 读取 findings.jsonl、papers.jsonl、paper_notes.jsonl、claims.jsonl、outline.md、debate_log.md 或 research_report.md。
+- {final_goal}
 - 如果材料摘要显示上游材料缺失，不要反复读取同一空产物；应在本步骤输出中明确缺口，或基于已有材料产出 partial。
 - 尽量使用 record_finding 记录带 source_url 或 evidence 的结构化发现。
 - 重要中间结论写入 scratchpad，供后续步骤复用。
@@ -406,15 +434,17 @@ class ResearchPipeline:
 """.strip()
 
     def _step_runtime_metadata(self, step: ResearchStep, readiness: MaterialReadiness | None = None) -> dict[str, Any]:
-        step_index = list(RESEARCH_STEPS).index(step) + 1
+        steps = self._resolve_steps()
+        step_index = list(steps).index(step) + 1
         readiness = readiness or self._assess_material_readiness(step)
-        return {
+        meta: dict[str, Any] = {
+            "mode": self.mode,
             "research_step_key": step.key,
             "research_step_title": step.title,
             "research_step_index": step_index,
-            "research_step_total": len(RESEARCH_STEPS),
+            "research_step_total": len(steps),
             "current_step_expected_section": step.expected_section,
-            "all_required_sections": required_report_sections(),
+            "all_required_sections": required_report_sections(self.mode),
             "current_step_requires_report_section": bool(step.report_required),
             "step_min_findings": int(step.min_findings or 0),
             "step_min_papers": int(step.min_papers or 0),
@@ -427,9 +457,17 @@ class ResearchPipeline:
             "material_issues": list(readiness.issues),
             "material_warnings": list(readiness.warnings),
             "material_digest": readiness.digest,
-            "references_bib_path": str(self.artifacts.references_bib),
-            "paper_notes_path": str(self.artifacts.paper_notes),
         }
+        if self.mode == "visual":
+            meta["sources_path"] = str(self.artifacts.sources)
+            meta["material_notes_path"] = str(self.artifacts.material_notes)
+            meta["insights_path"] = str(self.artifacts.insights)
+            meta["review_notes_path"] = str(self.artifacts.review_notes)
+            meta["report_visual_html_path"] = str(self.artifacts.report_visual_html)
+        else:
+            meta["references_bib_path"] = str(self.artifacts.references_bib)
+            meta["paper_notes_path"] = str(self.artifacts.paper_notes)
+        return meta
 
     def _assess_material_readiness(self, step: ResearchStep) -> MaterialReadiness:
         digest = self._material_digest()
@@ -441,6 +479,10 @@ class ResearchPipeline:
         papers_count = int(digest["papers"]["count"])
         paper_notes_count = int(digest["paper_notes"]["count"])
         claims_count = int(digest["claims"]["count"])
+        sources_count = int(digest.get("sources", {}).get("count", 0))
+        material_notes_count = int(digest.get("material_notes", {}).get("count", 0))
+        insights_count = int(digest.get("insights", {}).get("count", 0))
+        review_notes_count = int(digest.get("review_notes", {}).get("count", 0))
         outline_chars = int(digest["outline"]["chars"])
         debate_chars = int(digest["debate_log"]["chars"])
         report_chars = int(digest["report"]["chars"])
@@ -454,26 +496,51 @@ class ResearchPipeline:
                 warnings.append(
                     f"literature_search should collect at least {step.min_papers} qualified papers for a literature review; current papers={papers_count}."
                 )
+        elif step.key == "information_search":
+            if findings_count:
+                warnings.append("information_search starts with existing findings; avoid duplicating the same evidence.")
+            if sources_count < int(step.min_papers or 0):
+                warnings.append(
+                    f"information_search should collect at least {step.min_papers} qualified sources; current sources={sources_count}."
+                )
         elif step.key == "paper_enrichment":
             if papers_count == 0:
                 issues.append("paper_enrichment requires papers from literature_search, but papers.jsonl is empty.")
                 blocking = True
             elif paper_notes_count == 0:
                 warnings.append("paper_enrichment should create paper_notes.jsonl from abstracts/web/PDF before synthesis.")
+        elif step.key == "material_reading":
+            if sources_count == 0:
+                issues.append("material_reading requires sources from information_search, but sources.jsonl is empty.")
+                blocking = True
+            elif material_notes_count == 0:
+                warnings.append("material_reading should create material_notes.jsonl from sources before synthesis.")
         elif step.key == "knowledge_synthesis":
             if findings_count == 0:
-                issues.append("knowledge_synthesis requires findings from literature_search, but findings.jsonl is empty.")
+                issues.append("knowledge_synthesis requires findings, but findings.jsonl is empty.")
                 blocking = True
-            if papers_count == 0:
-                warnings.append("papers.jsonl is empty; synthesize from findings and mark citation coverage as weak.")
-            if paper_notes_count == 0:
-                warnings.append("paper_notes.jsonl is empty; synthesis will be abstract/metadata-level and should mark evidence depth as weak.")
+            if self.mode == "visual":
+                if sources_count == 0:
+                    warnings.append("sources.jsonl is empty; synthesize from findings and mark source coverage as weak.")
+                if material_notes_count == 0:
+                    warnings.append("material_notes.jsonl is empty; synthesis will be abstract-level and should mark evidence depth as weak.")
+            else:
+                if papers_count == 0:
+                    warnings.append("papers.jsonl is empty; synthesize from findings and mark citation coverage as weak.")
+                if paper_notes_count == 0:
+                    warnings.append("paper_notes.jsonl is empty; synthesis will be abstract/metadata-level and should mark evidence depth as weak.")
         elif step.key == "claim_generation":
             if findings_count == 0:
                 issues.append("claim_generation requires structured findings, but findings.jsonl is empty.")
                 blocking = True
             elif direct_isac_findings == 0:
                 warnings.append("No finding directly mentions ISAC/通信感知一体化/通感; generated claims must mark relevance uncertainty.")
+            if scratchpad_chars == 0:
+                warnings.append("scratchpad synthesis is missing; use findings directly and record assumptions.")
+        elif step.key == "insight_generation":
+            if findings_count == 0:
+                issues.append("insight_generation requires structured findings, but findings.jsonl is empty.")
+                blocking = True
             if scratchpad_chars == 0:
                 warnings.append("scratchpad synthesis is missing; use findings directly and record assumptions.")
         elif step.key == "claim_debate":
@@ -483,10 +550,22 @@ class ResearchPipeline:
             if findings_count == 0:
                 issues.append("claim_debate requires evidence findings, but findings.jsonl is empty.")
                 blocking = True
-        elif step.key == "outline_build":
-            if claims_count == 0:
-                issues.append("outline_build requires candidate claims/gaps, but claims.jsonl is empty.")
+        elif step.key == "insight_review":
+            if insights_count == 0:
+                issues.append("insight_review requires insights from insight_generation, but insights.jsonl is empty.")
                 blocking = True
+            if findings_count == 0:
+                issues.append("insight_review requires evidence findings, but findings.jsonl is empty.")
+                blocking = True
+        elif step.key == "outline_build":
+            if self.mode == "visual":
+                if insights_count == 0:
+                    issues.append("outline_build requires insights, but insights.jsonl is empty.")
+                    blocking = True
+            else:
+                if claims_count == 0:
+                    issues.append("outline_build requires candidate claims/gaps, but claims.jsonl is empty.")
+                    blocking = True
             if findings_count == 0:
                 issues.append("outline_build requires findings, but findings.jsonl is empty.")
                 blocking = True
@@ -499,15 +578,29 @@ class ResearchPipeline:
             if findings_count == 0:
                 issues.append("section_draft requires findings for evidence-backed writing, but findings.jsonl is empty.")
                 blocking = True
-            if claims_count == 0:
-                warnings.append("claims.jsonl is empty; draft should avoid unsupported strong claims.")
-            if papers_count == 0:
-                warnings.append("papers.jsonl is empty; draft must cite source_url from findings and mark bibliography gap.")
-            if paper_notes_count == 0:
-                warnings.append("paper_notes.jsonl is empty; draft should avoid detailed claims that require full paper reading.")
+            if self.mode == "visual":
+                if insights_count == 0:
+                    warnings.append("insights.jsonl is empty; draft should avoid unsupported strong claims.")
+                if sources_count == 0:
+                    warnings.append("sources.jsonl is empty; draft must cite source_url from findings and mark source gap.")
+                if material_notes_count == 0:
+                    warnings.append("material_notes.jsonl is empty; draft should avoid detailed claims that require full reading.")
+            else:
+                if claims_count == 0:
+                    warnings.append("claims.jsonl is empty; draft should avoid unsupported strong claims.")
+                if papers_count == 0:
+                    warnings.append("papers.jsonl is empty; draft must cite source_url from findings and mark bibliography gap.")
+                if paper_notes_count == 0:
+                    warnings.append("paper_notes.jsonl is empty; draft should avoid detailed claims that require full paper reading.")
         elif step.key == "multi_agent_review":
             if report_chars == 0:
                 issues.append("multi_agent_review requires research_report.md, but the report is empty or missing.")
+                blocking = True
+            if findings_count == 0:
+                warnings.append("findings.jsonl is empty; review should flag evidence coverage as missing.")
+        elif step.key == "quality_review":
+            if report_chars == 0:
+                issues.append("quality_review requires research_report.md, but the report is empty or missing.")
                 blocking = True
             if findings_count == 0:
                 warnings.append("findings.jsonl is empty; review should flag evidence coverage as missing.")
@@ -532,13 +625,17 @@ class ResearchPipeline:
         papers = read_jsonl(self.artifacts.papers)
         paper_notes = read_jsonl(self.artifacts.paper_notes)
         claims = read_jsonl(self.artifacts.claims)
+        sources = read_jsonl(self.artifacts.sources)
+        material_notes = read_jsonl(self.artifacts.material_notes)
+        insights = read_jsonl(self.artifacts.insights)
+        review_notes = read_jsonl(self.artifacts.review_notes)
         report_text = self._read_artifact_text(self.artifacts.report_md)
         scratchpad_text = self._read_artifact_text(self.artifacts.scratchpad)
         debate_text = self._read_artifact_text(self.artifacts.debate_log)
         outline_text = self._read_artifact_text(self.artifacts.outline)
         review_text = self._read_artifact_text(self.artifacts.review)
 
-        return {
+        digest: dict[str, Any] = {
             "findings": {
                 "path": str(self.artifacts.findings),
                 "count": len(findings),
@@ -595,6 +692,33 @@ class ResearchPipeline:
                 "headings": self._markdown_headings(review_text, limit=8),
             },
         }
+        if self.mode == "visual":
+            digest["sources"] = {
+                "path": str(self.artifacts.sources),
+                "count": len(sources),
+                "sample": self._sample_rows(sources, ["title", "source_type", "source_url", "relevance"], limit=5),
+            }
+            digest["material_notes"] = {
+                "path": str(self.artifacts.material_notes),
+                "count": len(material_notes),
+                "sample": self._sample_rows(
+                    material_notes,
+                    ["title", "problem", "method", "main_findings", "limitations", "evidence_source"],
+                    limit=5,
+                ),
+            }
+            digest["insights"] = {
+                "path": str(self.artifacts.insights),
+                "count": len(insights),
+                "sample": self._sample_rows(insights, ["insight", "insight_type", "priority", "source_urls"], limit=5),
+            }
+            digest["review_notes"] = {
+                "path": str(self.artifacts.review_notes),
+                "exists": self.artifacts.review_notes.exists(),
+                "chars": len(self._read_artifact_text(self.artifacts.review_notes)),
+                "headings": self._markdown_headings(self._read_artifact_text(self.artifacts.review_notes), limit=8),
+            }
+        return digest
 
     @staticmethod
     def _read_artifact_text(path: Path) -> str:
@@ -647,7 +771,7 @@ class ResearchPipeline:
 
     def _write_offline_scaffold(self, reason: str) -> None:
         lines = [f"# Research Report: {self.request.topic}", ""]
-        for step in RESEARCH_STEPS:
+        for step in self._resolve_steps():
             lines.extend(
                 [
                     f"## {step.expected_section}",
@@ -674,26 +798,52 @@ class ResearchPipeline:
 
     def _derive_structured_artifacts(self) -> None:
         report_text = self.artifacts.report_md.read_text(encoding="utf-8") if self.artifacts.report_md.exists() else ""
-        ensure_text_artifact(self.artifacts.debate_log, "观点辩论与优先级评估", self._extract_section(report_text, "观点辩论与优先级评估"))
-        ensure_text_artifact(self.artifacts.outline, "结构化论文大纲", self._extract_section(report_text, "结构化论文大纲"))
-        ensure_text_artifact(self.artifacts.review, "多视角审稿意见", self._extract_section(report_text, "多视角审稿意见"))
+        if self.mode == "visual":
+            ensure_text_artifact(self.artifacts.review_notes, "洞察审校与优先级评估", self._extract_section(report_text, "洞察审校与优先级评估"))
+            ensure_text_artifact(self.artifacts.outline, "结构化报告大纲", self._extract_section(report_text, "结构化报告大纲"))
+            ensure_text_artifact(self.artifacts.review, "质量审校意见", self._extract_section(report_text, "质量审校意见"))
 
-        if not self.artifacts.papers.exists():
-            self.artifacts.papers.write_text("", encoding="utf-8")
-        if not self.artifacts.paper_notes.exists():
-            self.artifacts.paper_notes.write_text("", encoding="utf-8")
-        if not self.artifacts.claims.exists():
-            append_jsonl(
-                self.artifacts.claims,
-                {
-                    "topic": self.request.topic,
-                    "claim": self._extract_section(report_text, "研究空白、未来方向与可检验问题")[:1000],
-                    "status": "candidate" if "研究空白、未来方向与可检验问题" in report_text else "pending",
-                },
-            )
+            if not self.artifacts.sources.exists():
+                self.artifacts.sources.write_text("", encoding="utf-8")
+            if not self.artifacts.material_notes.exists():
+                self.artifacts.material_notes.write_text("", encoding="utf-8")
+            if not self.artifacts.insights.exists():
+                append_jsonl(
+                    self.artifacts.insights,
+                    {
+                        "topic": self.request.topic,
+                        "insight": self._extract_section(report_text, "洞察、结论与趋势判断")[:1000],
+                        "status": "candidate" if "洞察、结论与趋势判断" in report_text else "pending",
+                    },
+                )
+        else:
+            ensure_text_artifact(self.artifacts.debate_log, "观点辩论与优先级评估", self._extract_section(report_text, "观点辩论与优先级评估"))
+            ensure_text_artifact(self.artifacts.outline, "结构化论文大纲", self._extract_section(report_text, "结构化论文大纲"))
+            ensure_text_artifact(self.artifacts.review, "多视角审稿意见", self._extract_section(report_text, "多视角审稿意见"))
+
+            if not self.artifacts.papers.exists():
+                self.artifacts.papers.write_text("", encoding="utf-8")
+            if not self.artifacts.paper_notes.exists():
+                self.artifacts.paper_notes.write_text("", encoding="utf-8")
+            if not self.artifacts.claims.exists():
+                append_jsonl(
+                    self.artifacts.claims,
+                    {
+                        "topic": self.request.topic,
+                        "claim": self._extract_section(report_text, "研究空白、未来方向与可检验问题")[:1000],
+                        "status": "candidate" if "研究空白、未来方向与可检验问题" in report_text else "pending",
+                    },
+                )
 
     def _export_requested_format(self) -> None:
-        if self.request.output_format == "latex":
+        if self.mode == "visual" and self.request.output_format == "html":
+            export_visual_html(
+                self.artifacts.report_md,
+                self.artifacts.report_visual_html,
+                self.request.topic,
+                artifacts=self.artifacts,
+            )
+        elif self.request.output_format == "latex":
             export_latex(
                 self.artifacts.report_md,
                 self.artifacts.paper_tex,
@@ -705,6 +855,8 @@ class ResearchPipeline:
             export_html(self.artifacts.report_md, self.artifacts.report_html, self.request.topic)
 
     def _primary_report_path(self) -> str:
+        if self.mode == "visual" and self.request.output_format == "html":
+            return str(self.artifacts.report_visual_html)
         if self.request.output_format == "latex":
             return str(self.artifacts.paper_tex)
         if self.request.output_format == "html":
@@ -715,16 +867,26 @@ class ResearchPipeline:
         artifacts = [ResearchArtifact(type="report_section", path=str(self.artifacts.report_md), description=step.expected_section)]
         if step.key == "literature_search":
             artifacts.append(ResearchArtifact(type="papers", path=str(self.artifacts.papers), description="Literature records"))
+        elif step.key == "information_search":
+            artifacts.append(ResearchArtifact(type="sources", path=str(self.artifacts.sources), description="Information source records"))
         elif step.key == "paper_enrichment":
             artifacts.append(ResearchArtifact(type="paper_notes", path=str(self.artifacts.paper_notes), description="Lightweight structured paper notes"))
+        elif step.key == "material_reading":
+            artifacts.append(ResearchArtifact(type="material_notes", path=str(self.artifacts.material_notes), description="Lightweight structured material notes"))
         elif step.key == "claim_generation":
             artifacts.append(ResearchArtifact(type="claims", path=str(self.artifacts.claims), description="Candidate claims, research gaps, and future directions"))
+        elif step.key == "insight_generation":
+            artifacts.append(ResearchArtifact(type="insights", path=str(self.artifacts.insights), description="Generated insights, trends, and conclusions"))
         elif step.key == "claim_debate":
             artifacts.append(ResearchArtifact(type="debate", path=str(self.artifacts.debate_log), description="Debate log"))
+        elif step.key == "insight_review":
+            artifacts.append(ResearchArtifact(type="review_notes", path=str(self.artifacts.review_notes), description="Insight review notes"))
         elif step.key == "outline_build":
             artifacts.append(ResearchArtifact(type="outline", path=str(self.artifacts.outline), description="Structured outline"))
         elif step.key == "multi_agent_review":
             artifacts.append(ResearchArtifact(type="review", path=str(self.artifacts.review), description="Review report"))
+        elif step.key == "quality_review":
+            artifacts.append(ResearchArtifact(type="review", path=str(self.artifacts.review), description="Quality review report"))
         return artifacts
 
     def _min_findings(self) -> int:

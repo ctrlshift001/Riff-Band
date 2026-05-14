@@ -89,21 +89,22 @@
 
 ---
 
-## 4. Skills 目录隔离
+## 4. Skills 目录隔离（核心原则：只做加法，不移动现有文件）
+
+**核心隔离原则**：队友现有的 9 个 skill 文件**完全不动**（不移动、不删除、不重命名），只新增 `visual/` 子目录。
 
 ```
 src/research/skills/
-├── academic/          # 现有 9 个 skill，完全不动
-│   ├── decompose-topic.md
-│   ├── literature-search.md
-│   ├── paper-enrichment.md
-│   ├── knowledge-synthesis.md
-│   ├── claim-generation.md
-│   ├── claim-debate.md
-│   ├── outline-build.md
-│   ├── section-draft.md
-│   └── multi-agent-review.md
-└── visual/            # 新增 10 个 skill
+├── claim-debate.md        ← 队友现有文件，完全不动
+├── claim-generation.md    ← 完全不动
+├── decompose-topic.md     ← 完全不动
+├── knowledge-synthesis.md ← 完全不动
+├── literature-search.md   ← 完全不动
+├── multi-agent-review.md  ← 完全不动
+├── outline-build.md       ← 完全不动
+├── paper-enrichment.md    ← 完全不动
+├── section-draft.md       ← 完全不动
+└── visual/                ← 只新增这个目录
     ├── decompose-topic.md
     ├── information-search.md
     ├── material-reading.md
@@ -116,13 +117,18 @@ src/research/skills/
     └── quality-review.md
 ```
 
-`ResearchSkillRegistry` 修改：
+`ResearchSkillRegistry` 修改（向后兼容）：
 
 ```python
 class ResearchSkillRegistry:
-    def __init__(self, mode: str = "academic", skills_dir: Path = SKILLS_DIR):
-        self.skills_dir = skills_dir / mode
+    def __init__(self, mode: str = "academic"):
+        if mode == "visual":
+            self.skills_dir = SKILLS_DIR / "visual"
+        else:
+            self.skills_dir = SKILLS_DIR  # 保持现有路径，队友文件不受影响
 ```
+
+**结果**：队友的 skill 文件路径完全不变，她的任何开发和合并都不会受影响。
 
 ---
 
@@ -267,10 +273,10 @@ class ResearchPipeline:
 | 文件 | 变更类型 | 说明 |
 |------|---------|------|
 | `src/research/schema.py` | 修改 | `ResearchRequest` 新增 `mode` 字段 |
-| `src/research/steps.py` | 修改 | `RESEARCH_STEPS` 重命名 `ACADEMIC_STEPS`，新增 `VISUAL_STEPS` |
-| `src/research/skills.py` | 修改 | `ResearchSkillRegistry` 构造函数加 `mode` |
-| `src/research/skills/academic/` | 新建目录 | 现有 9 个 skill 移入 |
-| `src/research/skills/visual/` | 新建目录 | 新增 10 个 skill |
+| `src/research/steps.py` | 修改 | `RESEARCH_STEPS` 保留不动，新增 `VISUAL_STEPS` |
+| `src/research/skills.py` | 修改 | `ResearchSkillRegistry` 构造函数加 `mode`（默认 academic，路径不变） |
+| `src/research/skills/*.md` (现有 9 个) | 不动 | 队友文件，路径和内容完全保留 |
+| `src/research/skills/visual/` | 新建目录 | 新增 10 个 visual skill |
 | `src/research/pipeline.py` | 修改 | 按 `mode` 选择 steps/skills/gates/artifacts |
 | `src/research/gates.py` | 修改 | `ResearchGatekeeper` 加 `mode` 参数，内部分支 |
 | `src/research/prompts.py` | 修改 | `ResearchMain/SubPromptBuilder` 加 `mode` 条件渲染 |
@@ -287,7 +293,7 @@ class ResearchPipeline:
 | 层面 | 保证 |
 |------|------|
 | 默认行为 | `mode` 默认 `"academic"`，现有调用完全兼容 |
-| Academic 代码 | steps、gates、skills、prompts 零修改（仅移动 skill 文件到 `academic/` 子目录） |
+| Academic 代码 | steps、gates、skills、prompts 零修改（现有 skill 文件完全不动，不移动、不删除、不重命名） |
 | 产物路径 | academic 产物路径不变；visual 产物在独立 run_dir 中 |
 | MCP schema | 新增可选字段 `mode`，不破坏现有 client |
 | 测试 | 现有 46 个测试全部保留，新增 visual mode 测试 |

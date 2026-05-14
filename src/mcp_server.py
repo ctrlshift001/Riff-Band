@@ -61,6 +61,11 @@ class RiffBandMCPServer:
                             "type": "string",
                             "description": "Research topic or question.",
                         },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["academic", "visual"],
+                            "default": "academic",
+                        },
                         "depth": {
                             "type": "string",
                             "enum": ["quick", "standard", "deep"],
@@ -133,6 +138,7 @@ class RiffBandMCPServer:
         try:
             request = ResearchRequest(
                 topic=arguments.get("topic", ""),
+                mode=arguments.get("mode", "academic"),
                 depth=arguments.get("depth", "standard"),
                 output_format=arguments.get("output_format", "markdown"),
                 sources=list(arguments.get("sources") or []),
