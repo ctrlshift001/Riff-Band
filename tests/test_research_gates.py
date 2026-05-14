@@ -75,8 +75,10 @@ class TestResearchGatekeeper(unittest.TestCase):
                     + json.dumps({"finding": f"f{i}", "source_url": "https://example.com"}) + "\n",
                     encoding="utf-8",
                 )
+            # synthesis_digest is now checked for knowledge_synthesis
+            artifacts.synthesis_digest.write_text('{"synthesis": "test content"}', encoding="utf-8")
             result = gate.check_step(step)
-            self.assertTrue(result.passed)
+            self.assertTrue(result.passed, f"Issues: {result.issues}")
             self.assertEqual(result.issues, [])
         finally:
             shutil.rmtree(td, ignore_errors=True)
