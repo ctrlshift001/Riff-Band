@@ -195,7 +195,7 @@ class ResearchSubPromptBuilder:
     ) -> str:
         remaining_steps = max_steps - current_step
         task_type, task_type_source = ResearchSubPromptBuilder._detect_task_type(task_instruction, context)
-        mode = "visual" if any(k in task_instruction for k in ("information_search", "material_reading", "insight_generation", "insight_review", "visual_design", "quality_review")) else "academic"
+        mode = "visual" if "sources.jsonl" in context and "material_notes.jsonl" in context else "academic"
         is_topic_decomposition = (
             "decompose_topic" in task_instruction
             or "Topic Decomposition" in task_instruction

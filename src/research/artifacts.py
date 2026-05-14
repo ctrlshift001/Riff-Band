@@ -43,7 +43,7 @@ class ResearchArtifacts:
     review_notes: Path
 
     @classmethod
-    def create(cls, workspace_dir: Path, request: ResearchRequest) -> "ResearchArtifacts":
+    def create(cls, workspace_dir: Path, request: ResearchRequest, mode: str | None = None) -> "ResearchArtifacts":
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         slug = _slugify(request.topic)
         run_dir = workspace_dir / "output" / f"research_{stamp}_{slug}"

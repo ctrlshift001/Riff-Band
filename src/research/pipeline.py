@@ -59,9 +59,12 @@ class ResearchPipeline:
         self.request = request
         self.config = config
         self.mode = str(request.mode or "academic").strip().lower()
+        # visual mode defaults to html output
+        if self.mode == "visual" and request.output_format == "latex":
+            request.output_format = "html"
         self.options = options or ResearchPipelineOptions()
         self.progress_callback = progress_callback
-        self.artifacts = ResearchArtifacts.create(config.workspace_dir.resolve(), request)
+        self.artifacts = ResearchArtifacts.create(config.workspace_dir.resolve(), request, mode=self.mode)
         self.skills = ResearchSkillRegistry(mode=self.mode)
         self.gates = ResearchGatekeeper(self.artifacts, mode=self.mode)
         self.step_results: list[ResearchStepResult] = []
@@ -96,7 +99,7 @@ class ResearchPipeline:
         self._export_requested_format()
 
         min_findings = self._min_findings()
-        min_papers = self._min_papers()
+        min_papers = self._min_sources() if self.mode == "visual" else self._min_papers()
         final_gate = self.gates.check_final(
             min_findings=min_findings,
             min_papers=min_papers,
@@ -482,7 +485,7 @@ class ResearchPipeline:
         sources_count = int(digest.get("sources", {}).get("count", 0))
         material_notes_count = int(digest.get("material_notes", {}).get("count", 0))
         insights_count = int(digest.get("insights", {}).get("count", 0))
-        review_notes_count = int(digest.get("review_notes", {}).get("count", 0))
+        review_notes_chars = int(digest.get("review_notes", {}).get("chars", 0))
         outline_chars = int(digest["outline"]["chars"])
         debate_chars = int(digest["debate_log"]["chars"])
         report_chars = int(digest["report"]["chars"])
@@ -569,7 +572,10 @@ class ResearchPipeline:
             if findings_count == 0:
                 issues.append("outline_build requires findings, but findings.jsonl is empty.")
                 blocking = True
-            if debate_chars == 0:
+            if self.mode == "visual":
+                if not review_notes_chars:
+                    warnings.append("review_notes.md is empty; outline should mark insight priorities as provisional.")
+            elif debate_chars == 0:
                 warnings.append("debate_log.md is empty; outline should mark claim priorities as provisional.")
         elif step.key == "section_draft":
             if outline_chars == 0:
@@ -598,6 +604,16 @@ class ResearchPipeline:
                 blocking = True
             if findings_count == 0:
                 warnings.append("findings.jsonl is empty; review should flag evidence coverage as missing.")
+        elif step.key == "visual_design":
+            if report_chars == 0:
+                issues.append("visual_design requires section_draft output (research_report.md), but report is empty.")
+                blocking = True
+            if outline_chars == 0:
+                warnings.append("outline.md is empty; visual design may lack section structure.")
+            if insights_count == 0:
+                warnings.append("insights.jsonl is empty; visual design may lack insight-driven charts.")
+            if findings_count == 0:
+                warnings.append("findings.jsonl is empty; visual design evidence coverage may be weak.")
         elif step.key == "quality_review":
             if report_chars == 0:
                 issues.append("quality_review requires research_report.md, but the report is empty or missing.")
@@ -836,7 +852,11 @@ class ResearchPipeline:
                 )
 
     def _export_requested_format(self) -> None:
-        if self.mode == "visual" and self.request.output_format == "html":
+        if self.mode == "visual":
+            if self.request.output_format != "html":
+                self._emit_progress(
+                    f"visual mode overrides output_format={self.request.output_format} to html"
+                )
             export_visual_html(
                 self.artifacts.report_md,
                 self.artifacts.report_visual_html,
@@ -855,7 +875,7 @@ class ResearchPipeline:
             export_html(self.artifacts.report_md, self.artifacts.report_html, self.request.topic)
 
     def _primary_report_path(self) -> str:
-        if self.mode == "visual" and self.request.output_format == "html":
+        if self.mode == "visual":
             return str(self.artifacts.report_visual_html)
         if self.request.output_format == "latex":
             return str(self.artifacts.paper_tex)
@@ -887,6 +907,8 @@ class ResearchPipeline:
             artifacts.append(ResearchArtifact(type="review", path=str(self.artifacts.review), description="Review report"))
         elif step.key == "quality_review":
             artifacts.append(ResearchArtifact(type="review", path=str(self.artifacts.review), description="Quality review report"))
+        elif step.key == "visual_design":
+            artifacts.append(ResearchArtifact(type="html", path=str(self.artifacts.report_visual_html), description="Visual HTML report"))
         return artifacts
 
     def _min_findings(self) -> int:
@@ -894,6 +916,9 @@ class ResearchPipeline:
 
     def _min_papers(self) -> int:
         return {"quick": 10, "standard": 30, "deep": 50}.get(self.request.depth, 30)
+
+    def _min_sources(self) -> int:
+        return {"quick": 5, "standard": 15, "deep": 25}.get(self.request.depth, 15)
 
     def _has_llm_config(self) -> bool:
         try:

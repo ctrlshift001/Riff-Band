@@ -316,17 +316,29 @@ class AOrchestraShell:
         depth = "standard"
         output_format = "latex"
         import re
+        VALID_MODES_RESEARCH = {"academic", "visual"}
+        VALID_DEPTHS = {"quick", "standard", "deep"}
+        VALID_FORMATS = {"markdown", "latex", "html", "json"}
         mode_match = re.search(r"--mode=(\w+)", topic)
         if mode_match:
             mode = mode_match.group(1)
+            if mode not in VALID_MODES_RESEARCH:
+                self._console.print(f"[{theme.ERROR}]Invalid mode '{mode}'. Use: academic, visual[/]")
+                return
             topic = topic.replace(mode_match.group(0), "").strip()
         depth_match = re.search(r"--depth=(\w+)", topic)
         if depth_match:
             depth = depth_match.group(1)
+            if depth not in VALID_DEPTHS:
+                self._console.print(f"[{theme.ERROR}]Invalid depth '{depth}'. Use: quick, standard, deep[/]")
+                return
             topic = topic.replace(depth_match.group(0), "").strip()
         format_match = re.search(r"--format=(\w+)", topic)
         if format_match:
             output_format = format_match.group(1)
+            if output_format not in VALID_FORMATS:
+                self._console.print(f"[{theme.ERROR}]Invalid format '{output_format}'. Use: markdown, latex, html, json[/]")
+                return
             topic = topic.replace(format_match.group(0), "").strip()
 
         try:

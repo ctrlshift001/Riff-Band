@@ -32,7 +32,8 @@ class ResearchGatekeeper:
         sources_count = len(read_jsonl(self.artifacts.sources))
         material_notes_count = len(read_jsonl(self.artifacts.material_notes))
         insights_count = len(read_jsonl(self.artifacts.insights))
-        review_notes_count = len(read_jsonl(self.artifacts.review_notes))
+        review_notes_text = self._read_text(self.artifacts.review_notes)
+        review_notes_has_content = bool(review_notes_text.strip())
 
         if not report_text and not scratchpad_text:
             issues.append("step produced neither report content nor scratchpad notes")
@@ -54,7 +55,7 @@ class ResearchGatekeeper:
                 issues.append("material_reading produced no material_notes.jsonl records")
             if step.key == "insight_generation" and insights_count == 0:
                 issues.append("insight_generation produced no insights.jsonl records")
-            if step.key == "insight_review" and (insights_count == 0 or review_notes_count == 0):
+            if step.key == "insight_review" and (insights_count == 0 or not review_notes_has_content):
                 issues.append("insight_review requires insights.jsonl and review_notes.md")
             if step.key == "visual_design" and not self.artifacts.report_visual_html.exists():
                 issues.append("visual_design did not produce report_visual.html")
@@ -72,7 +73,7 @@ class ResearchGatekeeper:
             stats["sources_count"] = sources_count
             stats["material_notes_count"] = material_notes_count
             stats["insights_count"] = insights_count
-            stats["review_notes_count"] = review_notes_count
+            stats["review_notes_chars"] = len(review_notes_text)
 
         return GateResult(
             passed=not issues,
@@ -113,7 +114,7 @@ class ResearchGatekeeper:
                     issues.append("visual HTML report was not generated")
                 else:
                     html_text = self._read_text(self.artifacts.report_visual_html)
-                    if not re.search(r'data-chart|data-table|<div class="chart-container"|<div class="table-container"', html_text):
+                    if not re.search(r'<div class="chart-container"|<div class="table-container"', html_text):
                         issues.append("visual HTML report does not contain chart or table markers")
 
         else:

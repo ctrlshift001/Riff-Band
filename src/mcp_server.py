@@ -74,7 +74,7 @@ class RiffBandMCPServer:
                         "output_format": {
                             "type": "string",
                             "enum": ["markdown", "latex", "html", "json"],
-                            "default": "markdown",
+                            "default": "latex",
                         },
                         "sources": {
                             "type": "array",
@@ -140,7 +140,7 @@ class RiffBandMCPServer:
                 topic=arguments.get("topic", ""),
                 mode=arguments.get("mode", "academic"),
                 depth=arguments.get("depth", "standard"),
-                output_format=arguments.get("output_format", "markdown"),
+                output_format=arguments.get("output_format", "latex"),
                 sources=list(arguments.get("sources") or []),
                 constraints=str(arguments.get("constraints", "") or ""),
                 trigger="mcp",
