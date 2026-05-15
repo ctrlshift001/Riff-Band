@@ -75,4 +75,72 @@ window.toggleTheme = function() {
   });
 })();
 
+/* Visual chart/table rendering */
+function readJsonPayload(container, selector) {
+  var script = container.querySelector(selector);
+  if (!script) return null;
+  try {
+    return JSON.parse(script.textContent || "{}");
+  } catch (err) {
+    return null;
+  }
+}
+
+function renderTable(container, data) {
+  if (!data || !Array.isArray(data.rows)) return;
+  var table = document.createElement("table");
+  table.className = "visual-data-table";
+
+  if (Array.isArray(data.headers) && data.headers.length) {
+    var thead = document.createElement("thead");
+    var headRow = document.createElement("tr");
+    data.headers.forEach(function(header) {
+      var th = document.createElement("th");
+      th.textContent = String(header);
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+  }
+
+  var tbody = document.createElement("tbody");
+  data.rows.forEach(function(row) {
+    var tr = document.createElement("tr");
+    (Array.isArray(row) ? row : [row]).forEach(function(value) {
+      var td = document.createElement("td");
+      td.textContent = String(value);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+
+  container.querySelectorAll("table").forEach(function(existing) {
+    existing.remove();
+  });
+  container.appendChild(table);
+}
+
+window.renderVisualArtifacts = function() {
+  document.querySelectorAll(".chart-container").forEach(function(container, index) {
+    var data = readJsonPayload(container, ".chart-data");
+    if (!data) return;
+    if (!container.id) container.id = "chart-auto-" + index;
+    var chartType = container.getAttribute("data-chart-type") || "bar";
+    if (typeof window.renderChart === "function") {
+      window.renderChart(container.id, chartType, data);
+    }
+  });
+
+  document.querySelectorAll(".table-container").forEach(function(container) {
+    renderTable(container, readJsonPayload(container, ".table-data"));
+  });
+};
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", window.renderVisualArtifacts);
+} else {
+  window.renderVisualArtifacts();
+}
+
 })();

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -441,6 +442,7 @@ class BatchLiteratureSearchTool(BaseAction):
                 "target_papers": {"type": "integer", "default": 30},
                 "per_query_limit": {"type": "integer", "default": 10},
                 "record_findings": {"type": "boolean", "default": False},
+                "max_concurrency": {"type": "integer", "default": 3},
                 "tool_order": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -466,6 +468,7 @@ class BatchLiteratureSearchTool(BaseAction):
         per_query_limit: int = 10,
         record_findings: bool = False,
         tool_order: list[str] | None = None,
+        max_concurrency: int = 3,
     ) -> Dict[str, Any]:
         cleaned_queries = []
         seen_queries: set[str] = set()
@@ -508,6 +511,7 @@ class BatchLiteratureSearchTool(BaseAction):
                 ),
             }
         limit = max(1, min(int(per_query_limit or 10), 30))
+        concurrency = max(1, min(int(max_concurrency or 3), 8))
         order = [str(item) for item in (tool_order or ["openalex_search", "semantic_scholar_search", "arxiv_search", "crossref_lookup", "dblp_lookup"])]
         tools = {
             "openalex_search": OpenAlexSearchTool(),
@@ -516,22 +520,23 @@ class BatchLiteratureSearchTool(BaseAction):
             "crossref_lookup": CrossrefLookupTool(),
             "dblp_lookup": DblpLookupTool(),
         }
+        query_semaphore = asyncio.Semaphore(concurrency)
+        backend_semaphores = {
+            name: asyncio.Semaphore(max(1, min(concurrency, 2)))
+            for name in order
+        }
+        cache: dict[tuple[str, str], dict[str, Any]] = {}
 
-        added = 0
-        findings_added = 0
-        duplicates = 0
-        attempts: list[dict[str, Any]] = []
-        failures: list[str] = []
+        async def _call_tool(tool_name: str, query: str) -> dict[str, Any]:
+            cache_key = (tool_name, query.lower())
+            if cache_key in cache:
+                return cache[cache_key]
 
-        for query in cleaned_queries:
-            if added >= target:
-                break
-            for tool_name in order:
-                if added >= target:
-                    break
-                tool = tools.get(tool_name)
-                if tool is None:
-                    continue
+            tool = tools.get(tool_name)
+            if tool is None:
+                return {"success": False, "message": f"unknown tool: {tool_name}"}
+
+            async with backend_semaphores.setdefault(tool_name, asyncio.Semaphore(max(1, min(concurrency, 2)))):
                 if tool_name == "openalex_search":
                     result = await tool(query=query, limit=limit)
                 elif tool_name == "semantic_scholar_search":
@@ -542,66 +547,91 @@ class BatchLiteratureSearchTool(BaseAction):
                     result = await tool(query=query, rows=min(limit, 10))
                 else:
                     result = await tool(query=query, limit=min(limit, 10))
+            cache[cache_key] = result
+            return result
 
-                records = _load_tool_records(result)
-                attempts.append(
-                    {
-                        "query": query,
-                        "tool": tool_name,
-                        "success": bool(result.get("success")),
-                        "record_count": len(records),
-                        "rate_limited": bool(result.get("rate_limited", False)),
-                    }
-                )
-                if not result.get("success"):
-                    failures.append(f"{tool_name}:{query}: {result.get('message') or result.get('error') or 'failed'}")
-                    continue
-
-                for row in records:
-                    candidate = _paper_record_from_tool(row, query, tool_name)
-                    if not candidate["title"]:
-                        continue
-                    candidate["candidate_query"] = query
-                    candidate["candidate_backend"] = tool_name
-                    candidate_added, _candidate_key = _append_jsonl_dedup(
-                        self.candidates_path,
-                        candidate,
-                        ["source_url", "doi", "title", "year"],
+        async def _search_one_query(query: str) -> dict[str, Any]:
+            query_attempts: list[dict[str, Any]] = []
+            query_failures: list[str] = []
+            async with query_semaphore:
+                for tool_name in order:
+                    result = await _call_tool(tool_name, query)
+                    records = _load_tool_records(result)
+                    query_attempts.append(
+                        {
+                            "query": query,
+                            "tool": tool_name,
+                            "success": bool(result.get("success")),
+                            "record_count": len(records),
+                            "rate_limited": bool(result.get("rate_limited", False)),
+                        }
                     )
-                    screened = _screen_candidate_record(candidate, topic=query, priority_terms=cleaned_queries)
-                    if screened["screening_decision"] != "include":
-                        if not candidate_added:
-                            duplicates += 1
+                    if not result.get("success"):
+                        query_failures.append(
+                            f"{tool_name}:{query}: {result.get('message') or result.get('error') or 'failed'}"
+                        )
                         continue
-                    record = screened
-                    was_added, _key = _append_jsonl_dedup(
-                        self.papers_path,
+                    if records:
+                        return {"query": query, "backend": tool_name, "records": records, "attempts": query_attempts, "failures": query_failures}
+            return {"query": query, "backend": "", "records": [], "attempts": query_attempts, "failures": query_failures}
+
+        added = 0
+        findings_added = 0
+        duplicates = 0
+        attempts: list[dict[str, Any]] = []
+        failures: list[str] = []
+
+        query_results = await asyncio.gather(*[_search_one_query(query) for query in cleaned_queries])
+        for query_result in query_results:
+            if added >= target:
+                break
+            query = str(query_result.get("query", ""))
+            attempts.extend(list(query_result.get("attempts", []) or []))
+            failures.extend(str(item) for item in list(query_result.get("failures", []) or []))
+            records = list(query_result.get("records", []) or [])
+            tool_name = str(query_result.get("backend", "") or "batch_literature_search")
+            for row in records:
+                if added >= target:
+                    break
+                candidate = _paper_record_from_tool(row, query, tool_name)
+                if not candidate["title"]:
+                    continue
+                candidate["candidate_query"] = query
+                candidate["candidate_backend"] = tool_name
+                candidate_added, _candidate_key = _append_jsonl_dedup(
+                    self.candidates_path,
+                    candidate,
+                    ["source_url", "doi", "title", "year"],
+                )
+                screened = _screen_candidate_record(candidate, topic=query, priority_terms=cleaned_queries)
+                if screened["screening_decision"] != "include":
+                    if not candidate_added:
+                        duplicates += 1
+                    continue
+                record = screened
+                was_added, _key = _append_jsonl_dedup(
+                    self.papers_path,
+                    record,
+                    ["source_url", "doi", "title", "year"],
+                )
+                if was_added:
+                    added += 1
+                    _append_jsonl_dedup(
+                        self.shortlist_path,
                         record,
                         ["source_url", "doi", "title", "year"],
                     )
-                    if was_added:
-                        added += 1
-                        _append_jsonl_dedup(
-                            self.shortlist_path,
-                            record,
-                            ["source_url", "doi", "title", "year"],
+                    if record_findings:
+                        finding_record = _finding_from_paper(record, query, tool_name)
+                        finding_added, _finding_key = _append_jsonl_dedup(
+                            self.findings_path,
+                            finding_record,
+                            ["source_url", "source_title", "finding"],
                         )
-                        if record_findings:
-                            finding_record = _finding_from_paper(record, query, tool_name)
-                            finding_added, _finding_key = _append_jsonl_dedup(
-                                self.findings_path,
-                                finding_record,
-                                ["source_url", "source_title", "finding"],
-                            )
-                            if finding_added:
-                                findings_added += 1
-                    else:
-                        duplicates += 1
-                    if added >= target:
-                        break
-
-                if records:
-                    break
+                        if finding_added:
+                            findings_added += 1
+                else:
+                    duplicates += 1
 
         existing_count = len(_read_jsonl(self.papers_path))
         return {

@@ -78,6 +78,25 @@ body {
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(8px);
 }
+
+.visual-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: var(--prose-sm);
+}
+
+.visual-data-table th,
+.visual-data-table td {
+  border: 1px solid var(--border);
+  padding: .55rem .7rem;
+  text-align: left;
+}
+
+.visual-data-table th {
+  background: var(--accent-muted);
+  color: var(--fg);
+}
 .navbar-inner {
   max-width: 1140px; margin: 0 auto; padding: 10px 24px;
   display: flex; align-items: center; gap: 16px;

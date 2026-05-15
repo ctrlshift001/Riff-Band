@@ -5,6 +5,7 @@ import shutil
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from research.artifacts import (
     ResearchArtifacts,
@@ -39,6 +40,27 @@ class TestResearchArtifacts(unittest.TestCase):
             self.assertTrue(artifacts.report_html.name.endswith("_report.html"))
             self.assertTrue(artifacts.paper_tex.parent.name == "output")
             self.assertTrue(artifacts.report_md.parent.name.startswith("202"))
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_artifacts_create_paths_are_unique_within_same_second(self):
+        td = self._make_tmp_dir()
+        try:
+            class FixedDateTime:
+                @classmethod
+                def now(cls):
+                    return cls()
+
+                def strftime(self, fmt: str) -> str:
+                    return "20260515_120000"
+
+            request = ResearchRequest(topic="Same Topic")
+            with patch("research.artifacts.datetime", FixedDateTime):
+                first = ResearchArtifacts.create(td, request)
+                second = ResearchArtifacts.create(td, request)
+
+            self.assertNotEqual(first.run_dir, second.run_dir)
+            self.assertNotEqual(first.paper_tex, second.paper_tex)
         finally:
             shutil.rmtree(td, ignore_errors=True)
 

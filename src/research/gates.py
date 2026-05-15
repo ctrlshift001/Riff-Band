@@ -127,8 +127,11 @@ class ResearchGatekeeper:
                     issues.append("visual HTML report was not generated")
                 else:
                     html_text = self._read_text(self.artifacts.report_visual_html)
-                    if not re.search(r'<div class="chart-container"|<div class="table-container"', html_text):
+                    has_visual_marker = re.search(r'class="[^"]*(chart-container|table-container)[^"]*"', html_text)
+                    if not has_visual_marker:
                         issues.append("visual HTML report does not contain chart or table markers")
+                    elif "renderVisualArtifacts" not in html_text or not re.search(r'class="[^"]*(chart-data|table-data)[^"]*"', html_text):
+                        issues.append("visual HTML report does not include chart/table rendering script")
 
         else:
             tex_text = self._read_text(self.artifacts.paper_tex)

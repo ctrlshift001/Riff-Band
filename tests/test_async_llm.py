@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from base.engine.async_llm import AsyncLLM, LLMConfig
@@ -37,6 +38,10 @@ class _FakeClient:
 
 
 class TestAsyncLLM(unittest.TestCase):
+    def test_legacy_root_base_implementation_is_removed(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        self.assertFalse((repo_root / "base" / "engine" / "async_llm.py").exists())
+
     def test_gemini_model_uses_google_genai_client(self):
         fake_genai = types.ModuleType("google.genai")
         fake_genai.Client = _FakeClient

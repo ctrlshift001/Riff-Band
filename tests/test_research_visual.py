@@ -156,3 +156,27 @@ def test_gatekeeper_visual_final_checks_html():
         gate = ResearchGatekeeper(arts, mode="visual")
         result = gate.check_final(min_findings=0, output_format="html", min_papers=0)
         assert "visual HTML report was not generated" in result.issues
+
+
+def test_gatekeeper_visual_final_requires_rendering_script():
+    from pathlib import Path
+    import tempfile
+    from research.artifacts import ResearchArtifacts
+    from research.gates import ResearchGatekeeper
+    from research.schema import ResearchRequest
+    from research.steps import required_report_sections
+    with tempfile.TemporaryDirectory() as tmp:
+        req = ResearchRequest(topic="test", mode="visual", output_format="html")
+        arts = ResearchArtifacts.create(Path(tmp), req)
+        sections = "\n\n".join(
+            f"## {section}\n\ncontent https://example.com/{idx}"
+            for idx, section in enumerate(required_report_sections("visual"), start=1)
+        )
+        arts.report_md.write_text(f"# Test\n\n{sections}\n", encoding="utf-8")
+        arts.report_visual_html.write_text(
+            '<html><body><div class="chart-container"></div></body></html>',
+            encoding="utf-8",
+        )
+        gate = ResearchGatekeeper(arts, mode="visual")
+        result = gate.check_final(min_findings=0, output_format="html", min_papers=0)
+        assert "visual HTML report does not include chart/table rendering script" in result.issues

@@ -7,6 +7,7 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from research.schema import ResearchArtifact, ResearchRequest
 
@@ -46,12 +47,13 @@ class ResearchArtifacts:
 
     @classmethod
     def create(cls, workspace_dir: Path, request: ResearchRequest, mode: str | None = None) -> "ResearchArtifacts":
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         slug = _slugify(request.topic)
-        run_dir = workspace_dir / "research" / f"{stamp}_{slug}"
+        run_key = f"{stamp}_{uuid4().hex[:8]}_{slug}"
+        run_dir = workspace_dir / "research" / run_key
         out_dir = workspace_dir / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
-        report_prefix = out_dir / f"{stamp}_{slug}"
+        report_prefix = out_dir / run_key
         artifacts = cls(
             run_dir=run_dir,
             report_md=run_dir / "research_report.md",
@@ -355,22 +357,40 @@ JS_PATH = Path(__file__).resolve().parent / "visual_report.js"
 def _preprocess_visual_markdown(markdown: str) -> str:
     """Convert custom chart/table annotations to HTML blocks before mistune."""
     lines: list[str] = []
-    for line in markdown.splitlines():
+    for index, line in enumerate(markdown.splitlines(), start=1):
         stripped = line.strip()
         chart_match = re.match(r"!\[chart\]\(data:(\w+)\|(.*)\)\s*", stripped)
         if chart_match:
             chart_type = chart_match.group(1)
-            chart_data = chart_match.group(2)
+            chart_data = _safe_visual_json(chart_match.group(2))
+            chart_id = f"chart-{index}"
             lines.append(
-                f'<div class="chart-container" data-chart-type="{chart_type}">{chart_data}</div>'
+                f'<div id="{chart_id}" class="chart-container" data-chart-type="{escape(chart_type, quote=True)}">'
+                f'<script type="application/json" class="chart-data">{chart_data}</script>'
+                "</div>"
             )
             continue
         table_match = re.match(r"!\[table\]\(data:(.*)\)\s*", stripped)
         if table_match:
-            lines.append(f'<div class="table-container" data-table-data=\'{table_match.group(1)}\'></div>')
+            table_data = _safe_visual_json(table_match.group(1))
+            lines.append(
+                '<div class="table-container">'
+                f'<script type="application/json" class="table-data">{table_data}</script>'
+                "</div>"
+            )
             continue
         lines.append(line)
     return "\n".join(lines)
+
+
+def _safe_visual_json(raw: str) -> str:
+    """Normalize chart/table JSON for safe embedding in inert script tags."""
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = {"raw": str(raw)}
+    text = json.dumps(payload, ensure_ascii=False)
+    return text.replace("</", "<\\/")
 
 
 def _postprocess_visual_html(html: str) -> str:

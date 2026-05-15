@@ -5,6 +5,7 @@ import json
 import shutil
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from project.tools import (
     BatchClaimDebateTool,
@@ -26,6 +27,7 @@ from project.tools import (
     ReviewResearchReportTool,
     SynthesizeFindingsTool,
 )
+from project.tools import research_phase_tools as phase_tools
 
 
 class TestResearchPhaseTools(unittest.TestCase):
@@ -62,6 +64,48 @@ class TestResearchPhaseTools(unittest.TestCase):
         self.assertEqual(fallback_payload["total_count"], 1)
         self.assertTrue(fallback_payload["fallback_used"])
         self.assertEqual(fallback_payload["papers"][0]["title"], "Evidence Paper")
+
+    def test_batch_literature_search_runs_queries_concurrently(self):
+        tracker = {"active": 0, "max_active": 0}
+
+        class FakeOpenAlexSearchTool:
+            async def __call__(self, query: str, limit: int = 10):
+                tracker["active"] += 1
+                tracker["max_active"] = max(tracker["max_active"], tracker["active"])
+                await asyncio.sleep(0.02)
+                tracker["active"] -= 1
+                return {
+                    "success": True,
+                    "output": json.dumps(
+                        [
+                            {
+                                "title": f"{query} paper",
+                                "year": "2024",
+                                "source_url": f"https://example.org/{query}",
+                                "abstract": f"{query} reconfigurable intelligent surface integrated sensing and communication beamforming.",
+                            }
+                        ]
+                    ),
+                }
+
+        with patch.object(phase_tools, "OpenAlexSearchTool", FakeOpenAlexSearchTool):
+            result = asyncio.run(
+                phase_tools.BatchLiteratureSearchTool(
+                    candidates_path=self.root / "candidates.jsonl",
+                    shortlist_path=self.root / "shortlist.jsonl",
+                    papers_path=self.root / "papers.jsonl",
+                    findings_path=self.root / "findings.jsonl",
+                )(
+                    queries=["alpha", "beta"],
+                    target_papers=2,
+                    per_query_limit=1,
+                    tool_order=["openalex_search"],
+                    max_concurrency=2,
+                )
+            )
+
+        self.assertTrue(result["success"])
+        self.assertGreaterEqual(tracker["max_active"], 2)
 
     def test_batch_paper_enrichment_writes_top_relevant_notes(self):
         papers = self.root / "papers.jsonl"
