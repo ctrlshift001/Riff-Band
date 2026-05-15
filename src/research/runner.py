@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Callable
 
 from config import AgentConfig
@@ -11,6 +12,7 @@ async def run_research(
     request: ResearchRequest,
     config: AgentConfig,
     progress_callback: Callable[[str], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> ResearchResult:
     """Run the fixed research-mode workflow.
 
@@ -22,5 +24,6 @@ async def run_research(
         request=request,
         config=config,
         progress_callback=progress_callback,
+        cancel_event=cancel_event,
     )
     return await pipeline.run()

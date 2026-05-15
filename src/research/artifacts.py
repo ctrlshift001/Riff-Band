@@ -96,7 +96,7 @@ class ResearchArtifacts:
                 ResearchArtifact(type="outline", path=str(self.outline), description="Structured report outline"),
                 ResearchArtifact(type="review", path=str(self.review), description="Quality review notes"),
             ]
-            if output_format == "html":
+            if output_format == "html" and self.report_visual_html.exists() and self.report_visual_html.stat().st_size > 0:
                 items.insert(0, ResearchArtifact(type="html", path=str(self.report_visual_html), description="Visual HTML research report"))
         else:
             items = [
@@ -449,6 +449,8 @@ def export_visual_html(
     highlighting, card sections, callout blocks, print support.
     """
     markdown = markdown_path.read_text(encoding="utf-8") if markdown_path.exists() else ""
+    if not markdown.strip():
+        raise ValueError("visual markdown report is missing or empty; skip HTML export")
 
     markdown = _preprocess_visual_markdown(markdown)
     body_html = mistune.html(markdown)

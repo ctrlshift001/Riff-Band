@@ -13,11 +13,14 @@ from research.steps import RESEARCH_STEPS
 
 
 class _FakeProject:
-    def __init__(self, main_prompt_builder=None, sub_prompt_builder=None):
+    def __init__(self, main_prompt_builder=None, sub_prompt_builder=None, on_stream=None):
         self.main_prompt_builder = main_prompt_builder
         self.sub_prompt_builder = sub_prompt_builder
+        self.on_stream = on_stream
 
-    async def stream(self):
+    async def stream(self, *args, **kwargs):
+        if self.on_stream is not None:
+            self.on_stream()
         if False:
             yield None
 
@@ -107,6 +110,54 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(metadata["require_verification_passed"])
             self.assertIn("material_digest", metadata)
             self.assertIn("material_ready", metadata)
+
+    async def test_visual_pipeline_stops_after_failed_information_search(self):
+        cfg = AgentConfig(
+            main_model="test-model",
+            sub_models=["test-model"],
+            sources_dir=Path("workspace/sources"),
+            workspace_dir=Path("workspace/test_visual_fail_fast"),
+        )
+        request = ResearchRequest(topic="visual fail fast", trigger="cli", mode="visual", output_format="html")
+        pipeline = pipeline_module.ResearchPipeline(request, cfg)
+
+        def fake_has_llm_config(self):
+            return True
+
+        def fake_build_single_agent_project(**kwargs):
+            step_key = kwargs.get("runtime_metadata", {}).get("research_step_key")
+
+            def write_step_one():
+                if step_key == "decompose_topic":
+                    pipeline.artifacts.scratchpad.write_text(
+                        "# Plan\n\n## 研究问题拆解\n\nseed plan\n",
+                        encoding="utf-8",
+                    )
+
+            return _FakeProject(on_stream=write_step_one)
+
+        def fake_build_agent_project(**kwargs):
+            return _FakeProject()
+
+        old_has_llm_config = pipeline_module.ResearchPipeline._has_llm_config
+        old_build_agent_project = pipeline_module.build_agent_project
+        old_build_single_agent_project = pipeline_module.build_single_agent_project
+        try:
+            pipeline_module.ResearchPipeline._has_llm_config = fake_has_llm_config
+            pipeline_module.build_agent_project = fake_build_agent_project
+            pipeline_module.build_single_agent_project = fake_build_single_agent_project
+
+            result = await pipeline.run()
+        finally:
+            pipeline_module.ResearchPipeline._has_llm_config = old_has_llm_config
+            pipeline_module.build_agent_project = old_build_agent_project
+            pipeline_module.build_single_agent_project = old_build_single_agent_project
+
+        self.assertEqual([step.step for step in result.steps], ["decompose_topic", "information_search"])
+        self.assertEqual(result.steps[-1].status, "partial")
+        self.assertFalse(pipeline.artifacts.report_visual_html.exists())
+        self.assertNotIn("material_reading", [step.step for step in result.steps])
+        self.assertTrue(any("stopped after critical step information_search" in item for item in result.open_issues))
 
     def test_material_readiness_blocks_downstream_steps_without_upstream_artifacts(self):
         cfg = AgentConfig(

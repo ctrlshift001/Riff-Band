@@ -23,6 +23,7 @@ class SubAgentProcessManager:
         self.project_root = Path(project_root or self._discover_project_root()).resolve()
         self.worker_script = self.project_root / "src" / "workers" / "subagent_worker.py"
         self._running: Dict[str, asyncio.Task] = {}
+        self._processes: Dict[str, subprocess.Popen[str]] = {}
 
     @staticmethod
     def _discover_project_root() -> Path:
@@ -82,17 +83,35 @@ class SubAgentProcessManager:
                 f"[SubAgentProcessManager] Start session={session_id} label={task_label} "
                 f"model={model} timeout={timeout}s"
             )
+            process: subprocess.Popen[str] | None = None
             try:
-                completed = subprocess.run(
+                process = subprocess.Popen(
                     command,
                     cwd=str(self.project_root),
                     env=env,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    timeout=timeout,
-                    check=False,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                self._processes[session_id] = process
+                stdout, stderr = process.communicate(timeout=timeout)
+                stdout = stdout or ""
+                stderr = stderr or ""
+                completed = subprocess.CompletedProcess(
+                    command,
+                    process.returncode,
+                    stdout,
+                    stderr,
                 )
             except subprocess.TimeoutExpired as exc:
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                else:
+                    stdout = exc.stdout or ""
+                    stderr = exc.stderr or ""
                 logger.info(
                     f"[SubAgentProcessManager] Timeout session={session_id} "
                     f"label={task_label} after {timeout}s"
@@ -113,11 +132,13 @@ class SubAgentProcessManager:
                     "worker_state": "timeout",
                     "worker_process": {
                         "exit_code": "timeout",
-                        "stdout": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
-                        "stderr": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+                        "stdout": (stdout or "")[-4000:] if isinstance(stdout, str) else "",
+                        "stderr": (stderr or "")[-4000:] if isinstance(stderr, str) else "",
                         "timeout_seconds": timeout,
                     },
                 }
+            finally:
+                self._processes.pop(session_id, None)
 
             if output_path.exists():
                 try:
@@ -156,8 +177,8 @@ class SubAgentProcessManager:
             payload["worker_process"].update(
                 {
                     "exit_code": completed.returncode,
-                    "stdout": completed.stdout[-4000:],
-                    "stderr": completed.stderr[-4000:],
+                    "stdout": (completed.stdout or "")[-4000:],
+                    "stderr": (completed.stderr or "")[-4000:],
                     "timeout_seconds": timeout,
                 }
             )
@@ -187,6 +208,28 @@ class SubAgentProcessManager:
     def is_running(self, session_id: str) -> bool:
         task = self._running.get(session_id)
         return bool(task and not task.done())
+
+    def cancel(self, session_id: str) -> bool:
+        cancelled = False
+        task = self._running.get(session_id)
+        if task is not None and not task.done():
+            task.cancel()
+            cancelled = True
+        process = self._processes.get(session_id)
+        if process is not None and process.poll() is None:
+            process.kill()
+            cancelled = True
+        return cancelled
+
+    def cancel_all(self) -> int:
+        count = 0
+        for session_id in list(self._running.keys()):
+            if self.cancel(session_id):
+                count += 1
+        for session_id in list(self._processes.keys()):
+            if self.cancel(session_id):
+                count += 1
+        return count
 
     def collect_result(self, session_id: str) -> Optional[Dict[str, Any]]:
         task = self._running.get(session_id)

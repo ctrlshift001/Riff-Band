@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 
 from agents.main_agent import MainOrchestratorAgent
 from orchestration_tools.delegate import DelegateTasksTool
+from orchestration_tools.worker_process import SubAgentProcessManager
 
 
 class TestParallelDelegation(unittest.TestCase):
@@ -53,6 +56,46 @@ class TestParallelDelegation(unittest.TestCase):
         )
         self.assertFalse(result["success"])
         self.assertIn("forbidden tool write_report_section", result["message"])
+
+    def test_worker_process_replaces_undecodable_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worker = root / "fake_worker.py"
+            worker.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "request_path, output_path = sys.argv[1], sys.argv[2]",
+                        "sys.stdout.buffer.write(b'prefix-\\xff-\\xfe-suffix')",
+                        "payload = {",
+                        "  'done': True,",
+                        "  'steps_taken': 1,",
+                        "  'cost': 0.0,",
+                        "  'finish_result': {'status': 'done', 'message': 'ok', 'completed': [], 'issues': [], 'result': 'ok'},",
+                        "}",
+                        "open(output_path, 'w', encoding='utf-8').write(json.dumps(payload))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            manager = SubAgentProcessManager(project_root=root)
+            manager.worker_script = worker
+
+            result = manager.run_task(
+                session_id="s1",
+                task_instruction="task",
+                model="m1",
+                context="",
+                original_question="q",
+                sources_dir=root,
+                output_dir=root,
+                max_subagent_steps=1,
+                timeout_seconds=5,
+            )
+
+            self.assertTrue(result["done"])
+            self.assertEqual(result["finish_result"]["status"], "done")
+            self.assertIn("prefix-", result["worker_process"]["stdout"])
 
 
 if __name__ == "__main__":

@@ -84,6 +84,7 @@ def test_artifacts_to_artifacts_visual_html():
     from research.schema import ResearchRequest
     req = ResearchRequest(topic="test", mode="visual", output_format="html")
     arts = ResearchArtifacts.create(Path("/tmp/workspace"), req)
+    arts.report_visual_html.write_text("<html></html>", encoding="utf-8")
     items = arts.to_artifacts("html", mode="visual")
     types = [i.type for i in items]
     assert "html" in types
@@ -92,6 +93,17 @@ def test_artifacts_to_artifacts_visual_html():
     assert "insights" in types
     assert "papers" not in types
     assert "claims" not in types
+
+
+def test_artifacts_to_artifacts_visual_omits_missing_html():
+    from pathlib import Path
+    from research.artifacts import ResearchArtifacts
+    from research.schema import ResearchRequest
+    req = ResearchRequest(topic="test", mode="visual", output_format="html")
+    arts = ResearchArtifacts.create(Path("/tmp/workspace"), req)
+    items = arts.to_artifacts("html", mode="visual")
+    types = [i.type for i in items]
+    assert "html" not in types
 
 
 def test_artifacts_to_artifacts_academic_latex():
@@ -125,6 +137,19 @@ def test_export_visual_html_generates_file():
         assert "table-container" in content
         assert "Section A" in content
         assert "echarts" in content
+
+
+def test_export_visual_html_requires_nonempty_markdown():
+    from pathlib import Path
+    import tempfile
+    import pytest
+    from research.artifacts import export_visual_html
+    with tempfile.TemporaryDirectory() as tmp:
+        md = Path(tmp) / "missing.md"
+        html = Path(tmp) / "report.html"
+        with pytest.raises(ValueError, match="markdown report is missing or empty"):
+            export_visual_html(md, html, "Test Title")
+        assert not html.exists()
 
 
 def test_gatekeeper_visual_step_checks():

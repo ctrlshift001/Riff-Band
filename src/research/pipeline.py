@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,7 @@ class ResearchPipeline:
         config: AgentConfig,
         options: ResearchPipelineOptions | None = None,
         progress_callback: Callable[[str], None] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ):
         self.request = request
         self.config = config
@@ -64,10 +66,12 @@ class ResearchPipeline:
             request.output_format = "html"
         self.options = options or ResearchPipelineOptions()
         self.progress_callback = progress_callback
+        self.cancel_event = cancel_event
         self.artifacts = ResearchArtifacts.create(config.workspace_dir.resolve(), request, mode=self.mode)
         self.skills = ResearchSkillRegistry(mode=self.mode)
         self.gates = ResearchGatekeeper(self.artifacts, mode=self.mode)
         self.step_results: list[ResearchStepResult] = []
+        self.pipeline_issues: list[str] = []
 
     def _resolve_steps(self) -> tuple[ResearchStep, ...]:
         return VISUAL_STEPS if self.mode == "visual" else RESEARCH_STEPS
@@ -84,16 +88,26 @@ class ResearchPipeline:
             self._write_offline_scaffold("LLM configuration is unavailable; generated research scaffold only.")
 
         for step in steps:
+            self._raise_if_cancelled()
             if can_execute:
                 result = await self._run_agent_step(step)
             else:
                 result = self._offline_step_result(step)
             self.step_results.append(result)
+            self._raise_if_cancelled()
             step_index = list(steps).index(step) + 1
             self._emit_progress(
                 f"Step {step_index}/{len(steps)} finished "
                 f"key={step.key} status={result.status} issues={len(result.issues)}"
             )
+            if can_execute and self._should_stop_after_step(step, result):
+                message = (
+                    f"stopped after critical step {step.key} because status={result.status}; "
+                    "downstream research steps were not executed to avoid cascading blocked results"
+                )
+                self.pipeline_issues.append(message)
+                self._emit_progress(message)
+                break
 
         self._derive_structured_artifacts()
         self._export_requested_format()
@@ -109,7 +123,7 @@ class ResearchPipeline:
         self.artifacts.write_manifest(self.request, step_records)
 
         status = "done" if final_gate.passed else "partial"
-        issues = list(final_gate.issues)
+        issues = [*self.pipeline_issues, *final_gate.issues]
         if not can_execute:
             issues.insert(0, "LLM configuration unavailable; no live agent execution was performed")
         self._emit_progress(
@@ -142,10 +156,35 @@ class ResearchPipeline:
                 "agent_execution": can_execute,
                 "gate_stats": final_gate.stats,
                 "min_papers": min_papers,
+                "pipeline_issues": self.pipeline_issues,
             },
         )
 
+    def _should_stop_after_step(self, step: ResearchStep, result: ResearchStepResult) -> bool:
+        if result.status == "done":
+            return False
+        if self.mode == "visual":
+            critical_steps = {
+                "information_search",
+                "material_reading",
+                "knowledge_synthesis",
+                "insight_generation",
+                "outline_build",
+                "section_draft",
+            }
+        else:
+            critical_steps = {
+                "literature_search",
+                "paper_enrichment",
+                "knowledge_synthesis",
+                "claim_generation",
+                "outline_build",
+                "section_draft",
+            }
+        return step.key in critical_steps
+
     async def _run_agent_step(self, step: ResearchStep) -> ResearchStepResult:
+        self._raise_if_cancelled()
         steps = self._resolve_steps()
         skill_text = self.skills.load_text(step.skill)
         readiness = self._assess_material_readiness(step)
@@ -217,8 +256,15 @@ class ResearchPipeline:
                     runtime_metadata=step_metadata,
                 )
 
-            async for message in project.stream():
-                self._log_step_message(step, message)
+            try:
+                async for message in project.stream(cancel_event=self.cancel_event):
+                    if type(message).__name__ == "TaskCancelled":
+                        self._cancel_project_workers(project)
+                        raise asyncio.CancelledError
+                    self._log_step_message(step, message)
+            except asyncio.CancelledError:
+                self._cancel_project_workers(project)
+                raise
         except Exception as exc:
             gate = self.gates.check_step(step)
             self._emit_progress(
@@ -253,6 +299,21 @@ class ResearchPipeline:
                 "material_readiness": readiness.digest,
             },
         )
+
+    def _raise_if_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise asyncio.CancelledError
+
+    def _cancel_project_workers(self, project: Any) -> None:
+        main_agent = getattr(project, "main_agent", None)
+        for tool in getattr(main_agent, "tools", []) or []:
+            process_manager = getattr(tool, "process_manager", None)
+            cancel_all = getattr(process_manager, "cancel_all", None)
+            if callable(cancel_all):
+                try:
+                    cancel_all()
+                except Exception as exc:
+                    self._emit_progress(f"Worker hard cancel failed: {exc}")
 
     def _emit_progress(self, message: str) -> None:
         text = f"[ResearchPipeline] {message}"
@@ -857,12 +918,21 @@ class ResearchPipeline:
                 self._emit_progress(
                     f"visual mode overrides output_format={self.request.output_format} to html"
                 )
-            export_visual_html(
-                self.artifacts.report_md,
-                self.artifacts.report_visual_html,
-                self.request.topic,
-                artifacts=self.artifacts,
-            )
+            if not self._read_artifact_text(self.artifacts.report_md).strip():
+                message = "visual HTML export skipped because canonical markdown report is missing or empty"
+                self.pipeline_issues.append(message)
+                self._emit_progress(message)
+                return
+            try:
+                export_visual_html(
+                    self.artifacts.report_md,
+                    self.artifacts.report_visual_html,
+                    self.request.topic,
+                    artifacts=self.artifacts,
+                )
+            except ValueError as exc:
+                self.pipeline_issues.append(str(exc))
+                self._emit_progress(f"visual HTML export skipped: {exc}")
         elif self.request.output_format == "latex":
             export_latex(
                 self.artifacts.report_md,
@@ -876,7 +946,9 @@ class ResearchPipeline:
 
     def _primary_report_path(self) -> str:
         if self.mode == "visual":
-            return str(self.artifacts.report_visual_html)
+            if self.artifacts.report_visual_html.exists() and self.artifacts.report_visual_html.stat().st_size > 0:
+                return str(self.artifacts.report_visual_html)
+            return str(self.artifacts.report_md)
         if self.request.output_format == "latex":
             return str(self.artifacts.paper_tex)
         if self.request.output_format == "html":

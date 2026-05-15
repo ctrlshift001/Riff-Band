@@ -4,8 +4,11 @@ import argparse
 import asyncio
 import json
 import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from pydantic import ValidationError
@@ -19,6 +22,41 @@ MCP_PROTOCOL_VERSION = "2024-11-05"
 ERROR_CODE_CANCELLED = -32000
 
 
+@dataclass
+class MCPResearchJob:
+    task_id: str
+    request: ResearchRequest
+    cancel_event: asyncio.Event
+    task: asyncio.Task | None = None
+    status: str = "running"
+    result: dict[str, Any] | None = None
+    error: str = ""
+    cancel_requested: bool = False
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    progress: list[str] = field(default_factory=list)
+
+    def touch(self) -> None:
+        self.updated_at = datetime.now(timezone.utc).isoformat()
+
+    def payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "task_id": self.task_id,
+            "status": self.status,
+            "topic": self.request.topic,
+            "mode": self.request.mode,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "cancel_requested": self.cancel_requested,
+            "progress": self.progress[-20:],
+        }
+        if self.result is not None:
+            payload["result"] = self.result
+        if self.error:
+            payload["error"] = self.error
+        return payload
+
+
 class RiffBandMCPServer:
     """Minimal stdio MCP server for Riff Band.
 
@@ -30,7 +68,9 @@ class RiffBandMCPServer:
         load_dotenv()
         self.config_path = Path(config_path)
         self.config = AgentConfig.load(self.config_path)
-        self._current_task: asyncio.Task | None = None
+        self._jobs: dict[str, MCPResearchJob] = {}
+        self._current_task_id: str | None = None
+        self._cancel_grace_seconds = 1.0
 
     @staticmethod
     def _success(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
@@ -46,6 +86,24 @@ class RiffBandMCPServer:
     @staticmethod
     def _text_content(text: str) -> list[dict[str, str]]:
         return [{"type": "text", "text": text}]
+
+    def _tool_result(
+        self,
+        request_id: Any,
+        payload: dict[str, Any],
+        *,
+        is_error: bool = False,
+    ) -> dict[str, Any]:
+        return self._success(
+            request_id,
+            {
+                "content": self._text_content(
+                    json.dumps(payload, ensure_ascii=False, indent=2)
+                ),
+                "structuredContent": payload,
+                "isError": is_error,
+            },
+        )
 
     def _emit_progress(self, message: str) -> None:
         """Emit a progress notification on stdout for MCP clients."""
@@ -104,11 +162,29 @@ class RiffBandMCPServer:
                 },
             },
             {
+                "name": "research_status",
+                "description": "Get status and result for a running or finished research task.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "Task id returned by the research tool.",
+                        },
+                    },
+                },
+            },
+            {
                 "name": "cancel_research",
                 "description": "Cancel the currently running research task.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "task_id": {
+                            "type": "string",
+                            "description": "Optional task id. Defaults to the latest running task.",
+                        },
+                    },
                 },
             },
         ]
@@ -154,7 +230,10 @@ class RiffBandMCPServer:
         arguments = params.get("arguments") or {}
 
         if name == "cancel_research":
-            return self._handle_cancel(request_id)
+            return self._handle_cancel(request_id, arguments)
+
+        if name == "research_status":
+            return self._handle_status(request_id, arguments)
 
         if name != "research":
             return self._error(request_id, -32602, f"Unknown tool: {name}")
@@ -184,35 +263,108 @@ class RiffBandMCPServer:
                 },
             )
 
-        try:
-            self._current_task = asyncio.current_task()
-            self._emit_progress(f"Research started: {request.topic!r} mode={request.mode}")
-            result = await run_research(
-                request, self.config, progress_callback=self._emit_progress
-            )
-        except asyncio.CancelledError:
-            self._emit_progress("Research cancelled by client")
-            return self._error(request_id, ERROR_CODE_CANCELLED, "Research cancelled")
-        finally:
-            self._current_task = None
+        job = self._start_research_job(request)
+        return self._tool_result(request_id, job.payload(), is_error=False)
 
-        payload = result.model_dump()
-        return self._success(
+    def _start_research_job(self, request: ResearchRequest) -> MCPResearchJob:
+        task_id = f"research_{uuid4().hex[:12]}"
+        job = MCPResearchJob(
+            task_id=task_id,
+            request=request,
+            cancel_event=asyncio.Event(),
+        )
+        self._jobs[task_id] = job
+        self._current_task_id = task_id
+        job.task = asyncio.create_task(self._run_research_job(job), name=task_id)
+        self._emit_job_progress(job, f"Research started: {request.topic!r} mode={request.mode}")
+        return job
+
+    async def _run_research_job(self, job: MCPResearchJob) -> None:
+        try:
+            result = await run_research(
+                job.request,
+                self.config,
+                progress_callback=lambda message: self._emit_job_progress(job, message),
+                cancel_event=job.cancel_event,
+            )
+            job.result = result.model_dump()
+            job.status = "cancelled" if job.cancel_requested else result.status
+        except asyncio.CancelledError:
+            job.status = "cancelled"
+            job.error = "Research cancelled"
+            self._emit_job_progress(job, "Research cancelled by client")
+        except Exception as exc:
+            job.status = "failed"
+            job.error = str(exc)
+            self._emit_job_progress(job, f"Research failed: {exc}")
+        finally:
+            job.touch()
+            if self._current_task_id == job.task_id:
+                self._current_task_id = None
+
+    def _emit_job_progress(self, job: MCPResearchJob, message: str) -> None:
+        job.progress.append(message)
+        job.touch()
+        self._emit_progress(message)
+
+    def _handle_status(self, request_id: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        task_id = str(arguments.get("task_id", "") or "").strip()
+        if not task_id:
+            task_id = self._current_task_id or self._latest_task_id()
+        job = self._jobs.get(task_id)
+        if job is None:
+            return self._tool_result(
+                request_id,
+                {"task_id": task_id, "status": "unknown", "error": "Unknown research task"},
+                is_error=True,
+            )
+        return self._tool_result(request_id, job.payload(), is_error=job.status in {"failed", "blocked"})
+
+    def _handle_cancel(self, request_id: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        task_id = str(arguments.get("task_id", "") or "").strip()
+        if not task_id:
+            task_id = self._current_task_id or self._latest_running_task_id()
+        job = self._jobs.get(task_id)
+        if job is None or job.status != "running":
+            return self._tool_result(
+                request_id,
+                {
+                    "task_id": task_id,
+                    "cancelled": False,
+                    "reason": "No running research",
+                },
+            )
+
+        job.cancel_requested = True
+        job.cancel_event.set()
+        job.touch()
+        asyncio.create_task(self._force_cancel_after_grace(job.task_id))
+        return self._tool_result(
             request_id,
             {
-                "content": self._text_content(
-                    json.dumps(payload, ensure_ascii=False, indent=2)
-                ),
-                "structuredContent": payload,
-                "isError": result.status == "blocked",
+                "task_id": job.task_id,
+                "cancelled": True,
+                "status": job.status,
             },
         )
 
-    def _handle_cancel(self, request_id: Any) -> dict[str, Any]:
-        if self._current_task is not None and not self._current_task.done():
-            self._current_task.cancel()
-            return self._success(request_id, {"cancelled": True})
-        return self._success(request_id, {"cancelled": False, "reason": "No running research"})
+    async def _force_cancel_after_grace(self, task_id: str) -> None:
+        await asyncio.sleep(self._cancel_grace_seconds)
+        job = self._jobs.get(task_id)
+        if job is None or job.status != "running" or job.task is None or job.task.done():
+            return
+        job.task.cancel()
+
+    def _latest_running_task_id(self) -> str | None:
+        for task_id, job in reversed(self._jobs.items()):
+            if job.status == "running":
+                return task_id
+        return None
+
+    def _latest_task_id(self) -> str | None:
+        if not self._jobs:
+            return None
+        return next(reversed(self._jobs))
 
     async def serve_stdio(self) -> int:
         for raw_line in sys.stdin:

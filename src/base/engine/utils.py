@@ -221,46 +221,77 @@ def parse_llm_action_response(resp: str) -> Dict[str, Any]:
             logger.warning("Received None or empty response from LLM")
             return {"action": "no_action", "params": {}, "_parse_error": "Empty LLM response"}
 
-        def _extract_block(marker: str) -> Optional[str]:
-            start = resp.find(marker)
+        def _strip_think_blocks(text: str) -> str:
+            return re.sub(r"<think\b[^>]*>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
+
+        parse_source = _strip_think_blocks(resp) or resp
+
+        def _extract_block(text: str, marker: str) -> Optional[str]:
+            start = text.find(marker)
             if start == -1:
                 return None
             start += len(marker)
-            end = resp.find("```", start)
-            return resp[start:end if end != -1 else None].strip()
+            end = text.find("```", start)
+            return text[start:end if end != -1 else None].strip()
 
-        def _extract_balanced(text: str, open_char: str, close_char: str) -> Optional[str]:
-            """Return the first balanced {...} or [...] block to avoid pre/post text."""
-            start = text.find(open_char)
-            if start == -1:
-                return None
+        def _extract_code_blocks(text: str) -> List[str]:
+            blocks: List[str] = []
+            for match in re.finditer(r"```(?:json|JSON)?\s*([\s\S]*?)```", text):
+                block = match.group(1).strip()
+                if block:
+                    blocks.append(block)
+            return blocks
+
+        def _extract_balanced_blocks(text: str, open_char: str, close_char: str) -> List[str]:
+            """Return all balanced {...} or [...] blocks, not just the first one."""
+            blocks: List[str] = []
+            start: Optional[int] = None
             depth = 0
             in_string = False
+            quote_char = ""
             escape = False
-            for idx in range(start, len(text)):
-                ch = text[idx]
+            for idx, ch in enumerate(text):
                 if escape:
                     escape = False
                     continue
                 if ch == "\\":
                     escape = True
                     continue
-                if ch == '"':
-                    in_string = not in_string
+                if ch in ("'", '"'):
+                    if in_string and ch == quote_char:
+                        in_string = False
+                        quote_char = ""
+                    elif not in_string:
+                        in_string = True
+                        quote_char = ch
                     continue
                 if in_string:
                     continue
                 if ch == open_char:
-                    depth += 1
-                elif ch == close_char:
-                    depth -= 1
                     if depth == 0:
-                        return text[start:idx + 1].strip()
-            return None
+                        start = idx
+                    depth += 1
+                elif ch == close_char and depth > 0:
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        blocks.append(text[start:idx + 1].strip())
+                        start = None
+            return blocks
 
         def _try_json_loads(text: str) -> (Optional[Any], Optional[str]):
             try:
                 return json.loads(text), None
+            except Exception as e:
+                return None, f"{type(e).__name__}: {e}"
+
+        def _try_yaml_loads(text: str) -> (Optional[Any], Optional[str]):
+            try:
+                import yaml
+
+                value = yaml.safe_load(text)
+                if isinstance(value, (dict, list)):
+                    return value, None
+                return None, f"YAML returned {type(value).__name__}, not dict/list"
             except Exception as e:
                 return None, f"{type(e).__name__}: {e}"
 
@@ -307,22 +338,29 @@ def parse_llm_action_response(resp: str) -> Dict[str, Any]:
 
         candidates: List[str] = []
 
-        block = _extract_block("```json")
-        if block:
-            candidates.append(block)
+        def _add_candidate(text: Optional[str]) -> None:
+            if text:
+                stripped_text = text.strip()
+                if stripped_text and stripped_text not in candidates:
+                    candidates.append(stripped_text)
 
-        if not candidates:
-            block = _extract_block("```")
-            if block:
-                candidates.append(block)
+        for source in (parse_source, resp):
+            block = _extract_block(source, "```json")
+            _add_candidate(block)
 
-        stripped = resp.strip()
-        if stripped:
-            candidates.append(stripped)
+        for source in (parse_source, resp):
+            for block in _extract_code_blocks(source):
+                _add_candidate(block)
 
-        for extra in (_extract_balanced(resp, "{", "}"), _extract_balanced(resp, "[", "]")):
-            if extra and extra not in candidates:
-                candidates.append(extra)
+        block = _extract_block(parse_source, "```")
+        _add_candidate(block)
+
+        _add_candidate(parse_source)
+        _add_candidate(resp)
+
+        for source in (parse_source, resp):
+            for extra in [*_extract_balanced_blocks(source, "{", "}"), *_extract_balanced_blocks(source, "[", "]")]:
+                _add_candidate(extra)
 
         parse_errors: List[str] = []
 
@@ -333,20 +371,34 @@ def parse_llm_action_response(resp: str) -> Dict[str, Any]:
                 if sanitized != cand:
                     action_data, err2 = _try_json_loads(sanitized)
                     if action_data is None:
-                        parse_errors.append(f"{err}; after sanitizing quotes -> {err2}")
-                        continue
-                    logger.warning("Recovered action JSON by escaping inner quotes inside strings.")
+                        yaml_data, yaml_err = _try_yaml_loads(cand)
+                        if yaml_data is None:
+                            parse_errors.append(f"{err}; after sanitizing quotes -> {err2}; yaml -> {yaml_err}")
+                            continue
+                        action_data = yaml_data
+                    else:
+                        logger.warning("Recovered action JSON by escaping inner quotes inside strings.")
                 else:
-                    parse_errors.append(err)
-                    continue
+                    action_data, yaml_err = _try_yaml_loads(cand)
+                    if action_data is None:
+                        parse_errors.append(f"{err}; yaml -> {yaml_err}")
+                        continue
+                    logger.warning("Recovered action JSON with YAML-compatible parsing.")
+            elif not isinstance(action_data, (dict, list)):
+                parse_errors.append(f"JSON returned {type(action_data).__name__}, not dict/list")
+                continue
 
             # Handle case where LLM returns a list instead of single action
             if isinstance(action_data, list):
-                if len(action_data) > 0:
-                    logger.warning("LLM returned a list of actions; taking the first entry")
-                    action_data = action_data[0]
-                else:
+                first_action = next((item for item in action_data if isinstance(item, dict) and "action" in item), None)
+                if first_action is not None:
+                    logger.warning("LLM returned a list of actions; taking the first action entry")
+                    action_data = first_action
+                elif not action_data:
                     parse_errors.append("Empty list returned by LLM")
+                    continue
+                else:
+                    parse_errors.append("List returned by LLM contains no action entry")
                     continue
 
             # Ensure action_data has required structure
