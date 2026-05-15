@@ -24,8 +24,6 @@ class WriteReportSectionTool(BaseAction):
     report_path: Path = Field(default=Path("report.md"), exclude=True)
     report_title: str = Field(default="Task Analysis Report", exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     @staticmethod
     def _build_default_report_header(title: str) -> str:

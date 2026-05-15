@@ -249,8 +249,6 @@ class ArxivSearchTool(BaseAction):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -383,8 +381,6 @@ class SemanticScholarSearchTool(BaseAction):
     max_retries: int = Field(default=2, exclude=True)
     retry_base_seconds: float = Field(default=1.0, exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str, limit: int = 20, year: str = "") -> Dict[str, Any]:
         q = str(query or "").strip()
@@ -523,8 +519,6 @@ class OpenAlexSearchTool(BaseAction):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -614,8 +608,6 @@ class WebFetchTool(BaseAction):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, url: str, max_chars: int = 12000, strip_html: bool = True) -> Dict[str, Any]:
         target = str(url or "").strip()
@@ -655,8 +647,6 @@ class CrossrefLookupTool(BaseAction):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str = "", doi: str = "", rows: int = 5) -> Dict[str, Any]:
         doi_text = str(doi or "").strip()
@@ -721,8 +711,6 @@ class DblpLookupTool(BaseAction):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str, limit: int = 5) -> Dict[str, Any]:
         q = str(query or "").strip()
@@ -773,8 +761,6 @@ class BibtexExportTool(BaseAction):
     papers_path: Path = Field(default=Path("papers.jsonl"), exclude=True)
     default_output_path: Path = Field(default=Path("references.bib"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -843,8 +829,6 @@ class LocalPdfExtractTool(BaseAction):
     )
     root_dir: Path = Field(default=Path("."), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, path: str, max_pages: int = 3, max_chars: int = 12000) -> Dict[str, Any]:
         raw = str(path or "").strip()
@@ -898,8 +882,6 @@ class NoveltyCheckTool(BaseAction):
     default_papers_path: Path = Field(default=Path("papers.jsonl"), exclude=True)
     default_findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -959,8 +941,6 @@ class CitationAuditTool(BaseAction):
     default_report_path: Path = Field(default=Path("report.md"), exclude=True)
     default_findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     def _resolve_path(self, raw: str, default: Path) -> Path:
         text = str(raw or "").strip()

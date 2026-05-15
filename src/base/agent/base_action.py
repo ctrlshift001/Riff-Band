@@ -1,9 +1,11 @@
 from abc import abstractmethod
 from typing import Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class BaseAction(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     name: str
     description: str
     parameters: Dict[str, Any] = None

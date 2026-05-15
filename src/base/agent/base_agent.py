@@ -1,12 +1,13 @@
 from abc import abstractmethod
 from typing import List, Optional, Any, Dict
-from pydantic import Field, BaseModel
+from pydantic import ConfigDict, Field, BaseModel
 from base.agent.base_action import BaseAction
 from base.engine.async_llm import AsyncLLM
 
 
 
 class BaseAgent(BaseAction, BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     
     # Core attributes
     name: str = Field(..., description="Unique name of the agent")
@@ -31,9 +32,6 @@ class BaseAgent(BaseAction, BaseModel):
     # Agent-As-An-Action
     parameters: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        arbitrary_types_allowed = True
-        
     @abstractmethod
     async def step(self):
         """Execute a single step in the agent's workflow.

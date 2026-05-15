@@ -37,8 +37,6 @@ class RecordFindingTool(BaseAction):
     )
     findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     def _load_existing_dedup_keys(self) -> Set[str]:
         if not self.findings_path.exists():
@@ -129,8 +127,6 @@ class ReadFindingsTool(BaseAction):
     )
     findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str = "", limit: int = 20) -> Dict[str, Any]:
         if not self.findings_path.exists():

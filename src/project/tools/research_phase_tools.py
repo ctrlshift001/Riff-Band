@@ -458,8 +458,6 @@ class BatchLiteratureSearchTool(BaseAction):
     papers_path: Path = Field(default=Path("papers.jsonl"), exclude=True)
     findings_path: Path = Field(default=Path("findings.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -675,8 +673,6 @@ class LiteratureScreenTool(BaseAction):
     shortlist_path: Path = Field(default=Path("shortlist.jsonl"), exclude=True)
     papers_path: Path = Field(default=Path("papers.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -752,8 +748,6 @@ class RecordPaperTool(BaseAction):
     )
     papers_path: Path = Field(default=Path("papers.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -808,8 +802,6 @@ class ReadPapersTool(BaseAction):
     )
     papers_path: Path = Field(default=Path("papers.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str = "", limit: int = 20) -> Dict[str, Any]:
         all_rows = _read_jsonl(self.papers_path)
@@ -854,8 +846,6 @@ class BatchPaperEnrichmentTool(BaseAction):
     paper_notes_path: Path = Field(default=Path("paper_notes.jsonl"), exclude=True)
     paper_cards_path: Path = Field(default=Path("paper_cards.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -989,8 +979,6 @@ class RecordPaperNoteTool(BaseAction):
     )
     paper_notes_path: Path = Field(default=Path("paper_notes.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -1047,8 +1035,6 @@ class ReadPaperNotesTool(BaseAction):
     )
     paper_notes_path: Path = Field(default=Path("paper_notes.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str = "", limit: int = 30) -> Dict[str, Any]:
         rows = _filter_rows(_read_jsonl(self.paper_notes_path), query, limit)
@@ -1070,8 +1056,6 @@ class ReadPaperCardsTool(BaseAction):
     )
     paper_cards_path: Path = Field(default=Path("paper_cards.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str = "", limit: int = 30) -> Dict[str, Any]:
         all_rows = _read_jsonl(self.paper_cards_path)
@@ -1115,8 +1099,6 @@ class BatchClaimGenerationTool(BaseAction):
     claims_path: Path = Field(default=Path("claims.jsonl"), exclude=True)
     report_path: Path = Field(default=Path("research_report.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, topic: str = "", target_claims: int = 6) -> Dict[str, Any]:
         notes = _read_jsonl(self.paper_notes_path)
@@ -1305,8 +1287,6 @@ class SynthesizeFindingsTool(BaseAction):
     )
     scratchpad_path: Path = Field(default=Path("scratchpad/shared.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -1383,8 +1363,6 @@ class BatchKnowledgeSynthesisTool(BaseAction):
     synthesis_digest_path: Path = Field(default=Path("synthesis_digest.json"), exclude=True)
     report_path: Path = Field(default=Path("research_report.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -1530,8 +1508,6 @@ class ReadSynthesisDigestTool(BaseAction):
     )
     synthesis_digest_path: Path = Field(default=Path("synthesis_digest.json"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, limit_chars: int = 16000) -> Dict[str, Any]:
         return {"success": True, "output": _json_dumps(_read_text_artifact(self.synthesis_digest_path, limit_chars))}
@@ -1559,8 +1535,6 @@ class RecordResearchClaimTool(BaseAction):
     )
     claims_path: Path = Field(default=Path("claims.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -1612,8 +1586,6 @@ class ReadResearchClaimsTool(BaseAction):
     )
     claims_path: Path = Field(default=Path("claims.jsonl"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str = "", limit: int = 20) -> Dict[str, Any]:
         all_rows = _read_jsonl(self.claims_path)
@@ -1653,8 +1625,6 @@ class ReadClaimDebateLogTool(BaseAction):
     )
     debate_log_path: Path = Field(default=Path("debate_log.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, limit_chars: int = 12000) -> Dict[str, Any]:
         return {"success": True, "output": _json_dumps(_read_text_artifact(self.debate_log_path, limit_chars))}
@@ -1677,8 +1647,6 @@ class BatchClaimDebateTool(BaseAction):
     debate_log_path: Path = Field(default=Path("debate_log.md"), exclude=True)
     report_path: Path = Field(default=Path("research_report.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, limit: int = 8) -> Dict[str, Any]:
         claims = _read_jsonl(self.claims_path)
@@ -1816,8 +1784,6 @@ class RecordClaimDebateTool(BaseAction):
     )
     debate_log_path: Path = Field(default=Path("debate_log.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -1870,8 +1836,6 @@ class BuildResearchOutlineTool(BaseAction):
     )
     outline_path: Path = Field(default=Path("outline.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,
@@ -1907,8 +1871,6 @@ class ReadResearchOutlineTool(BaseAction):
     )
     outline_path: Path = Field(default=Path("outline.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, limit_chars: int = 12000) -> Dict[str, Any]:
         return {"success": True, "output": _json_dumps(_read_text_artifact(self.outline_path, limit_chars))}
@@ -1928,8 +1890,6 @@ class ReadResearchReportTool(BaseAction):
     )
     report_path: Path = Field(default=Path("research_report.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, limit_chars: int = 20000) -> Dict[str, Any]:
         return {"success": True, "output": _json_dumps(_read_text_artifact(self.report_path, limit_chars))}
@@ -1955,8 +1915,6 @@ class ReviewResearchReportTool(BaseAction):
     claims_path: Path = Field(default=Path("claims.jsonl"), exclude=True)
     review_path: Path = Field(default=Path("review_report.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(
         self,

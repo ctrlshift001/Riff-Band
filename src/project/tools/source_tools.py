@@ -16,8 +16,6 @@ class ListSourcesTool(BaseAction):
     parameters: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}, "required": []})
     sources_dir: Path = Field(default=Path("."), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self) -> Dict[str, Any]:
         files = sorted(
@@ -43,8 +41,6 @@ class SearchSourcesTool(BaseAction):
     )
     sources_dir: Path = Field(default=Path("."), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         q = (query or "").strip()
@@ -108,8 +104,6 @@ class ReadSourceTool(BaseAction):
     )
     sources_dir: Path = Field(default=Path("."), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, path: str) -> Dict[str, Any]:
         target, error = safe_resolve(self.sources_dir, path)
@@ -138,8 +132,6 @@ class ReadSourcesTool(BaseAction):
     )
     sources_dir: Path = Field(default=Path("."), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, paths: List[str]) -> Dict[str, Any]:
         if not isinstance(paths, list) or not paths:

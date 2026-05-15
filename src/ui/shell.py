@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import sys
 from datetime import datetime
@@ -110,6 +111,19 @@ class AOrchestraShell:
         except NotImplementedError:
             signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+    def _clear_startup_screen(self) -> None:
+        """Clear previous terminal output before drawing the CLI shell."""
+        disabled = os.environ.get("RIFFBAND_NO_CLEAR", "").strip().lower()
+        if disabled in {"1", "true", "yes", "on"}:
+            return
+        if not getattr(self._console, "is_terminal", False):
+            return
+        try:
+            self._console.clear()
+        except Exception:
+            # Best-effort fallback only; startup should not fail because clearing failed.
+            os.system("cls" if os.name == "nt" else "clear")
+
     # ── entry point ───────────────────────────────────────────────
 
     async def run(self):
@@ -117,6 +131,7 @@ class AOrchestraShell:
         self._install_signal_handlers()
         self._setup_readline_completion()
         try:
+            self._clear_startup_screen()
             self._print_banner()
             await self._init_or_resume_session()
             await self._repl()
@@ -354,7 +369,7 @@ class AOrchestraShell:
             return
 
         def show_progress(message: str) -> None:
-            self._console.print(f"[dim][research] {message}[/]")
+            self._render_research_progress(message, request)
 
         result = await run_research(request, self._cfg, progress_callback=show_progress)
         table = Table.grid(padding=(0, 2))
@@ -374,6 +389,153 @@ class AOrchestraShell:
                 border_style=theme.BORDER if result.status != "done" else theme.SUCCESS,
             )
         )
+
+    def _render_research_progress(self, message: str, request: ResearchRequest) -> None:
+        """Render ResearchPipeline progress with the same compact CLI style."""
+        text = str(message or "").strip()
+        if not text:
+            return
+
+        start_match = re.search(r"\bsteps=(\d+)\b.*\bagent_execution=(True|False)\b", text)
+        if text.startswith("Research run start") and start_match:
+            steps, agent_execution = start_match.groups()
+            self._console.print(
+                Text.assemble(
+                    ("  [research] ", theme.ACCENT),
+                    (request.topic, "bold"),
+                    (" started", theme.MUTED),
+                )
+            )
+            self._console.print(
+                Text.assemble(
+                    ("      Mode: ", "dim"),
+                    (request.mode, theme.ACCENT),
+                    ("  Depth: ", "dim"),
+                    (request.depth, theme.ACCENT),
+                    ("  Format: ", "dim"),
+                    (request.output_format, theme.ACCENT),
+                    ("  Steps: ", "dim"),
+                    (steps, theme.ACCENT),
+                    ("  Agents: ", "dim"),
+                    ("on" if agent_execution == "True" else "off", theme.SUCCESS if agent_execution == "True" else theme.WARNING),
+                )
+            )
+            return
+
+        step_start = re.search(
+            r"Step\s+(\d+)/(\d+)\s+start\s+key=([^\s]+)\s+title='([^']*)'\s+executor=([^\s]+).*?expected_section='([^']*)'",
+            text,
+        )
+        if step_start:
+            index, total, key, title, executor, section = step_start.groups()
+            title = title or self._humanize_research_step(key)
+            self._console.print(
+                Text.assemble(
+                    ("  [step] ", theme.ACCENT),
+                    (f"{index}/{total} ", "dim"),
+                    (title, "bold"),
+                )
+            )
+            self._console.print(
+                Text.assemble(
+                    ("      Executor: ", "dim"),
+                    (executor, theme.ACCENT),
+                    ("  Section: ", "dim"),
+                    (section, theme.MUTED),
+                )
+            )
+            self._console.print(Text("      think...", style=theme.MUTED))
+            return
+
+        step_finished = re.search(
+            r"Step\s+(\d+)/(\d+)\s+finished\s+key=([^\s]+)\s+status=([^\s]+)\s+issues=(\d+)",
+            text,
+        )
+        if step_finished:
+            index, total, key, status, issues = step_finished.groups()
+            status_style = self._research_status_style(status)
+            self._console.print(
+                Text.assemble(
+                    (f"  [{status}] ", status_style),
+                    (f"{index}/{total} ", "dim"),
+                    (self._humanize_research_step(key), "bold"),
+                    (f"  issues={issues}", "dim" if issues == "0" else theme.WARNING),
+                )
+            )
+            return
+
+        step_blocked = re.search(
+            r"Step\s+(\d+)/(\d+)\s+blocked\s+key=([^\s]+)\s+error=(.*)",
+            text,
+        )
+        if step_blocked:
+            index, total, key, error = step_blocked.groups()
+            self._console.print(
+                Text.assemble(
+                    ("  [blocked] ", theme.ERROR),
+                    (f"{index}/{total} ", "dim"),
+                    (self._humanize_research_step(key), "bold"),
+                )
+            )
+            if error:
+                self._console.print(Text(f"      {error[:180]}", style=theme.ERROR))
+            return
+
+        gate_match = re.search(
+            r"Step\s+(\d+)/(\d+)\s+gate\s+key=([^\s]+)\s+passed=(True|False)\s+issues=(.*)",
+            text,
+        )
+        if gate_match:
+            index, total, key, passed, issues = gate_match.groups()
+            if passed == "True":
+                return
+            self._console.print(
+                Text.assemble(
+                    ("  [gate] ", theme.WARNING),
+                    (f"{index}/{total} ", "dim"),
+                    (self._humanize_research_step(key), "bold"),
+                    (" needs review", theme.WARNING),
+                )
+            )
+            if issues and issues != "[]":
+                self._console.print(Text(f"      {issues[:180]}", style=theme.MUTED))
+            return
+
+        complete_match = re.search(r"Research run complete status=([^\s]+).*issues=(\d+)", text)
+        if complete_match:
+            status, issues = complete_match.groups()
+            self._console.print(
+                Text.assemble(
+                    ("  [research] ", self._research_status_style(status)),
+                    ("complete ", "bold"),
+                    ("status=", "dim"),
+                    (status, self._research_status_style(status)),
+                    ("  issues=", "dim"),
+                    (issues, "dim" if issues == "0" else theme.WARNING),
+                )
+            )
+            return
+
+        if text.startswith("stopped after critical step"):
+            self._console.print(Text(f"  [warn] {text}", style=theme.WARNING))
+            return
+
+        self._console.print(Text(f"  [research] {text}", style=theme.MUTED))
+
+    @staticmethod
+    def _humanize_research_step(key: str) -> str:
+        return str(key or "research_step").replace("_", " ").title()
+
+    @staticmethod
+    def _research_status_style(status: str) -> str:
+        value = str(status or "").lower()
+        if value == "done":
+            return theme.SUCCESS
+        if value in {"partial", "warning"}:
+            return theme.WARNING
+        if value in {"blocked", "failed", "error"}:
+            return theme.ERROR
+        return theme.INFO
 
     def _set_mode(self, arg: str):
         mode = arg.strip().lower()

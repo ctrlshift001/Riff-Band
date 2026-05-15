@@ -66,8 +66,6 @@ class SubAgent(BaseAgent):
     prompt_builder: Any = Field(default=None) 
     task_label: str = Field(default="")
 
-    class Config:
-        arbitrary_types_allowed = True
 
 
     def reset(self, task_context: TaskContext) -> None:

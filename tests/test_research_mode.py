@@ -111,6 +111,69 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
             self.assertIn("material_digest", metadata)
             self.assertIn("material_ready", metadata)
 
+    async def test_quick_depth_reduces_research_execution_intensity(self):
+        from research import pipeline as pipeline_module
+
+        captured = {}
+
+        def fake_has_llm_config(self):
+            return True
+
+        def fake_build_agent_project(**kwargs):
+            captured.setdefault("multi", []).append(kwargs)
+            return _FakeProject()
+
+        def fake_build_single_agent_project(**kwargs):
+            captured.setdefault("single", []).append(kwargs)
+            return _FakeProject()
+
+        old_has_llm_config = pipeline_module.ResearchPipeline._has_llm_config
+        old_build_agent_project = pipeline_module.build_agent_project
+        old_build_single_agent_project = pipeline_module.build_single_agent_project
+        try:
+            pipeline_module.ResearchPipeline._has_llm_config = fake_has_llm_config
+            pipeline_module.build_agent_project = fake_build_agent_project
+            pipeline_module.build_single_agent_project = fake_build_single_agent_project
+
+            cfg = AgentConfig(
+                main_model="test-model",
+                sub_models=["test-model"],
+                sources_dir=Path("workspace/sources"),
+                workspace_dir=Path("workspace/test_quick_depth"),
+                max_attempts=6,
+                max_subagent_steps=12,
+                max_parallel_subtasks=6,
+                subagent_process_timeout_seconds=300,
+            )
+            result = await run_research(
+                ResearchRequest(topic="quick demo", trigger="cli", depth="quick"),
+                cfg,
+            )
+        finally:
+            pipeline_module.ResearchPipeline._has_llm_config = old_has_llm_config
+            pipeline_module.build_agent_project = old_build_agent_project
+            pipeline_module.build_single_agent_project = old_build_single_agent_project
+
+        first_single = captured["single"][0]
+        first_multi = captured["multi"][0]
+        multi_meta = first_multi["runtime_metadata"]
+
+        self.assertEqual(first_single["max_subagent_steps"], 4)
+        self.assertEqual(first_single["max_parallel_subtasks"], 3)
+        self.assertEqual(first_single["subagent_process_timeout_seconds"], 90)
+        self.assertEqual(first_multi["max_attempts"], 1)
+        self.assertEqual(first_multi["max_subagent_steps"], 4)
+        self.assertEqual(first_multi["max_parallel_subtasks"], 3)
+        self.assertEqual(first_multi["subagent_process_timeout_seconds"], 90)
+        self.assertEqual(first_multi["min_findings"], 3)
+        self.assertEqual(multi_meta["step_min_findings"], 3)
+        self.assertEqual(multi_meta["step_min_papers"], 5)
+        self.assertEqual(multi_meta["depth_runtime_limits"]["max_parallel_subtasks"], 3)
+        self.assertEqual(multi_meta["report_length_target"], "concise")
+        self.assertIn("quick mode", first_multi["brief_text"].lower())
+        self.assertEqual(result.metadata["min_findings"], 3)
+        self.assertEqual(result.metadata["min_papers"], 5)
+
     async def test_visual_pipeline_stops_after_failed_information_search(self):
         cfg = AgentConfig(
             main_model="test-model",

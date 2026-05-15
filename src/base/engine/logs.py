@@ -75,6 +75,8 @@ class SimpleLogger:
         }
         
         # Set up file logging
+        log_dir = os.environ.get("RIFFBAND_LOG_DIR", log_dir)
+
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
             
@@ -218,7 +220,7 @@ def logger_to_optimize(message: str, file_path: Optional[str] = None, console: b
 
     # File path default
     if not file_path:
-        log_dir = os.path.join("workspace", "logs")
+        log_dir = os.environ.get("RIFFBAND_LOG_DIR", os.path.join("workspace", "logs"))
         os.makedirs(log_dir, exist_ok=True)
         file_path = os.path.join(log_dir, "optimize.log")
     else:

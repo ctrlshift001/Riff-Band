@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,6 +29,24 @@ from research.steps import RESEARCH_STEPS, VISUAL_STEPS, ResearchStep, required_
 @dataclass(frozen=True)
 class ResearchPipelineOptions:
     execute_agents: bool = True
+
+
+@dataclass(frozen=True)
+class ResearchDepthRuntime:
+    max_attempts: int
+    max_subagent_steps: int
+    max_parallel_subtasks: int
+    subagent_process_timeout_seconds: int
+    report_length_target: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_attempts": self.max_attempts,
+            "max_subagent_steps": self.max_subagent_steps,
+            "max_parallel_subtasks": self.max_parallel_subtasks,
+            "subagent_process_timeout_seconds": self.subagent_process_timeout_seconds,
+            "report_length_target": self.report_length_target,
+        }
 
 
 @dataclass(frozen=True)
@@ -155,6 +173,7 @@ class ResearchPipeline:
                 "manifest_path": str(self.artifacts.manifest),
                 "agent_execution": can_execute,
                 "gate_stats": final_gate.stats,
+                "min_findings": min_findings,
                 "min_papers": min_papers,
                 "pipeline_issues": self.pipeline_issues,
             },
@@ -190,11 +209,12 @@ class ResearchPipeline:
         readiness = self._assess_material_readiness(step)
         brief = self._build_step_brief(step, skill_text, readiness)
         step_required_sections = [step.expected_section] if step.report_required else []
-        step_min_findings = int(step.min_findings or 0)
-        step_min_papers = int(step.min_papers or 0)
+        step_min_findings = self._step_min_findings(step)
+        step_min_papers = self._step_min_papers(step)
         step_metadata = self._step_runtime_metadata(step, readiness)
         step_index = int(step_metadata["research_step_index"])
         executor = "multi-agent" if step.parallel_hint else "single-agent"
+        runtime = self._depth_runtime()
         self._emit_progress(
             f"Step {step_index}/{len(steps)} start "
             f"key={step.key} title={step.title!r} executor={executor} "
@@ -205,7 +225,7 @@ class ResearchPipeline:
         )
 
         if readiness.blocking:
-            gate = self.gates.check_step(step)
+            gate = self.gates.check_step(self._depth_adjusted_step(step))
             return ResearchStepResult(
                 step=step.key,
                 status="blocked",
@@ -226,10 +246,10 @@ class ResearchPipeline:
                     brief_text=brief,
                     sources_dir=self.config.sources_dir,
                     output_dir=self.artifacts.run_dir,
-                    max_attempts=self.config.max_attempts,
-                    max_subagent_steps=self.config.max_subagent_steps,
-                    max_parallel_subtasks=self.config.max_parallel_subtasks,
-                    subagent_process_timeout_seconds=self.config.subagent_process_timeout_seconds,
+                    max_attempts=runtime.max_attempts,
+                    max_subagent_steps=runtime.max_subagent_steps,
+                    max_parallel_subtasks=runtime.max_parallel_subtasks,
+                    subagent_process_timeout_seconds=runtime.subagent_process_timeout_seconds,
                     profile_name="research_mode",
                     report_filename=self.artifacts.report_md.name,
                     required_sections=step_required_sections,
@@ -245,9 +265,9 @@ class ResearchPipeline:
                     brief_text=brief,
                     sources_dir=self.config.sources_dir,
                     output_dir=self.artifacts.run_dir,
-                    max_subagent_steps=self.config.max_subagent_steps,
-                    max_parallel_subtasks=self.config.max_parallel_subtasks,
-                    subagent_process_timeout_seconds=self.config.subagent_process_timeout_seconds,
+                    max_subagent_steps=runtime.max_subagent_steps,
+                    max_parallel_subtasks=runtime.max_parallel_subtasks,
+                    subagent_process_timeout_seconds=runtime.subagent_process_timeout_seconds,
                     profile_name="research_mode",
                     report_filename=self.artifacts.report_md.name,
                     required_sections=step_required_sections,
@@ -266,7 +286,7 @@ class ResearchPipeline:
                 self._cancel_project_workers(project)
                 raise
         except Exception as exc:
-            gate = self.gates.check_step(step)
+            gate = self.gates.check_step(self._depth_adjusted_step(step))
             self._emit_progress(
                 f"Step {step_index}/{len(self._resolve_steps())} blocked "
                 f"key={step.key} error={exc}"
@@ -283,7 +303,7 @@ class ResearchPipeline:
                 },
             )
 
-        gate = self.gates.check_step(step)
+        gate = self.gates.check_step(self._depth_adjusted_step(step))
         self._emit_progress(
             f"Step {step_index}/{len(self._resolve_steps())} gate "
             f"key={step.key} passed={gate.passed} issues={gate.issues}"
@@ -406,6 +426,7 @@ class ResearchPipeline:
 
     def _build_step_brief(self, step: ResearchStep, skill_text: str, readiness: MaterialReadiness) -> str:
         digest_text = json.dumps(readiness.digest, ensure_ascii=False, indent=2)
+        depth_policy = self._depth_policy_text()
         report_requirement = (
             f"- 必须写入或更新 markdown 报告章节: ## {step.expected_section}"
             if step.report_required
@@ -426,7 +447,7 @@ class ResearchPipeline:
 - outline_path: {self.artifacts.outline}
 - review_path: {self.artifacts.review}"""
             final_goal = f"""当前研究型任务的最终目标是一份视觉化 HTML 报告：report_visual.html；markdown 报告是中间稿。
-- 信息检索阶段要优先形成足够大的合格资料池；标准深度目标为至少 {self._min_papers()} 条 sources.jsonl 记录和至少 {self._min_findings()} 条结构化 findings。
+- 信息检索阶段要优先形成足够大的合格资料池；当前深度目标为至少 {self._min_papers()} 条 sources.jsonl 记录和至少 {self._min_findings()} 条结构化 findings。
 - 正文写作阶段必须写出完整的通用研究报告，并保留来源 URL。在 visual_design 阶段，需要在 markdown 中插入图表标记：
   ![chart](data:bar|{{\"title\":\"...\",\"categories\":[],\"values\":[]}})
   ![table](data:{{\"headers\":[],\"rows\":[]}})
@@ -445,7 +466,7 @@ class ResearchPipeline:
 - outline_path: {self.artifacts.outline}
 - review_path: {self.artifacts.review}"""
             final_goal = f"""当前研究型任务的最终目标是一篇可引用的 LaTeX 文献综述：paper.tex + references.bib；markdown 报告是中间稿。
-- 文献检索阶段要优先形成足够大的合格论文池；标准深度目标为至少 {self._min_papers()} 篇 papers.jsonl 记录和至少 {self._min_findings()} 条结构化 findings。
+- 文献检索阶段要优先形成足够大的合格论文池；当前深度目标为至少 {self._min_papers()} 篇 papers.jsonl 记录和至少 {self._min_findings()} 条结构化 findings。
 - 正文写作阶段必须写出“Abstract/Introduction/Related Work/Literature Synthesis/Research Gaps/Future Directions/Conclusion”等论文式内容，并保留来源 URL 或 citation key。
 - 优先使用专用 artifact 工具读取研究产物：read_findings、read_papers、read_paper_notes、read_research_claims、read_research_outline、read_claim_debate_log、read_research_report。
 - 不要用 read_sources 读取 findings.jsonl、papers.jsonl、paper_notes.jsonl、claims.jsonl、outline.md、debate_log.md 或 research_report.md。"""
@@ -460,6 +481,9 @@ class ResearchPipeline:
 
 [深度]
 {self.request.depth}
+
+[Depth Policy]
+{depth_policy}
 
 [输出格式]
 {self.request.output_format}
@@ -501,8 +525,10 @@ class ResearchPipeline:
         steps = self._resolve_steps()
         step_index = list(steps).index(step) + 1
         readiness = readiness or self._assess_material_readiness(step)
+        runtime = self._depth_runtime()
         meta: dict[str, Any] = {
             "mode": self.mode,
+            "research_depth": self.request.depth,
             "research_step_key": step.key,
             "research_step_title": step.title,
             "research_step_index": step_index,
@@ -510,12 +536,14 @@ class ResearchPipeline:
             "current_step_expected_section": step.expected_section,
             "all_required_sections": required_report_sections(self.mode),
             "current_step_requires_report_section": bool(step.report_required),
-            "step_min_findings": int(step.min_findings or 0),
-            "step_min_papers": int(step.min_papers or 0),
+            "step_min_findings": self._step_min_findings(step),
+            "step_min_papers": self._step_min_papers(step),
             "target_papers_for_literature_review": self._min_papers(),
             "research_completion_scope": "current_step_only",
             "require_flow_integrity": False,
             "require_verification_passed": False,
+            "depth_runtime_limits": runtime.to_dict(),
+            "report_length_target": runtime.report_length_target,
             "material_ready": readiness.ready,
             "material_blocking": readiness.blocking,
             "material_issues": list(readiness.issues),
@@ -556,16 +584,18 @@ class ResearchPipeline:
         if step.key == "literature_search":
             if findings_count:
                 warnings.append("literature_search starts with existing findings; avoid duplicating the same evidence.")
-            if papers_count < int(step.min_papers or 0):
+            min_papers = self._step_min_papers(step)
+            if papers_count < min_papers:
                 warnings.append(
-                    f"literature_search should collect at least {step.min_papers} qualified papers for a literature review; current papers={papers_count}."
+                    f"literature_search should collect at least {min_papers} qualified papers for a literature review; current papers={papers_count}."
                 )
         elif step.key == "information_search":
             if findings_count:
                 warnings.append("information_search starts with existing findings; avoid duplicating the same evidence.")
-            if sources_count < int(step.min_papers or 0):
+            min_sources = self._step_min_papers(step)
+            if sources_count < min_sources:
                 warnings.append(
-                    f"information_search should collect at least {step.min_papers} qualified sources; current sources={sources_count}."
+                    f"information_search should collect at least {min_sources} qualified sources; current sources={sources_count}."
                 )
         elif step.key == "paper_enrichment":
             if papers_count == 0:
@@ -983,14 +1013,68 @@ class ResearchPipeline:
             artifacts.append(ResearchArtifact(type="html", path=str(self.artifacts.report_visual_html), description="Visual HTML report"))
         return artifacts
 
+    def _depth_runtime(self) -> ResearchDepthRuntime:
+        if self.request.depth == "quick":
+            return ResearchDepthRuntime(
+                max_attempts=min(max(1, int(self.config.max_attempts or 1)), 1),
+                max_subagent_steps=min(max(1, int(self.config.max_subagent_steps or 1)), 4),
+                max_parallel_subtasks=min(max(1, int(self.config.max_parallel_subtasks or 1)), 3),
+                subagent_process_timeout_seconds=min(
+                    max(30, int(self.config.subagent_process_timeout_seconds or 30)),
+                    90,
+                ),
+                report_length_target="concise",
+            )
+        return ResearchDepthRuntime(
+            max_attempts=max(1, int(self.config.max_attempts or 1)),
+            max_subagent_steps=max(1, int(self.config.max_subagent_steps or 1)),
+            max_parallel_subtasks=max(1, int(self.config.max_parallel_subtasks or 1)),
+            subagent_process_timeout_seconds=max(30, int(self.config.subagent_process_timeout_seconds or 30)),
+            report_length_target="full" if self.request.depth == "deep" else "standard",
+        )
+
+    def _depth_policy_text(self) -> str:
+        if self.request.depth == "quick":
+            return (
+                "quick mode: optimize for a fast demo run. Keep each step concise, "
+                "prefer the strongest available evidence over exhaustive coverage, "
+                "avoid spawning unnecessary subtasks, and write a short report section "
+                "instead of a long-form report."
+            )
+        if self.request.depth == "deep":
+            return (
+                "deep mode: prioritize broader evidence coverage, richer synthesis, "
+                "and stricter completeness when runtime limits allow it."
+            )
+        return "standard mode: balance coverage, runtime, and report completeness."
+
+    def _step_min_findings(self, step: ResearchStep) -> int:
+        value = int(step.min_findings or 0)
+        if self.request.depth == "quick" and value > 0:
+            return min(value, 3)
+        return value
+
+    def _step_min_papers(self, step: ResearchStep) -> int:
+        value = int(step.min_papers or 0)
+        if self.request.depth == "quick" and value > 0:
+            return min(value, 5)
+        return value
+
+    def _depth_adjusted_step(self, step: ResearchStep) -> ResearchStep:
+        return replace(
+            step,
+            min_findings=self._step_min_findings(step),
+            min_papers=self._step_min_papers(step),
+        )
+
     def _min_findings(self) -> int:
-        return {"quick": 8, "standard": 12, "deep": 20}.get(self.request.depth, 12)
+        return {"quick": 3, "standard": 12, "deep": 20}.get(self.request.depth, 12)
 
     def _min_papers(self) -> int:
-        return {"quick": 10, "standard": 30, "deep": 50}.get(self.request.depth, 30)
+        return {"quick": 5, "standard": 30, "deep": 50}.get(self.request.depth, 30)
 
     def _min_sources(self) -> int:
-        return {"quick": 5, "standard": 15, "deep": 25}.get(self.request.depth, 15)
+        return {"quick": 4, "standard": 15, "deep": 25}.get(self.request.depth, 15)
 
     def _has_llm_config(self) -> bool:
         try:

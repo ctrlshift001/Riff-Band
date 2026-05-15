@@ -40,8 +40,6 @@ class VerifyArtifactsTool(BaseAction):
         exclude=True,
     )
 
-    class Config:
-        arbitrary_types_allowed = True
 
     @staticmethod
     def _read_findings(path: Path) -> List[Dict[str, Any]]:

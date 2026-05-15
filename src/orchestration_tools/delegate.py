@@ -205,8 +205,6 @@ class _DelegateBase(BaseAction):
     session_store: Dict[str, Dict[str, Any]] = Field(default_factory=dict, exclude=True)
     process_manager: SubAgentProcessManager = Field(default_factory=SubAgentProcessManager, exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     def _resolve_allowed_tools(self, requested_tools: Any) -> Optional[List[str]]:
         normalized_tools = _normalize_tools_input(requested_tools)

@@ -36,8 +36,6 @@ class WebSearchTool(BaseAction):
         }
     )
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, query: str, k: int = 5, gl: str = "us", hl: str = "en") -> Dict[str, Any]:
         del gl, hl

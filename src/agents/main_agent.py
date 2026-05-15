@@ -42,8 +42,6 @@ class MainAgent(BaseAgent):
         "news_signals",
     }
 
-    class Config:
-        arbitrary_types_allowed = True
 
     def reset(self, task_context: TaskContext) -> None:
         self.instruction = task_context.instruction

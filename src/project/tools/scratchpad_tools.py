@@ -26,8 +26,6 @@ class WriteScratchpadNoteTool(BaseAction):
     )
     scratchpad_path: Path = Field(default=Path("scratchpad/shared.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, note_title: str, content: str, replace: bool = False) -> Dict[str, Any]:
         self.scratchpad_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,8 +69,6 @@ class ReadScratchpadTool(BaseAction):
     )
     scratchpad_path: Path = Field(default=Path("scratchpad/shared.md"), exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
 
     async def __call__(self, note_title: str = "") -> Dict[str, Any]:
         if not self.scratchpad_path.exists():
