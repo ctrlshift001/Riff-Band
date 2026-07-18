@@ -1,6 +1,6 @@
-# AOrchestra-Agent 执行逻辑说明
+# AI4MS 兼容 Runtime 执行逻辑
 
-本文档说明当前项目在通用 Agent 场景下的主流程、MainAgent 三阶段控制、子 Agent 会话复用、并发委派和日志约定。
+本文档说明 AI4MS 当前复用的 RiffBand Runtime：MainAgent 三阶段控制、子 Agent 会话复用、并发委派和日志约定。它描述的是迁移期已经实现的执行层，不是 AI4MS 最终产品流程；ResearchProtocol、S0-S9、G0-G5、Revision/Approval 和平台服务以 `docs/` 中的新文档为准。
 
 ## 1. 启动与配置
 
@@ -26,7 +26,7 @@ MainAgent 当前按任务状态推进，核心阶段为：
 
 MainAgent 的动作主要包括：
 
-- `delegate_tasks`：一次性并发委派多个子任务。适合研究阶段拆分城市、行业、政策、市场等独立维度。
+- `delegate_tasks`：一次性并发委派多个子任务。适合拆分数据库检索、论文抽取、研究流派和对抗复核等相互独立的工作。
 - `delegate_task`：委派单个子任务。适合补充研究、单独写作、单独验证。
 - `continue_task`：继续已有子任务会话。用于子任务因为步数耗尽、超时或部分完成而未达成目标时，沿用原来的 `session_id`、记忆和上下文继续执行。
 - `wait_worker_sessions`：等待一个或多个正在运行的子任务完成，并收集它们的 finish_result、trace_digest、findings 等结果。

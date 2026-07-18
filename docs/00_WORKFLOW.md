@@ -1,184 +1,127 @@
-# Workflow
+# AI4MS 协作与提交规范
 
-## Goal
+## 1. 分支职责
 
-本仓库当前处在轻量级多 Agent 编排引擎产品化演进阶段，核心方向为 CLI 交互 + MCP 可插拔 + 科研模式。
+- `ai4s`：AI4MS 产品改造集成分支；
+- `dev`：RiffBand 现有能力的对照基线；
+- `feature/*`：独立功能开发；
+- `fix/*`：缺陷修复；
+- `docs/*`：文档和 Schema 整理；
+- `experiment/*`：不保证进入产品的验证代码。
 
-因此，本 workflow 的目标不是增加复杂流程，而是确保下面三件事同时成立：
+不要直接把未完成的大型重构长期堆在 `ai4s`。从 `ai4s` 创建短生命周期分支，通过小型 PR 回收。
 
-- 研究线、产品线和 demo 线边界清楚
-- 日常提交可读、可 review、可回滚
-- 尽量减少运行产物、缓存文件和误提交
+## 2. 推荐 PR 顺序
 
-## Branch Roles
+改造按以下边界拆分，避免把基础设施、产品功能和前端同时揉进一个提交：
 
-当前仓库建议按以下分支职责协作：
+1. 测试、开发依赖、锁文件和 CI；
+2. DomainProfile 与去领域硬编码；
+3. ResearchProtocol 与 legacy adapter；
+4. 多源检索并集、快照和 provenance；
+5. PaperCard v2；
+6. Artifact Manifest v2；
+7. Gate Registry；
+8. Topic Scout 结构对象；
+9. Revision 与 Approval；
+10. Stata Runner；
+11. FastAPI、PostgreSQL 和 Web。
 
-- `dev`
-  - 日常集成分支
-  - 默认开发工作优先基于这条线展开
-- `product`
-  - 面向未来通用型 Agent 系统的主力产品线
-  - 适合承接模式层、CLI、runtime、profile 化能力等持续演进工作
-- `demo/exploration`
-  - 演示与探索分支
-  - 允许保留阶段性实验、验证和非最终方案
-- `ref/upstream-main`
-  - 原仓库参考线
-  - 用于对照上游，不作为日常功能开发分支
+每个 PR 应对应验收矩阵中的一个或一组明确 ID。
 
-## Branching
+## 3. 目录边界
 
-- 不要长期直接在共享分支上堆叠未完成改动。
-- 每个相对独立的任务新开一个分支。
-- 分支名使用英文短语，并带上类型前缀。
+目标结构遵守以下职责：
 
-推荐格式：
+- `src/base`、`src/core`、`src/agents`：通用 Agent Runtime；
+- `src/orchestration_tools`：委派、权限、任务和并发；
+- `src/domains`：DomainProfile 与学科规则；
+- `src/protocols`：ResearchProtocol 和 legacy adapter；
+- `src/artifacts_v2`：manifest、hash 和 lineage；
+- `src/research`：阶段流水线与兼容入口；
+- `src/api`、`src/services`、`src/db`：平台服务层，建立后再启用；
+- `docs/refer/AI4MS-DevPack_v0.3`：只作为调研和规格参考，不由运行时写入。
 
-```text
-feature/<short-topic>
-fix/<short-topic>
-refactor/<short-topic>
-docs/<short-topic>
-test/<short-topic>
-chore/<short-topic>
-```
+新增代码应先匹配现有目录边界。只有职责已经稳定时才创建新顶层包。
 
-示例：
+## 4. Commit
 
-```text
-feature/cli-mode-switching
-refactor/benchmark-layout
-docs/rewrite-readme
-fix/terminalbench-path-resolution
-```
-
-## Scope Discipline
-
-这个仓库当前最重要的规则之一，是不要把不同层次的改动混在一个提交里。
-
-建议把改动按这几类分开：
-
-- `aorchestra/`
-  - 论文 / benchmark / 原始研究实现线（历史保留）
-- `src/`
-  - 新产品 / 核心引擎实现
-- `docs/`
-  - 定位、roadmap、设计与流程文档
-
-如果一个任务同时涉及以上内容，尽量拆成多个 commit，而不是一次全部揉在一起。
-
-## Commit
-
-- 一个 commit 尽量只做一类事情。
-- 提交前至少确认：
-  - 代码没有明显语法错误
-  - 关键入口没有被路径调整破坏
-  - 没有把缓存、日志、运行产物和临时文件一起带进去
-
-提交标题使用英文，简短明确。
-如有必要，commit body 可以用中文补充说明。
-
-推荐格式：
+一个 commit 只完成一种可解释的变化。标题使用英文：
 
 ```text
 type: short summary
 ```
 
-常用 `type`：
+常用类型：
 
-- `feat`: 新功能
-- `fix`: 缺陷修复
-- `refactor`: 重构
-- `docs`: 文档更新
-- `test`: 测试调整
-- `chore`: 杂项维护
+- `feat`：新能力；
+- `fix`：缺陷修复；
+- `refactor`：不改变外部行为的结构调整；
+- `docs`：文档或契约更新；
+- `test`：测试与 fixture；
+- `chore`：依赖、CI 和维护。
 
 示例：
 
 ```text
-feat: add dynamic multi-agent industry workflow
-refactor: move benchmark stack under aorchestra
-docs: rewrite repository positioning
-fix: resolve benchmark import paths
+refactor: add management science domain profile
+feat: union literature results across providers
+feat: add immutable research asset revisions
+test: add cross-domain protocol fixtures
+docs: establish AI4MS documentation baseline
 ```
 
-如果需要补充说明，建议在 body 中简单写清楚：
+## 5. PR 描述
 
-- 改了什么
-- 为什么改
-- 有没有已知限制
+PR 至少说明：
 
-## Pull Request
+- 背景和目标；
+- 修改的对象、接口和行为；
+- 对旧 CLI/MCP 的兼容影响；
+- 对 Gate、审批和数据治理的影响；
+- 执行的测试与验收 ID；
+- 已知限制和回滚方式。
 
-- PR 标题与 commit 标题保持同样风格，使用英文。
-- PR 描述建议用中文，写清楚背景和验证方式。
-- 提交 PR 之前，至少自己过一遍 diff。
+Schema 变更必须同时列出迁移策略和旧数据读取方式。
 
-PR 描述建议包含：
+## 6. Review 重点
 
-- 背景：为什么要改
-- 主要改动：改了哪些核心点
-- 验证：跑了哪些命令、检查了哪些路径、做了哪些手动验证
-- 风险：还有哪些未覆盖点
+- 是否把某个课题关键词重新写进通用层；
+- LLM 是否被用于本应确定性执行的权限、hash、统计或状态判断；
+- Agent 是否可能绕过人工审批或修改不可变产物；
+- 上游 revision 变化是否正确影响下游 Gate；
+- 检索结果是否保存来源、查询、日期、错误和快照；
+- 摘要证据是否被错误提升为全文结论；
+- HTML 报告是否与底层结构对象和证据一致；
+- Licensed/Sensitive/Restricted 数据是否进入不允许的模型或日志；
+- 新功能是否有失败、取消、重试和审计路径。
 
-## Review Focus
+## 7. 仓库卫生
 
-Review 时优先看这些问题：
+提交前检查：
 
-- 行为变化是否符合预期
-- 路径重构后是否有导入或默认路径失效
-- benchmark 线和产品线有没有被错误混合
-- 运行产物、日志、缓存、临时文档是否误提交
-- 文档是否和当前目录结构、命令入口一致
+```powershell
+git status --short
+git diff --check
+pytest -q -p no:cacheprovider
+```
 
-如果只是文案、注释、命名调整，可以简洁说明，不必过度展开。
+禁止提交：
 
-## Merge
+- `.env`、API key、许可证序列号和授权码；
+- `workspace/`、运行日志、缓存和临时输出；
+- 受限论文全文和无权再分发的数据；
+- Stata 安装包、许可证和未经批准的第三方 ado；
+- 从本机生成的绝对路径和用户标识。
 
-- 合并前确认目标分支是否正确。
-- 如果分支已经明显落后，先同步再处理冲突。
-- 不要把以下内容直接带着合并：
-  - 已知报错
-  - 调试代码
-  - 路径迁移中断状态
-  - 无关的 workspace / demo 产物
+## 8. 文档同步
 
-## Repo Hygiene
+以下变化不能只改代码：
 
-每次提交前都建议检查一遍仓库卫生。
+- 产品范围变化：更新 `00_PRODUCT.md`；
+- 阶段和排期变化：更新 `00_ROADMAP.md`；
+- API/Schema/SQL 变化：同步 DevPack 契约或其正式迁移版本；
+- 命令与配置变化：更新根 README 和 `00_GUIDELINE.md`；
+- 新风险或许可边界：更新风险登记和治理文档。
 
-重点关注：
-
-- `workspace/`
-- `demo/workspace/`
-- 所有 `__pycache__/`
-- `.env`
-- 临时文档，例如草稿版 `00_*.md` 是否已经需要保留
-
-原则：
-
-- 运行产物不进版本库
-- 密钥配置不进版本库
-- 缓存文件不进版本库
-- 临时草稿如果已经不再需要，应及时删除或改成正式命名
-
-## Current Practical Rule
-
-结合当前仓库阶段，最实用的一版规则如下：
-
-1. 论文 / benchmark 相关改动优先收敛到 `aorchestra/`。
-2. 新产品探索优先放在 `src/` 及相关入口，不要再往根目录散。
-3. 每次目录重构后，至少检查 import、配置路径和 README 是否同步更新。
-4. 不要提交 workspace、缓存、日志和无关 demo 产物。
-5. 新任务开新分支，提交标题用英文，PR 描述用中文。
-
-## Minimal Rule
-
-如果只记最小版本，就记下面 5 条：
-
-1. 新任务开新分支。
-2. 一个 commit 只做一类事情。
-3. `aorchestra/` 和 `src/` 的改动尽量不要混在同一个 commit。
-4. 合并前先看 diff，确认没有缓存、日志、运行产物和临时文件。
-5. PR 标题用英文，描述用中文写清背景、改动和验证。
+仓库中只保留一套当前产品定位。历史方案通过 Git 追溯，不再以平行文档长期保留。

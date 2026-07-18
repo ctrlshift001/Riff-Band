@@ -1,164 +1,143 @@
-# RiffBand
+# AI4MS / RiffBand
 
-一个为研究任务而生的轻量级 Agent 引擎，基于 [AOrchestra](https://arxiv.org/abs/2602.03786)。支持 TUI 交互与被 MCP 调用。
+面向管理科学研究的可审计、可审批、可复现 AI 科研工作平台。
 
-## 核心概念
+> 当前 `ai4s` 分支正在把 RiffBand 从通用研究编排原型改造为 AI4MS 产品。仓库中已经存在的 CLI、MCP、Agent Runtime、研究流水线和 HTML 可视化报告仍可使用；课题侦察、研究协议、人工审批、证据链和 Stata 工作台正在按路线图建设。
 
-系统将子 Agent 抽象为可配置的四元组 `(I, C, T, M)`：
+[English](README.md) | [文档索引](docs/README.md) | [产品定义](docs/00_PRODUCT.md) | [开发路线](docs/00_ROADMAP.md)
 
-| | | |
-|---|---|---|
-| **I** | Instruction | 子 Agent 的任务指令 |
-| **C** | Context | 背景信息与约束 |
-| **T** | Tools | 子 Agent 可用的工具集 |
-| **M** | Model | 分配给子 Agent 的 LLM |
+## 产品定位
 
-主编排 Agent 根据任务动态创建不同 `(I, C, T, M)` 组合的子 Agent，协调执行并合并结果。
+AI4MS 不是自动论文生成器。它更像一名严谨的科研项目经理和研究助理，帮助研究者从一个不成熟的想法出发，完成已有研究检索、选题判断、研究设计、数据与方法规划、分析管理、证据核查、可视化报告和复现交付。
 
-> 基于 [AOrchestra](https://arxiv.org/abs/2602.03786)。原论文代码详见 [fork 仓库](https://github.com/franknobox/AOrchestra-Agent)。
+核心工作流：
 
-## 模式体系
+```text
+研究想法
+  -> 课题简报 TopicBrief
+  -> 已有研究与选题建议报告 RelatedResearchReport
+  -> G0 人工确认选题
+  -> 研究协议 ResearchProtocol
+  -> 理论、数据、方法与分析
+  -> Claim-Evidence-Assumption
+  -> 写作、HTML 可视化报告与复现包
+```
 
-RiffBand 在两个层级运行：**普通模式**用于通用 Agent 任务，**研究模式**用于结构化多步研究流水线。
+## 首个产品竖切
 
-### 普通模式
+第一阶段优先交付“课题侦察与已有研究报告”：
 
-通用的 Agent 编排。CLI 中输入任意任务，MainAgent 负责规划、委派 SubAgent、合并结果。支持单 Agent（`/mode single`）和多 Agent（`/mode multi`）执行。
+- 将模糊研究想法拆成概念块、同义词、排除词和相邻学科术语；
+- 对多个学术来源执行地平线扫描、系统扩展和空白反向检索；
+- 形成研究流派、代表论文、共识、争议和未知；
+- 从理论、情境、数据、方法、时间和实践六类识别候选空白；
+- 连接数据可得性、方法适配、关键假设和停止条件；
+- 生成 2-3 个候选课题，由研究者或导师完成 G0 审批。
 
-### 研究模式
+“本次没有检索到”不会被写成“绝对不存在”。机器只能提出候选空白，不能自行确认原创性。
 
-基于同一套 Agent 运行时的**固定流水线编排器**。按预设步骤序列驱动 Agent，内置质量门禁、技能文件和结构化产物管理。
+## 人机协作
 
-两种子模式：
+研究过程由 S0-S9 十个阶段组织，并设置 G0-G5 六个人工门禁。AI 只能创建草稿、patch、问题和建议，不能批准自己的输出。
 
-| 模式 | 步骤数 | 输出 | 适用场景 |
-|------|--------|------|----------|
-| `academic`（默认） | 9 步 | `paper.tex` + `references.bib` | 文献综述 |
-| `visual` | 10 步 | `report_visual.html` | 通用研究 + 视觉报告 |
+所有可编辑研究资产都产生不可变 revision；审批绑定具体 revision 和 SHA-256。上游选题、设计、数据或分析计划发生语义变化时，受影响的下游审批自动失效，但历史决定不会被删除。
 
-流水线掌管步骤顺序、产物路径和质量门禁，Agent 是每步的**执行者**而非控制流来源。
+## 多学科泛用性
 
-## 快速开始
+AI4MS 首先服务管理科学，但不会把某一课题或某一种方法写死在流程里。统一 Research Protocol 与 DomainProfile 支持以下研究泳道：
+
+- 实证与因果研究；
+- 解析建模与优化；
+- 预测与计算研究；
+- 行为、实验与定性研究；
+- 系统综述与设计科学。
+
+领域差异通过 profile、方法卡、数据卡和 Gate Registry 注入，通用 Agent Runtime、资产版本、审批和证据模型保持稳定，为后续扩展到更多科研学科保留接口。
+
+## HTML 可视化报告
+
+现有 RiffBand 已支持独立 HTML 研究报告、响应式排版、目录、表格和 ECharts 图表。AI4MS 将保留并升级这项能力，使 HTML 报告直接展示：
+
+- 检索范围和来源覆盖；
+- 研究流派与时间脉络；
+- 共识、争议和反向证据；
+- 候选空白及其覆盖限制；
+- 数据与方法可行性；
+- 候选课题、人工决定和审计记录。
+
+## 工程基础
+
+RiffBand 基于论文 [AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration](https://arxiv.org/abs/2602.03786) 的动态子智能体思想开发。AOrchestra 将智能体抽象为四元组：
+
+```text
+<Instruction, Context, Tools, Model>
+```
+
+中央编排器根据任务动态构造四元组并委派给子智能体。RiffBand 在此基础上增加了固定研究流水线、工具权限、并发委派、CLI/MCP 接口、结构化产物和 HTML 报告。AI4MS 将继续复用这些底层能力，并重构研究领域层。
+
+## 当前可用入口
+
+安装：
 
 ```bash
-# 1. 安装 + 一次性配置
 pip install -e .
-cp .env.example .env          # 填入 LLM API key 和 Serper key
-cp aorchestra.yaml.example aorchestra.yaml
+```
 
-# 2. 任何目录一行启动
+创建本地配置：
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item aorchestra.yaml.example aorchestra.yaml
+```
+
+启动 CLI：
+
+```bash
 riffband
 ```
 
-## 配置
+当前兼容研究命令：
 
-| 文件 | 用途 |
-|------|------|
-| `.env` | API key（LLM、Serper、代理） |
-| `aorchestra.yaml` | Agent 策略（模式、模型、profile、限制） |
-
-模板见 `.env.example` 和 `aorchestra.yaml.example`。
-
-## Shell 命令
-
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示帮助 |
-| `/mode single\|multi\|auto` | 切换执行模式 |
-| `/model name` | 切换 LLM 模型 |
-| `/research topic` | 启动研究模式（默认 academic） |
-| `/research topic --mode=visual --depth=deep --format=html` | 可视化研究，自定义参数 |
-| `/setup` | 重新运行配置向导 |
-| `/status` | 查看 Agent 状态 |
-| `/session` | 查看当前会话 |
-| `/sessions` | 列出历史会话 |
-| `/resume id` | 恢复历史会话 |
-| `/clear` | 清屏 |
-| `/exit` | 退出 |
-
-Research 参数：
-- `--mode=academic|visual` — 流水线模式（默认 academic）
-- `--depth=quick|standard|deep` — 研究深度（默认 standard）
-- `--format=markdown|latex|html|json` — 输出格式（academic 默认 latex，visual 默认 html）
-
-## MCP 集成
-
-RiffBand 可通过 MCP 被外部 Agent（Claude Code、Codex、Gemini CLI 等）调用：
-
-```json
-{
-  "mcpServers": {
-    "riffband": {
-      "command": "riffband-mcp",
-      "args": ["--config", "aorchestra.yaml"],
-      "cwd": "/path/to/Riff-Band"
-    }
-  }
-}
+```text
+/research 企业采用生成式AI对创新绩效的影响 --depth=deep
+/research 低碳物流与供应链优化 --mode=visual --depth=deep --format=html
 ```
 
-MCP server 暴露单个 `research` tool：
+当前 CLI/MCP 参数是迁移期兼容接口，不代表 AI4MS 最终的产品信息架构。
 
-```json
-{
-  "name": "research",
-  "inputSchema": {
-    "properties": {
-      "topic": {},
-      "mode": { "enum": ["academic", "visual"], "default": "academic" },
-      "depth": { "enum": ["quick", "standard", "deep"], "default": "standard" },
-      "output_format": { "enum": ["markdown", "latex", "html", "json"], "default": "latex" },
-      "sources": {},
-      "constraints": {}
-    },
-    "required": ["topic"]
-  }
-}
-```
+## 文档
 
-## 项目结构
+- [文档索引与版本口径](docs/README.md)
+- [AI4MS 产品定义](docs/00_PRODUCT.md)
+- [AI4MS 开发路线](docs/00_ROADMAP.md)
+- [开发与运行指南](docs/00_GUIDELINE.md)
+- [协作与提交规范](docs/00_WORKFLOW.md)
+- [AI4MS DevPack v0.3](docs/refer/AI4MS-DevPack_v0.3/README.md)
+- [当前工程基线](docs/ai4ms/BASELINE.md)
 
-```
-src/
-  agents/               # MainAgent、SubAgent
-  core/                 # Runner、消息协议、会话持久化
-  environments/         # 任务执行环境
-  orchestration_tools/  # 委派、完成、任务计划
-  project/              # 项目组装、prompt、工具集（所有模式共用）
-  modes/                # 模式路由器 (single / multi / auto)
-  research/             # 研究模式流水线
-    schema.py           # 请求/结果模型、mode 枚举
-    steps.py            # RESEARCH_STEPS (9 步) + VISUAL_STEPS (10 步)
-    skills.py           # 技能注册表，按 mode 路由
-    skills/             # Markdown 技能文件（每步的 prompt）
-      *.md              # Academic 模式技能（9 个文件，完全不动）
-      visual/           # Visual 模式技能（10 个文件）
-    pipeline.py         # 流水线编排器
-    gates.py            # 质量门禁（单步 + 最终）
-    prompts.py          # MainAgent/SubAgent prompt 构建器
-    artifacts.py        # 文件布局、导出（LaTeX、HTML、可视化 HTML）
-    runner.py           # 入口边界（CLI + MCP 共用）
-  ui/                   # 交互式 shell + Rich 渲染器
-  mcp_server.py         # MCP stdio 服务器
-pyproject.toml          # 包元数据 + 入口命令
-```
+## 边界
 
-## 引用
+- 不承诺自动发现绝对原创课题；
+- 不伪造论文、DOI、数据、统计量或审稿记录；
+- 不绕过付费数据库、版权、数据许可和软件许可；
+- 不把相关性、显著性或模型复杂度自动等同于因果和贡献；
+- 不让 AI 越过选题、设计、数据、分析、结论和发布审批；
+- 不允许写作层隐藏失败诊断、负结果和反证。
+
+## 许可证与引用
+
+本项目保留原始 Apache 2.0 `LICENSE`。使用底层编排思想时，请引用原论文：
 
 ```bibtex
-@misc{ruan2026aorchestraautomatingsubagentcreation,
-      title={AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration},
-      author={Jianhao Ruan and Zhihao Xu and Yiran Peng and Fashen Ren and
-              Zhaoyang Yu and Xinbing Liang and Jinyu Xiang and Bang Liu and
-              Chenglin Wu and Yuyu Luo and Jiayi Zhang},
-      year={2026},
-      eprint={2602.03786},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2602.03786},
+@misc{ruan2026aorchestra,
+  title={AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration},
+  author={Jianhao Ruan and Zhihao Xu and Yiran Peng and Fashen Ren and
+          Zhaoyang Yu and Xinbing Liang and Jinyu Xiang and Yongru Chen and
+          Bang Liu and Chenglin Wu and Yuyu Luo and Jiayi Zhang},
+  year={2026},
+  eprint={2602.03786},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2602.03786}
 }
 ```
-
-## 许可协议
-
-本项目基于 [AOrchestra](https://github.com/franknobox/AOrchestra-Agent) 开发，原始代码使用 Apache 2.0 许可。原始 LICENSE 文件已保留。修改及新增代码版权归 franknobox 所有。

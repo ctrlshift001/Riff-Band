@@ -1,164 +1,105 @@
-# RiffBand
+# AI4MS / RiffBand
 
-A lightweight agent engine purpose-built for research tasks, based on [AOrchestra](https://arxiv.org/abs/2602.03786). CLI-native and callable via MCP.
+An auditable, human-approved, and reproducible AI research workspace for management science.
 
-## Core Concept
+> The `ai4s` branch is transforming RiffBand from a general research-orchestration prototype into the AI4MS product. The existing CLI, MCP server, agent runtime, research pipeline, and visual HTML report remain available while Topic Scout, Research Protocol, approval workflows, evidence lineage, and the Stata workbench are developed.
 
-The system models a sub-agent as a configurable four-tuple `(I, C, T, M)`:
+[中文](README.zh-CN.md) | [Documentation](docs/README.md) | [Product](docs/00_PRODUCT.md) | [Roadmap](docs/00_ROADMAP.md)
 
-| | | |
-|---|---|---|
-| **I** | Instruction | What the sub-agent should do |
-| **C** | Context | Background information and constraints |
-| **T** | Tools | The action space available to the sub-agent |
-| **M** | Model | The LLM assigned to this sub-agent |
+## Product Direction
 
-A main orchestrator agent dynamically creates sub-agents with different `(I, C, T, M)` combinations, coordinating their execution and merging results.
+AI4MS is not an automatic paper generator. It organizes the decisions, evidence, assumptions, revisions, approvals, and reproducibility records required to move from an early research idea to a defensible research output.
 
-> Based on [AOrchestra](https://arxiv.org/abs/2602.03786). Original paper code available in the [fork](https://github.com/franknobox/AOrchestra-Agent).
+```text
+Research idea
+  -> TopicBrief
+  -> RelatedResearchReport
+  -> human topic approval (G0)
+  -> ResearchProtocol
+  -> theory, data, methods, and analysis
+  -> Claim-Evidence-Assumption
+  -> writing, visual HTML report, and reproducibility package
+```
 
-## Modes
+The first product slice is Topic Scout. It performs horizon scanning, systematic expansion, and counter-search before proposing research streams, consensus and conflicts, six types of candidate gaps, feasibility evidence, and two or three candidate research questions. A model may propose a gap, but only a human may approve it.
 
-RiffBand operates at two levels: **Normal Mode** for general agent tasks, and **Research Mode** for structured multi-step research pipelines.
+## Human-in-the-Loop Research
 
-### Normal Mode
+The target workflow uses ten stages (S0-S9) and six human gates (G0-G5). Agents create drafts, patches, issues, and recommendations; they cannot approve their own work.
 
-General-purpose agent orchestration. Type any task in the CLI and the MainAgent plans, delegates to SubAgents, and synthesizes results. Supports single-agent (`/mode single`) and multi-agent (`/mode multi`) execution.
+Editable assets use immutable revisions. Approvals bind a specific revision and SHA-256 hash. Material upstream changes invalidate affected downstream approvals without deleting the historical decision record.
 
-### Research Mode
+## Cross-Disciplinary Design
 
-A fixed-pipeline orchestrator built on top of the same agent runtime. It drives the agents through a predefined sequence of research steps with built-in quality gates, skill files, and structured artifact management.
+AI4MS starts with management science while keeping the research kernel domain-neutral. Research Protocol, DomainProfile, method registries, and gate registries support empirical and causal research, analytical and optimization models, predictive and computational work, behavioral and qualitative studies, and evidence synthesis or design science.
 
-Two sub-modes:
+Domain-specific behavior belongs in profiles and registries rather than hard-coded topic terms, allowing the same infrastructure to expand into additional scientific disciplines.
 
-| Mode | Steps | Output | Use Case |
-|------|-------|--------|----------|
-| `academic` (default) | 9 steps | `paper.tex` + `references.bib` | Literature review |
-| `visual` | 10 steps | `report_visual.html` | General research with visual report |
+## Visual HTML Reports
 
-The pipeline owns step order, artifact paths, and quality gates. Agents are used as **executors** for each step rather than as the source of control flow.
+RiffBand already exports standalone visual HTML reports with responsive layout, navigation, tables, and ECharts visualizations. AI4MS retains this capability as a first-class product surface for research landscapes, evidence tables, candidate gaps, counter-search results, feasibility, decisions, and audit history.
 
-## Quick Start
+## Engineering Foundation
 
-```bash
-# 1. Install + configure once
+RiffBand builds on [AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration](https://arxiv.org/abs/2602.03786), which models a dynamically created agent as:
+
+```text
+<Instruction, Context, Tools, Model>
+```
+
+RiffBand extends that foundation with fixed research pipelines, tool scoping, parallel delegation, CLI/MCP entry points, structured artifacts, and HTML reporting. AI4MS reuses this runtime while replacing topic-specific research logic with protocol-driven domain services.
+
+## Current Compatibility Entry Points
+
+```powershell
 pip install -e .
-cp .env.example .env          # fill in LLM API key + Serper key
-cp aorchestra.yaml.example aorchestra.yaml
-
-# 2. Run anywhere
+Copy-Item .env.example .env
+Copy-Item aorchestra.yaml.example aorchestra.yaml
 riffband
 ```
 
-## Configuration
+Current research commands remain available during migration:
 
-| File | Purpose |
-|------|---------|
-| `.env` | API keys (LLM, Serper, proxy) |
-| `aorchestra.yaml` | Agent strategy (mode, model, profile, limits) |
-
-See `.env.example` and `aorchestra.yaml.example` for templates.
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show help |
-| `/mode <single\|multi\|auto>` | Switch execution mode |
-| `/model <name>` | Switch LLM model |
-| `/research <topic>` | Start research mode (default academic) |
-| `/research <topic> --mode=visual --depth=deep --format=html` | Visual research with custom flags |
-| `/setup` | Re-run onboarding wizard |
-| `/status` | Show agent state |
-| `/session` | Show session info |
-| `/sessions` | List saved sessions |
-| `/resume <id>` | Resume a previous session |
-| `/clear` | Clear screen |
-| `/exit` | Exit |
-
-Research flags:
-- `--mode=academic|visual` — Pipeline mode (default: academic)
-- `--depth=quick|standard|deep` — Research depth (default: standard)
-- `--format=markdown|latex|html|json` — Output format (academic defaults to latex, visual defaults to html)
-
-## MCP Integration
-
-RiffBand can be called by external agents (Claude Code, Codex, Gemini CLI) via MCP:
-
-```json
-{
-  "mcpServers": {
-    "riffband": {
-      "command": "riffband-mcp",
-      "args": ["--config", "aorchestra.yaml"],
-      "cwd": "/path/to/Riff-Band"
-    }
-  }
-}
+```text
+/research AI adoption and firm innovation --depth=deep
+/research low-carbon logistics optimization --mode=visual --depth=deep --format=html
 ```
 
-The MCP server exposes a single `research` tool:
+These CLI/MCP parameters are compatibility interfaces, not the final AI4MS information architecture.
 
-```json
-{
-  "name": "research",
-  "inputSchema": {
-    "properties": {
-      "topic": {},
-      "mode": { "enum": ["academic", "visual"], "default": "academic" },
-      "depth": { "enum": ["quick", "standard", "deep"], "default": "standard" },
-      "output_format": { "enum": ["markdown", "latex", "html", "json"], "default": "latex" },
-      "sources": {},
-      "constraints": {}
-    },
-    "required": ["topic"]
-  }
-}
-```
+## Documentation
 
-## Project Layout
+- [Documentation index and source-of-truth policy](docs/README.md)
+- [AI4MS product definition](docs/00_PRODUCT.md)
+- [AI4MS roadmap](docs/00_ROADMAP.md)
+- [Development guide](docs/00_GUIDELINE.md)
+- [Contribution workflow](docs/00_WORKFLOW.md)
+- [AI4MS DevPack v0.3](docs/refer/AI4MS-DevPack_v0.3/README.md)
+- [Engineering baseline](docs/ai4ms/BASELINE.md)
 
-```
-src/
-  agents/               # MainAgent, SubAgent
-  core/                 # Runner, message protocol, session persistence
-  environments/         # Task execution environment
-  orchestration_tools/  # Delegate, complete, task plan
-  project/              # Project assembly, prompts, tools (shared by all modes)
-  modes/                # Mode router (single / multi / auto)
-  research/             # Research mode pipeline
-    schema.py           # Request/result models, mode enum
-    steps.py            # RESEARCH_STEPS (9) + VISUAL_STEPS (10)
-    skills.py           # Skill registry with mode routing
-    skills/             # Markdown skill files (prompts per step)
-      *.md              # Academic mode skills (9 files, untouched)
-      visual/           # Visual mode skills (10 files)
-    pipeline.py         # Pipeline orchestrator
-    gates.py            # Quality gates (per-step + final)
-    prompts.py          # MainAgent/SubAgent prompt builders
-    artifacts.py        # File layout, export (LaTeX, HTML, Visual HTML)
-    runner.py           # Entry boundary (CLI + MCP)
-  ui/                   # Interactive CLI + Rich renderer
-  mcp_server.py         # MCP stdio server
-pyproject.toml          # Package metadata + entry points
-```
+## Product Boundaries
 
-## Citation
+- No claims of guaranteed originality.
+- No fabricated papers, identifiers, data, estimates, experiments, or reviews.
+- No bypassing paywalls, copyright, data licenses, privacy controls, or software licenses.
+- No automatic conversion of correlation, significance, or model complexity into causality or contribution.
+- No agent self-approval at topic, design, data, analysis, claim, or release gates.
+- No hiding failed diagnostics, negative results, or counter-evidence in generated writing.
+
+## License and Citation
+
+The original Apache 2.0 `LICENSE` is preserved. When using the orchestration foundation, cite:
 
 ```bibtex
-@misc{ruan2026aorchestraautomatingsubagentcreation,
-      title={AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration},
-      author={Jianhao Ruan and Zhihao Xu and Yiran Peng and Fashen Ren and
-              Zhaoyang Yu and Xinbing Liang and Jinyu Xiang and Bang Liu and
-              Chenglin Wu and Yuyu Luo and Jiayi Zhang},
-      year={2026},
-      eprint={2602.03786},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2602.03786},
+@misc{ruan2026aorchestra,
+  title={AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration},
+  author={Jianhao Ruan and Zhihao Xu and Yiran Peng and Fashen Ren and
+          Zhaoyang Yu and Xinbing Liang and Jinyu Xiang and Yongru Chen and
+          Bang Liu and Chenglin Wu and Yuyu Luo and Jiayi Zhang},
+  year={2026},
+  eprint={2602.03786},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2602.03786}
 }
 ```
-
-## License
-
-This project is based on [AOrchestra](https://github.com/franknobox/AOrchestra-Agent), originally licensed under Apache 2.0. The original LICENSE file is preserved. Modifications and new code are copyright 2026 franknobox.
