@@ -8,7 +8,7 @@
 
 目标：
 - 从 `papers.jsonl` 中选择前 N 篇高相关论文。
-- 优先选择摘要可用、RIS/ISAC 主题词匹配、年份较新、URL/DOI 完整的论文。
+- 优先选择摘要可用、用户/Profile 主题词匹配、年份较新、URL/DOI 完整的论文。
 - 为每篇论文生成一条 `paper_notes.jsonl`，字段包括 problem、method、scenario、main_findings、limitations、relevance_to_topic、evidence_source。
 
 推荐工具：

@@ -24,7 +24,7 @@
 执行要求：
 
 1. 第一动作优先调用 `batch_literature_search`。
-2. `queries` 使用 Step 1 的“检索式”和组合学术 query，例如“RIS-assisted ISAC vehicular networks”“reconfigurable intelligent surface integrated sensing communication beamforming”，不要只传入 “RIS” 或 “ISAC” 这种单词级关键词。
+2. `queries` 使用 Step 1 中经用户或 DomainProfile 确认的概念块、同义词、排除词和组合学术 query；不要在通用 Skill 中追加任何固定课题词。
 3. `record_findings` 必须保持为 `false`。Step 2 不写 `findings.jsonl`，跨论文 findings 由 Step 3 的知识综合阶段生成。
 4. 达到论文数量目标后停止继续检索，转为总结检索覆盖情况和缺口。
 5. 如果同一工具连续失败，不要原样重试；缩小 query、切换检索源，或记录 open issue。

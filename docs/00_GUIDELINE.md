@@ -2,7 +2,7 @@
 
 ## 1. 当前状态
 
-`ai4s` 分支处于 AI4MS 工作台改造期。当前代码可以运行 RiffBand CLI/MCP、既有研究流水线和 HTML 报告；当前六天目标是把这些基础能力接入一个覆盖介绍书九步流程的本地单用户 Web 产品。尚未合并的 Web/API、审批和 Runner 能力不能当作已经上线。
+`ai4s` 分支处于 AI4MS 工作台改造期。当前代码可以运行九步浏览器工作台、FastAPI、SQLite revision/审批状态机，以及 RiffBand CLI/MCP、既有研究流水线和 HTML 报告。分阶段 Agent、Runner、证据与导出服务尚未完成，不能当作已经上线。
 
 工程基线见 [ai4ms/BASELINE.md](ai4ms/BASELINE.md)。
 
@@ -13,7 +13,7 @@
 - 可用的 OpenAI-compatible 或 Gemini 模型接口
 - 可选的联网检索 key
 - SQLite 使用 Python 标准库，作为六天产品的本地事实存储
-- FastAPI/Uvicorn 是目标 Web 工作台依赖，合并实现时写入 `pyproject.toml`
+- FastAPI/Uvicorn 已写入 `pyproject.toml`，用于 Web 工作台与远程 API
 - Stata 采用用户自有许可的可选 Runner；未发现可执行文件时必须显示 blocked
 - PostgreSQL、Redis 和 MinIO 不属于六天单用户产品的依赖
 
@@ -33,6 +33,14 @@ Copy-Item aorchestra.yaml.example aorchestra.yaml
 密钥只能写入本地 `.env` 或受管 secret manager，不得提交到 Git、文档、日志、测试 fixture 或 prompt 示例。
 
 ## 3. 当前兼容入口
+
+启动九步 Web 工作台：
+
+```powershell
+ai4ms-web
+```
+
+打开 `http://localhost:8000/`；OpenAPI 位于 `/docs`，健康检查位于 `/healthz`。
 
 启动 CLI：
 
@@ -55,47 +63,47 @@ riffband-mcp --config aorchestra.yaml
 
 当前命令和参数在迁移期保持兼容。新的产品对象和 API 必须通过 legacy adapter 接入，不能直接破坏现有 `/research` 和 MCP 调用。
 
-目标产品入口是九步 Web 工作台。首屏直接进入项目，不建设营销页面；CLI/MCP 与 Web 必须调用同一 service 层，不能各自维护一套研究逻辑。
+目标产品入口是九步 Web 工作台。首屏直接进入项目，不建设营销页面；新的阶段能力必须接入 `ProjectService` 和 revision 状态机。CLI/MCP 的研究能力将在后续 adapter 中复用该项目上下文，不能长期维护平行状态。
 
 ## 4. AI4MS 实现原则
 
-### Protocol-first
+### 研究协议优先
 
 研究步骤读取版本化 ResearchProtocol，不从历史聊天中猜测关键研究选择。未知字段保留为 `needs_input`，不得自动补全为用户决定。
 
-### Evidence-first
+### 证据优先
 
 重要陈述必须绑定 paper、data、run、artifact 或人工审查证据。向量检索和 LLM 输出只能产生候选，不能成为事实来源。
 
-### Human approval
+### 人工审批
 
 Agent 只能创建草稿、revision patch 和 issue。G0-G5 由独立 Approval Service 执行，批准绑定具体 revision 与 hash。
 
-### Immutable revisions
+### 不可变 revision
 
 研究资产通过新 revision 修改。论文元数据快照、原始数据、原始日志和运行数值不可直接编辑，只能更正来源、添加 annotation 或创建新 Run。
 
-### Deterministic controls
+### 确定性控制
 
 DOI、权限、hash、schema、状态机、统计计算、许可证和代码策略使用确定性程序。LLM 只做需要语义判断的候选生成与解释。
 
-### Reproducibility
+### 可复现性
 
 Run 必须记录 protocol version、代码 commit、环境、参数、seed、输入输出 hash 和 lineage。固定输入、代码与环境的重放结果必须在约定容差内一致。
 
-### Cross-disciplinary profiles
+### 多学科领域画像
 
 课题词、查询扩展、抽取字段、方法假设和 Gate 必须来自 DomainProfile 或 Registry。禁止在通用 pipeline 中加入某个具体课题的关键词加分和固定聚类。
 
-### Visual report as a view
+### 将可视化报告作为产品视图
 
 HTML 报告只能渲染结构化、版本化对象。图表和表格不得重新计算或覆盖底层数值，关键元素必须能回到 evidence、artifact、revision 和 approval。
 
-### Nine-step completeness
+### 九步完整性
 
 步骤 1-9 共享同一个 `ProjectState`。每一步都必须实现读取当前资产、生成 AI 草稿、人工编辑、批准/退回、保存状态和进入下一步；不能用九张互不相连的静态页面冒充工作台。
 
-### Local-first product
+### 本地优先产品
 
 六天版本使用 FastAPI、SQLite 和本地 artifact 目录交付完整单用户产品。服务接口必须保留迁移到 PostgreSQL、对象存储和队列的边界，但不得为未来基础设施推迟当前九步闭环。
 

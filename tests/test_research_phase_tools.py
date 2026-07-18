@@ -82,7 +82,7 @@ class TestResearchPhaseTools(unittest.TestCase):
                                 "title": f"{query} paper",
                                 "year": "2024",
                                 "source_url": f"https://example.org/{query}",
-                                "abstract": f"{query} reconfigurable intelligent surface integrated sensing and communication beamforming.",
+                                "abstract": f"{query} studies technology adoption and firm innovation with panel data.",
                             }
                         ]
                     ),
@@ -107,6 +107,66 @@ class TestResearchPhaseTools(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertGreaterEqual(tracker["max_active"], 2)
 
+    def test_batch_literature_search_unions_requested_backends(self):
+        class FakeOpenAlexSearchTool:
+            async def __call__(self, query: str, limit: int = 10):
+                return {
+                    "success": True,
+                    "output": json.dumps(
+                        [
+                            {
+                                "title": "OpenAlex AI Adoption Study",
+                                "year": "2024",
+                                "source_url": "https://example.org/openalex-study",
+                                "abstract": f"{query} is studied using firm panel data and innovation outcomes.",
+                            }
+                        ]
+                    ),
+                }
+
+        class FakeCrossrefLookupTool:
+            async def __call__(self, query: str, rows: int = 10):
+                return {
+                    "success": True,
+                    "output": json.dumps(
+                        [
+                            {
+                                "title": "Crossref AI Adoption Study",
+                                "year": "2023",
+                                "source_url": "https://example.org/crossref-study",
+                                "abstract": f"{query} is examined through organizational capability and innovation.",
+                            }
+                        ]
+                    ),
+                }
+
+        candidates = self.root / "candidates.jsonl"
+        papers = self.root / "papers.jsonl"
+        with (
+            patch.object(phase_tools, "OpenAlexSearchTool", FakeOpenAlexSearchTool),
+            patch.object(phase_tools, "CrossrefLookupTool", FakeCrossrefLookupTool),
+        ):
+            result = asyncio.run(
+                phase_tools.BatchLiteratureSearchTool(
+                    candidates_path=candidates,
+                    shortlist_path=self.root / "shortlist.jsonl",
+                    papers_path=papers,
+                    findings_path=self.root / "findings.jsonl",
+                )(
+                    queries=["AI adoption"],
+                    target_papers=2,
+                    per_query_limit=1,
+                    tool_order=["openalex_search", "crossref_lookup"],
+                )
+            )
+
+        self.assertTrue(result["success"])
+        payload = json.loads(result["output"])
+        self.assertEqual({item["tool"] for item in payload["attempts"]}, {"openalex_search", "crossref_lookup"})
+        candidate_rows = [json.loads(line) for line in candidates.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual({row["candidate_backend"] for row in candidate_rows}, {"openalex_search", "crossref_lookup"})
+        self.assertEqual(len(papers.read_text(encoding="utf-8").splitlines()), 2)
+
     def test_batch_paper_enrichment_writes_top_relevant_notes(self):
         papers = self.root / "papers.jsonl"
         notes = self.root / "paper_notes.jsonl"
@@ -116,20 +176,20 @@ class TestResearchPhaseTools(unittest.TestCase):
                 [
                     json.dumps(
                         {
-                            "title": "RIS Assisted Integrated Sensing and Communication",
+                            "title": "AI Adoption and Firm Innovation",
                             "year": "2024",
-                            "source_url": "https://example.org/ris-isac",
-                            "abstract": "This paper proposes a beamforming optimization framework for reconfigurable intelligent surface assisted integrated sensing and communication systems. The method studies sensing and communication tradeoffs.",
-                            "relevance": "query=RIS ISAC",
+                            "source_url": "https://example.org/ai-adoption",
+                            "abstract": "This paper estimates how artificial intelligence adoption affects firm innovation using panel data. The method studies organizational capability as a mediating mechanism.",
+                            "relevance": "query=AI adoption firm innovation",
                         }
                     ),
                     json.dumps(
                         {
-                            "title": "Generic Wireless Paper",
+                            "title": "Unrelated Agriculture Paper",
                             "year": "2018",
-                            "source_url": "https://example.org/wireless",
-                            "abstract": "This paper studies a generic wireless communication system.",
-                            "relevance": "query=wireless",
+                            "source_url": "https://example.org/agriculture",
+                            "abstract": "This paper studies soil moisture in agriculture.",
+                            "relevance": "query=agriculture",
                         }
                     ),
                 ]
@@ -140,15 +200,15 @@ class TestResearchPhaseTools(unittest.TestCase):
 
         result = asyncio.run(
             BatchPaperEnrichmentTool(papers_path=papers, paper_notes_path=notes, paper_cards_path=cards)(
-                topic="RIS-assisted ISAC",
-                priority_terms=["reconfigurable intelligent surface", "integrated sensing and communication"],
+                topic="AI adoption and firm innovation",
+                priority_terms=["artificial intelligence adoption", "firm innovation"],
                 limit=1,
             )
         )
         self.assertTrue(result["success"])
         rows = [json.loads(line) for line in notes.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(len(rows), 1)
-        self.assertIn("RIS Assisted", rows[0]["title"])
+        self.assertIn("AI Adoption", rows[0]["title"])
         self.assertEqual(rows[0]["evidence_source"], "abstract")
         card_rows = [json.loads(line) for line in cards.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(len(card_rows), 1)
@@ -167,11 +227,11 @@ class TestResearchPhaseTools(unittest.TestCase):
                 [
                     json.dumps(
                         {
-                            "title": "RIS ISAC Candidate",
+                            "title": "AI Adoption Candidate",
                             "year": "2024",
-                            "source_url": "https://example.org/ris-isac",
-                            "abstract": "Reconfigurable intelligent surface integrated sensing and communication beamforming.",
-                            "doi": "10.1/ris",
+                            "source_url": "https://example.org/ai-adoption",
+                            "abstract": "Artificial intelligence adoption can shape firm innovation and organizational performance.",
+                            "doi": "10.1/ai-adoption",
                             "candidate_backend": "openalex",
                         }
                     ),
@@ -195,8 +255,8 @@ class TestResearchPhaseTools(unittest.TestCase):
                 shortlist_path=shortlist,
                 papers_path=papers,
             )(
-                topic="RIS ISAC",
-                priority_terms=["reconfigurable intelligent surface", "integrated sensing and communication"],
+                topic="AI adoption firm innovation",
+                priority_terms=["artificial intelligence adoption", "firm innovation"],
                 target_papers=1,
             )
         )
@@ -204,7 +264,7 @@ class TestResearchPhaseTools(unittest.TestCase):
         self.assertTrue(result["success"])
         selected = [json.loads(line) for line in papers.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(len(selected), 1)
-        self.assertEqual(selected[0]["title"], "RIS ISAC Candidate")
+        self.assertEqual(selected[0]["title"], "AI Adoption Candidate")
         self.assertEqual(selected[0]["screening_decision"], "include")
 
     def test_batch_claim_generation_writes_multiple_claims(self):
@@ -214,9 +274,9 @@ class TestResearchPhaseTools(unittest.TestCase):
         notes.write_text(
             json.dumps(
                 {
-                    "title": "RIS ISAC Paper",
-                    "main_findings": "RIS-assisted ISAC studies optimize beamforming and sensing tradeoffs.",
-                    "source_url": "https://example.org/ris-isac",
+                    "title": "AI Adoption Paper",
+                    "main_findings": "AI adoption is associated with firm innovation through organizational capability.",
+                    "source_url": "https://example.org/ai-adoption",
                 }
             )
             + "\n",
@@ -225,8 +285,8 @@ class TestResearchPhaseTools(unittest.TestCase):
         findings.write_text(
             json.dumps(
                 {
-                    "finding": "RIS can support ISAC scenarios.",
-                    "source_url": "https://example.org/ris-isac",
+                    "finding": "AI adoption can support firm innovation under complementary capabilities.",
+                    "source_url": "https://example.org/ai-adoption",
                 }
             )
             + "\n",
@@ -239,7 +299,7 @@ class TestResearchPhaseTools(unittest.TestCase):
                 findings_path=findings,
                 claims_path=claims,
                 report_path=self.root / "research_report.md",
-            )(topic="RIS ISAC", target_claims=4)
+            )(topic="AI adoption and firm innovation", target_claims=4)
         )
         self.assertTrue(result["success"])
         rows = [json.loads(line) for line in claims.read_text(encoding="utf-8").splitlines()]
@@ -265,10 +325,10 @@ class TestResearchPhaseTools(unittest.TestCase):
                 [
                     json.dumps(
                         {
-                            "title": "RIS ISAC Beamforming",
-                            "source_url": "https://example.org/beamforming",
-                            "method": "beamforming optimization",
-                            "key_result": "Jointly studies sensing and communication tradeoffs.",
+                            "title": "AI Adoption and Innovation",
+                            "source_url": "https://example.org/panel",
+                            "method": "panel regression",
+                            "key_result": "Studies the association between adoption and innovation output.",
                             "limitations": "Abstract-level evidence only.",
                             "evidence_level": "abstract",
                             "screening_score": 20,
@@ -276,11 +336,11 @@ class TestResearchPhaseTools(unittest.TestCase):
                     ),
                     json.dumps(
                         {
-                            "title": "RIS ISAC Channel Estimation",
-                            "source_url": "https://example.org/channel",
-                            "method": "CSI and channel estimation",
-                            "key_result": "Studies sensing accuracy and CSI overhead.",
-                            "limitations": "Deployment assumptions remain unclear.",
+                            "title": "Organizational Capability and AI Value",
+                            "source_url": "https://example.org/capability",
+                            "method": "structural equation model",
+                            "key_result": "Studies capability as a mediator of technology value.",
+                            "limitations": "Cross-sectional assumptions remain unclear.",
                             "evidence_level": "abstract",
                             "screening_score": 18,
                         }
@@ -298,7 +358,7 @@ class TestResearchPhaseTools(unittest.TestCase):
                 findings_path=findings,
                 synthesis_digest_path=digest,
                 report_path=report,
-            )(topic="RIS ISAC")
+            )(topic="AI adoption and firm innovation")
         )
         self.assertTrue(result["success"])
         payload = json.loads(digest.read_text(encoding="utf-8"))

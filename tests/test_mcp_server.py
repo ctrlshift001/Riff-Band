@@ -154,7 +154,8 @@ def test_mcp_research_tool_returns_before_long_job_finishes(tmp_path, monkeypatc
         await asyncio.sleep(1)
         return ResearchResult(status="partial", metadata={"topic": request.topic})
 
-    monkeypatch.setattr(mcp_server._module, "run_research", slow_research)
+    target_module = getattr(mcp_server, "_module", mcp_server)
+    monkeypatch.setattr(target_module, "run_research", slow_research)
 
     async def run_case():
         response = await asyncio.wait_for(
@@ -201,7 +202,8 @@ def test_mcp_cancel_research_sets_cancel_event(tmp_path, monkeypatch):
         await asyncio.wait_for(cancel_event.wait(), timeout=1)
         return ResearchResult(status="partial", summary="cancel observed")
 
-    monkeypatch.setattr(mcp_server._module, "run_research", cancellable_research)
+    target_module = getattr(mcp_server, "_module", mcp_server)
+    monkeypatch.setattr(target_module, "run_research", cancellable_research)
 
     async def run_case():
         start = await server.handle_request(

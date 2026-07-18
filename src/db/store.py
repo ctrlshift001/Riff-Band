@@ -1,0 +1,348 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from services.models import STAGE_DEFINITIONS, ApprovalDecision, ProjectStatus, StageStatus
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+class ProjectStore:
+    def __init__(self, db_path: str | Path):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def initialize(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS projects (
+                    project_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    initial_idea TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    current_stage TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS stage_states (
+                    project_id TEXT NOT NULL,
+                    stage_key TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    current_revision INTEGER NOT NULL DEFAULT 0,
+                    approved_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, stage_key),
+                    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS stage_revisions (
+                    revision_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    stage_key TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    content_json TEXT NOT NULL,
+                    change_reason TEXT NOT NULL,
+                    author_type TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(project_id, stage_key, revision),
+                    FOREIGN KEY (project_id, stage_key) REFERENCES stage_states(project_id, stage_key) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS approval_events (
+                    approval_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    stage_key TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    decision TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    actor_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (project_id, stage_key) REFERENCES stage_states(project_id, stage_key) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_stage_revisions_project
+                    ON stage_revisions(project_id, stage_key, revision DESC);
+                CREATE INDEX IF NOT EXISTS idx_approval_events_project
+                    ON approval_events(project_id, stage_key, created_at DESC);
+                """
+            )
+
+    def create_project(self, title: str, initial_idea: str) -> dict[str, Any]:
+        project_id = f"prj_{uuid4().hex[:12]}"
+        timestamp = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO projects VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    project_id,
+                    title,
+                    initial_idea,
+                    ProjectStatus.ACTIVE.value,
+                    STAGE_DEFINITIONS[0].key,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            for stage in STAGE_DEFINITIONS:
+                status = StageStatus.IN_PROGRESS.value if stage.position == 1 else StageStatus.NOT_STARTED.value
+                conn.execute(
+                    "INSERT INTO stage_states VALUES (?, ?, ?, ?, 0, NULL, ?)",
+                    (project_id, stage.key, stage.position, status, timestamp),
+                )
+            self._write_revision(
+                conn,
+                project_id=project_id,
+                stage_key="idea",
+                content={"initial_idea": initial_idea, "questions": [], "unknowns": []},
+                change_reason="Project created",
+                author_type="human",
+            )
+        return self.get_project(project_id)
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM projects ORDER BY updated_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_project(self, project_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            project = conn.execute(
+                "SELECT * FROM projects WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            if project is None:
+                raise KeyError(project_id)
+            stages = self._load_stages(conn, project_id)
+            approvals = conn.execute(
+                "SELECT * FROM approval_events WHERE project_id = ? ORDER BY created_at DESC",
+                (project_id,),
+            ).fetchall()
+        result = dict(project)
+        result["stages"] = stages
+        result["approvals"] = [dict(row) for row in approvals]
+        return result
+
+    def get_stage(self, project_id: str, stage_key: str) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        for stage in project["stages"]:
+            if stage["key"] == stage_key:
+                return stage
+        raise KeyError(stage_key)
+
+    def update_stage(
+        self,
+        project_id: str,
+        stage_key: str,
+        content: dict[str, Any],
+        change_reason: str,
+        author_type: str,
+    ) -> dict[str, Any]:
+        timestamp = _now()
+        with self._connect() as conn:
+            state = self._get_stage_state(conn, project_id, stage_key)
+            self._write_revision(
+                conn,
+                project_id=project_id,
+                stage_key=stage_key,
+                content=content,
+                change_reason=change_reason,
+                author_type=author_type,
+            )
+            conn.execute(
+                "UPDATE stage_states SET status = ?, approved_at = NULL, updated_at = ? WHERE project_id = ? AND stage_key = ?",
+                (StageStatus.NEEDS_REVIEW.value, timestamp, project_id, stage_key),
+            )
+            conn.execute(
+                """
+                UPDATE stage_states
+                SET status = CASE WHEN current_revision = 0 THEN ? ELSE ? END,
+                    approved_at = NULL,
+                    updated_at = ?
+                WHERE project_id = ? AND position > ?
+                """,
+                (
+                    StageStatus.NOT_STARTED.value,
+                    StageStatus.NEEDS_REVIEW.value,
+                    timestamp,
+                    project_id,
+                    int(state["position"]),
+                ),
+            )
+            conn.execute(
+                "UPDATE projects SET current_stage = ?, status = ?, updated_at = ? WHERE project_id = ?",
+                (stage_key, ProjectStatus.ACTIVE.value, timestamp, project_id),
+            )
+        return self.get_project(project_id)
+
+    def decide_stage(
+        self,
+        project_id: str,
+        stage_key: str,
+        decision: ApprovalDecision,
+        reason: str,
+        actor_type: str,
+    ) -> dict[str, Any]:
+        if actor_type != "human":
+            raise ValueError("only a human actor may decide a gate")
+
+        timestamp = _now()
+        with self._connect() as conn:
+            state = self._get_stage_state(conn, project_id, stage_key)
+            revision = int(state["current_revision"])
+            if revision < 1:
+                raise ValueError("stage has no revision to decide")
+
+            conn.execute(
+                "INSERT INTO approval_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"apr_{uuid4().hex[:12]}",
+                    project_id,
+                    stage_key,
+                    revision,
+                    decision.value,
+                    reason,
+                    actor_type,
+                    timestamp,
+                ),
+            )
+
+            if decision is ApprovalDecision.APPROVE:
+                status = StageStatus.APPROVED.value
+                approved_at = timestamp
+            elif decision is ApprovalDecision.REQUEST_CHANGES:
+                status = StageStatus.IN_PROGRESS.value
+                approved_at = None
+            else:
+                status = StageStatus.BLOCKED.value
+                approved_at = None
+
+            conn.execute(
+                "UPDATE stage_states SET status = ?, approved_at = ?, updated_at = ? WHERE project_id = ? AND stage_key = ?",
+                (status, approved_at, timestamp, project_id, stage_key),
+            )
+
+            current_stage = stage_key
+            project_status = ProjectStatus.ACTIVE.value
+            if decision is ApprovalDecision.APPROVE:
+                next_state = conn.execute(
+                    "SELECT * FROM stage_states WHERE project_id = ? AND position > ? ORDER BY position LIMIT 1",
+                    (project_id, int(state["position"])),
+                ).fetchone()
+                if next_state is None:
+                    project_status = ProjectStatus.COMPLETED.value
+                else:
+                    current_stage = str(next_state["stage_key"])
+                    if next_state["status"] == StageStatus.NOT_STARTED.value:
+                        conn.execute(
+                            "UPDATE stage_states SET status = ?, updated_at = ? WHERE project_id = ? AND stage_key = ?",
+                            (StageStatus.IN_PROGRESS.value, timestamp, project_id, current_stage),
+                        )
+
+            conn.execute(
+                "UPDATE projects SET current_stage = ?, status = ?, updated_at = ? WHERE project_id = ?",
+                (current_stage, project_status, timestamp, project_id),
+            )
+        return self.get_project(project_id)
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _get_stage_state(self, conn: sqlite3.Connection, project_id: str, stage_key: str) -> sqlite3.Row:
+        state = conn.execute(
+            "SELECT * FROM stage_states WHERE project_id = ? AND stage_key = ?",
+            (project_id, stage_key),
+        ).fetchone()
+        if state is None:
+            raise KeyError(f"{project_id}:{stage_key}")
+        return state
+
+    def _write_revision(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        project_id: str,
+        stage_key: str,
+        content: dict[str, Any],
+        change_reason: str,
+        author_type: str,
+    ) -> int:
+        import hashlib
+
+        state = self._get_stage_state(conn, project_id, stage_key)
+        revision = int(state["current_revision"]) + 1
+        content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
+        content_hash = hashlib.sha256(content_json.encode("utf-8")).hexdigest()
+        timestamp = _now()
+        conn.execute(
+            "INSERT INTO stage_revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                f"rev_{uuid4().hex[:12]}",
+                project_id,
+                stage_key,
+                revision,
+                content_json,
+                change_reason,
+                author_type,
+                content_hash,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            "UPDATE stage_states SET current_revision = ?, updated_at = ? WHERE project_id = ? AND stage_key = ?",
+            (revision, timestamp, project_id, stage_key),
+        )
+        return revision
+
+    def _load_stages(self, conn: sqlite3.Connection, project_id: str) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT s.*, r.revision_id, r.content_json, r.content_hash, r.author_type,
+                   r.change_reason, r.created_at AS revision_created_at
+            FROM stage_states s
+            LEFT JOIN stage_revisions r
+              ON r.project_id = s.project_id
+             AND r.stage_key = s.stage_key
+             AND r.revision = s.current_revision
+            WHERE s.project_id = ?
+            ORDER BY s.position
+            """,
+            (project_id,),
+        ).fetchall()
+        definitions = {stage.key: stage for stage in STAGE_DEFINITIONS}
+        stages: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            definition = definitions[str(item.pop("stage_key"))]
+            content_json = item.pop("content_json", None)
+            item.update(definition.model_dump())
+            item["revision"] = int(item.pop("current_revision"))
+            item["content"] = json.loads(content_json) if content_json else {}
+            stages.append(item)
+        return stages

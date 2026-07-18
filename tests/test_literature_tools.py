@@ -66,31 +66,30 @@ class TestLiteratureTools(unittest.TestCase):
         self.assertEqual(papers[0]["title"], "Test Paper")
         self.assertEqual(papers[0]["arxiv_id"], "2401.00001v1")
 
-    def test_arxiv_search_falls_back_for_chinese_query(self):
-        empty_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom"></feed>"""
+    def test_arxiv_search_preserves_domain_query(self):
         hit_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <entry>
     <id>http://arxiv.org/abs/2401.00002v1</id>
     <updated>2024-01-02T00:00:00Z</updated>
     <published>2024-01-01T00:00:00Z</published>
-    <title> RIS ISAC Paper </title>
+    <title> AI Adoption and Firm Innovation </title>
     <summary> A useful abstract. </summary>
     <author><name>Ada Lovelace</name></author>
   </entry>
 </feed>"""
         with patch(
             "project.tools.literature_tools.urllib.request.urlopen",
-            side_effect=[_FakeResponse(empty_xml), _FakeResponse(hit_xml)],
+            return_value=_FakeResponse(hit_xml),
         ):
-            result = asyncio.run(ArxivSearchTool()(query="智能反射面在通信感知一体化系统中的赋能", max_results=1))
+            query = "生成式人工智能采用与企业创新"
+            result = asyncio.run(ArxivSearchTool()(query=query, max_results=1))
 
         self.assertTrue(result["success"])
-        self.assertGreater(len(result["tried_queries"]), 1)
-        self.assertIn("integrated sensing", result["query_used"])
+        self.assertEqual(result["tried_queries"], [query])
+        self.assertEqual(result["query_used"], query)
         papers = json.loads(result["output"])
-        self.assertEqual(papers[0]["title"], "RIS ISAC Paper")
+        self.assertEqual(papers[0]["title"], "AI Adoption and Firm Innovation")
 
     def test_semantic_scholar_search_parses_json_response(self):
         payload = {

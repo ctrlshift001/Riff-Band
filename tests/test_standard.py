@@ -42,7 +42,7 @@ class DummyEnv:
         return {"ok": True}, 0.0, False, {}
 
 
-class Test(unittest.TestCase):
+class TestStandardFlows(unittest.TestCase):
     def _make_tmp_dir(self) -> Path:
         root = Path("workspace") / "test_tmp"
         root.mkdir(parents=True, exist_ok=True)

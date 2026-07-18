@@ -1,111 +1,160 @@
 # AI4MS / RiffBand
 
-An AI research workbench vertically integrated for management science, from research ideas and literature to analysis, evidence, and delivery.
+面向管理科学（MS）的垂直 AI 科研工作台：从研究想法、文献和设计，到分析、证据、HTML 可视化报告与成果交付。
 
-> The `ai4s` branch is transforming RiffBand into a complete single-user AI4MS workbench. The existing CLI, MCP server, agent runtime, research pipeline, and visual HTML report are the engineering foundation. The nine-step web workspace, persistent project state, approvals, method/data planning, Stata integration, evidence review, and delivery surfaces are under active implementation. Planned capabilities are not presented here as already shipped.
+> 当前 `ai4s` 分支已经提供可运行的九步浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像和 Docker 打包文件。现有 CLI、MCP、Agent Runtime、研究流水线和 HTML 报告继续作为工程基础；分阶段 AI、方法数据、Stata、证据和成果交付服务仍在六天冲刺中实现，本文档不把规划能力写成已上线能力。
 
-[中文](README.zh-CN.md) | [Documentation](docs/README.md) | [Product](docs/00_PRODUCT.md) | [Roadmap](docs/00_ROADMAP.md)
+[文档索引](docs/README.md) | [产品定义](docs/00_PRODUCT.md) | [开发路线](docs/00_ROADMAP.md) | [开发指南](docs/00_GUIDELINE.md)
 
-## Product Direction
+## 产品定位
 
-AI4MS is not an automatic paper generator. It organizes the decisions, evidence, assumptions, revisions, approvals, and reproducibility records required to move from an early research idea to a defensible research output.
+AI4MS 不是自动论文生成器。它更像一名严谨的科研项目经理和研究助理，帮助研究者从一个不成熟的想法出发，完成已有研究检索、选题判断、研究设计、数据与方法规划、分析管理、证据核查、可视化报告和复现交付。
 
-Its product shape can be understood as a lightweight, management-science vertical counterpart to Bohrium: literature, research workflow, method/data planning, scientific computing, and delivery live in one workbench, with deeper support for research design, Stata, evidence boundaries, and human decisions. This comparison describes product direction only; AI4MS is not affiliated with Bohrium and does not claim access to its non-public capabilities.
+产品形态可以理解为“MS 领域的轻量玻尔”：把文献、研究过程、方法数据、科研计算和成果组织在同一个工作台中，并针对管理科学强化研究设计、Stata、证据边界和人工决定。AI4MS 与玻尔不存在隶属关系，也不复制其未公开能力。
+
+核心工作流：
 
 ```text
-Research idea
-  -> 1. State the idea
-  -> 2. Review existing research
-  -> 3. Select a worthwhile topic
-  -> 4. Confirm theory and research design
-  -> 5. Confirm data and compliance
-  -> 6. Prepare analysis plans and Stata code
-  -> 7. Run, diagnose, and reproduce
-  -> 8. Review evidence and interpretation
-  -> 9. Write, approve, and deliver
+研究想法
+  -> 1. 说出想法
+  -> 2. 查看已有研究
+  -> 3. 选择值得做的课题
+  -> 4. 确认理论与研究设计
+  -> 5. 确认数据与合规
+  -> 6. 制定分析计划和 Stata 代码
+  -> 7. 运行、稳健性检查和复现
+  -> 8. 审核证据和结果解释
+  -> 9. 写作、发布和交付
 ```
 
-All nine steps live in one project workbench. Each step exposes the current task, an AI draft, structured editing, supporting evidence or run artifacts, approve/return actions, and a clear handoff. Topic Scout supplies real multi-source retrieval, research landscapes, counter-search, and candidate topics; later workspaces continue through design, data, methods, code, diagnostics, Claim-Evidence review, and delivery.
+## 当前实现
 
-The six-day competition build is a local single-user web product backed by SQLite and file artifacts. Every step has a real code path; organization login, multi-party approval, and cloud compute are deployment enhancements rather than substitutes for the product workflow.
+九步已经进入同一个项目工作台，当前基础能力包括：
 
-## Human-in-the-Loop Research
+- 创建、读取和切换科研项目；
+- 查看九步状态并逐步解锁；
+- 编辑和保存结构化阶段资产；
+- 为每次修改生成不可变 revision 和 SHA-256 hash；
+- 人工执行批准、退回修改和阻塞决定；
+- 上游修改后自动使下游状态失效，同时保留历史审批；
+- 通过 SQLite 在重启后恢复项目；
+- 通过浏览器 GUI、远程 API 和 OpenAPI 使用同一服务层。
 
-The target workflow uses ten stages (S0-S9) and six human gates (G0-G5). Agents create drafts, patches, issues, and recommendations; they cannot approve their own work.
+当前“生成草稿”只生成明确标记为 `structure_template` 的结构模板，不伪装成模型研究结果。后续 Agent 服务继续复用同一 revision 和审批接口。
 
-Editable assets use immutable revisions. Approvals bind a specific revision and SHA-256 hash. Material upstream changes invalidate affected downstream approvals without deleting the historical decision record.
+保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。课题侦察、研究设计、数据方法、Stata Runner、Claim-Evidence 审核和成果导出将在现有九步结构上继续接入。
 
-## Cross-Disciplinary Design
+## 人机协作
 
-AI4MS starts with management science while keeping the research kernel domain-neutral. Research Protocol, DomainProfile, method registries, and gate registries support empirical and causal research, analytical and optimization models, predictive and computational work, behavioral and qualitative studies, and evidence synthesis or design science.
+AI 只能创建草稿、patch、问题和建议，不能批准自己的输出。G0-G5 人工门禁必须由 `human` 身份执行。
 
-Domain-specific behavior belongs in profiles and registries rather than hard-coded topic terms, allowing the same infrastructure to expand into additional scientific disciplines.
+所有可编辑研究资产都会产生不可变 revision；审批绑定具体 revision 和 hash。上游选题、设计、数据或分析计划发生变化时，受影响的下游审批自动失效，但历史决定不会被删除。
 
-## Visual HTML Reports
+## 多学科泛用性
 
-RiffBand already exports standalone visual HTML reports with responsive layout, navigation, tables, and ECharts visualizations. AI4MS retains this capability as a first-class product surface for research landscapes, evidence tables, candidate gaps, counter-search results, feasibility, decisions, and audit history.
+AI4MS 首先服务管理科学，但不会把某个课题或单一方法写死在通用流程里。统一 `DomainProfile` 支持以下研究泳道：
 
-## Engineering Foundation
+- 实证与因果研究；
+- 解析建模与优化；
+- 预测与计算研究；
+- 行为、实验与定性研究；
+- 系统综述与设计科学。
 
-RiffBand builds on [AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration](https://arxiv.org/abs/2602.03786), which models a dynamically created agent as:
+领域差异通过 profile、方法卡、数据卡和 Gate Registry 注入，通用 Agent Runtime、资产版本、审批和证据模型保持稳定，为后续扩展到其他科研学科保留接口。
+
+## HTML 可视化报告
+
+RiffBand 已支持独立 HTML 研究报告、响应式排版、目录、表格和 ECharts 图表。AI4MS 保留并升级这项能力，用于展示检索范围、研究流派、共识争议、候选空白、数据方法可行性、人工决定和审计记录。
+
+HTML 报告是成果交付阶段的一等产物，不属于需要清理的旧工程内容。
+
+## 工程基础
+
+RiffBand 基于论文 [AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration](https://arxiv.org/abs/2602.03786) 的动态子智能体思想开发。原论文将动态创建的智能体抽象为：
 
 ```text
 <Instruction, Context, Tools, Model>
 ```
 
-RiffBand extends that foundation with fixed research pipelines, tool scoping, parallel delegation, CLI/MCP entry points, structured artifacts, and HTML reporting. AI4MS reuses this runtime while replacing topic-specific research logic with protocol-driven domain services.
+RiffBand 在此基础上增加了固定研究流水线、工具权限、并发委派、CLI/MCP 接口、结构化产物和 HTML 报告。AI4MS 继续复用这些底层能力，并把原有课题硬编码替换为领域画像和研究协议驱动的服务。
 
-## Current Compatibility Entry Points
+## 安装与运行
+
+安装项目：
 
 ```powershell
 pip install -e .
+```
+
+创建本地配置：
+
+```powershell
 Copy-Item .env.example .env
 Copy-Item aorchestra.yaml.example aorchestra.yaml
-riffband
 ```
 
-Current research commands remain available during migration:
+启动九步浏览器工作台：
+
+```powershell
+ai4ms-web
+```
+
+打开以下地址：
+
+- 工作台：`http://localhost:8000/`
+- 远程 API：`http://localhost:8000/api/v1`
+- OpenAPI：`http://localhost:8000/docs`
+- 健康检查：`http://localhost:8000/healthz`
+
+兼容 CLI 和 MCP 入口：
+
+```powershell
+riffband
+riffband-mcp --config aorchestra.yaml
+```
+
+兼容研究命令：
 
 ```text
-/research AI adoption and firm innovation --depth=deep
-/research low-carbon logistics optimization --mode=visual --depth=deep --format=html
+/research 企业采用生成式AI对创新绩效的影响 --depth=deep
+/research 低碳物流与供应链优化 --mode=visual --depth=deep --format=html
 ```
 
-These CLI/MCP parameters are compatibility interfaces, not the final AI4MS information architecture.
+## Docker 交付
 
-## Competition Delivery
+比赛版本以带浏览器 GUI 的 Docker Web 产品交付：
 
-The competition build will be delivered as a Dockerized web product with a browser GUI. One container exposes:
+```powershell
+docker compose up --build
+```
 
-- `/` for the nine-step management-science workbench;
-- `/api/v1` for remote invocation;
-- `/docs` for OpenAPI documentation;
-- `/healthz` for deployment health checks.
+SQLite、项目资产和 HTML 报告通过 Docker volume 持久化。模型与检索 Key 在运行时注入；Stata 使用外部自有许可 Runner，不进入镜像。
 
-SQLite, project artifacts, and HTML reports persist through a Docker volume. Model and search credentials are injected at runtime. Stata remains an external bring-your-own-license runner and is never bundled into the image.
+详细说明见 [Docker 部署说明](docs/DEPLOYMENT.md) 和 [远程 API 调用说明](docs/API_USAGE.md)。
 
-## Documentation
+## 文档
 
-- [Documentation index and source-of-truth policy](docs/README.md)
-- [AI4MS product definition](docs/00_PRODUCT.md)
-- [AI4MS roadmap](docs/00_ROADMAP.md)
-- [Development guide](docs/00_GUIDELINE.md)
-- [Contribution workflow](docs/00_WORKFLOW.md)
+- [文档索引与版本口径](docs/README.md)
+- [AI4MS 产品定义](docs/00_PRODUCT.md)
+- [AI4MS 开发路线](docs/00_ROADMAP.md)
+- [开发与运行指南](docs/00_GUIDELINE.md)
+- [协作与提交规范](docs/00_WORKFLOW.md)
 - [AI4MS DevPack v0.3](docs/refer/AI4MS-DevPack_v0.3/README.md)
-- [Engineering baseline](docs/ai4ms/BASELINE.md)
+- [当前工程基线](docs/ai4ms/BASELINE.md)
+- [前端交接说明](src/web/README.md)
 
-## Product Boundaries
+## 产品边界
 
-- No claims of guaranteed originality.
-- No fabricated papers, identifiers, data, estimates, experiments, or reviews.
-- No bypassing paywalls, copyright, data licenses, privacy controls, or software licenses.
-- No automatic conversion of correlation, significance, or model complexity into causality or contribution.
-- No agent self-approval at topic, design, data, analysis, claim, or release gates.
-- No hiding failed diagnostics, negative results, or counter-evidence in generated writing.
+- 不承诺自动发现绝对原创课题；
+- 不伪造论文、DOI、数据、统计量、实验或审稿记录；
+- 不绕过付费数据库、版权、数据许可、隐私控制和软件许可；
+- 不把相关性、显著性或模型复杂度自动等同于因果和贡献；
+- 不让 AI 越过选题、设计、数据、分析、结论和发布审批；
+- 不允许写作层隐藏失败诊断、负结果和反证。
 
-## License and Citation
+## 许可证与引用
 
-The original Apache 2.0 `LICENSE` is preserved. When using the orchestration foundation, cite:
+本项目保留原始 Apache 2.0 `LICENSE`。使用底层编排思想时，请引用原论文：
 
 ```bibtex
 @misc{ruan2026aorchestra,

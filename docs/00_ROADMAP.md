@@ -26,7 +26,7 @@
 
 ## 3. 六天产品架构
 
-### Web Workbench
+### Web 科研工作台
 
 - 首屏直接进入项目工作台，不建设营销落地页；
 - 左侧固定九步导航，显示 `not_started/in_progress/needs_review/approved/blocked`；

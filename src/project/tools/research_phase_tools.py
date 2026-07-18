@@ -116,10 +116,6 @@ _QUERY_STOPWORDS = {
     "studies",
     "system",
     "systems",
-    "network",
-    "networks",
-    "communication",
-    "communications",
 }
 
 
@@ -176,24 +172,20 @@ def _paper_relevance_score(row: dict[str, Any], priority_terms: list[str] | None
         score += 2
     if str(row.get("evidence_quality", "")).lower() == "medium":
         score += 2
-    for phrase in [
-        "integrated sensing and communication",
-        "isac",
-        "reconfigurable intelligent surface",
-        "intelligent reflecting surface",
-        "ris",
-        "irs",
-    ]:
-        if phrase in text:
-            score += 5
-        if phrase in title:
-            score += 3
-        if phrase in relevance:
-            score += 2
     for term in priority_terms or []:
         clean = str(term or "").strip().lower().strip('"')
-        if len(clean) >= 3 and clean in text:
+        if len(clean) < 3:
+            continue
+        if clean in title:
+            score += 6
+        elif clean in relevance:
             score += 4
+        elif clean in text:
+            score += 3
+        else:
+            units = _query_match_units(clean)
+            overlap = sum(1 for unit in units if unit in text)
+            score += min(overlap, 3)
     try:
         year = int(str(row.get("year", "") or "")[:4])
         if year >= 2022:
@@ -277,12 +269,15 @@ def _paper_note_from_record(row: dict[str, Any], topic: str = "", priority_terms
 
     method_sentence = ""
     for sentence in sentences:
-        if any(token in sentence.lower() for token in ["propose", "method", "algorithm", "optimization", "learning", "beamforming", "framework", "model"]):
+        if any(token in sentence.lower() for token in ["propose", "method", "algorithm", "optimization", "learning", "framework", "model"]):
             method_sentence = sentence
             break
     scenario_sentence = ""
     for sentence in sentences:
-        if any(token in sentence.lower() for token in ["isac", "sensing", "communication", "ris", "irs", "vehicular", "mimo", "mmwave", "wireless"]):
+        if any(
+            token in sentence.lower()
+            for token in ["sample", "setting", "context", "industry", "country", "firm", "participant", "dataset", "case", "market"]
+        ):
             scenario_sentence = sentence
             break
 
@@ -552,8 +547,10 @@ class BatchLiteratureSearchTool(BaseAction):
             query_attempts: list[dict[str, Any]] = []
             query_failures: list[str] = []
             async with query_semaphore:
-                for tool_name in order:
-                    result = await _call_tool(tool_name, query)
+                results = await asyncio.gather(*[_call_tool(tool_name, query) for tool_name in order])
+                combined_records: list[dict[str, Any]] = []
+                successful_backends: list[str] = []
+                for tool_name, result in zip(order, results):
                     records = _load_tool_records(result)
                     query_attempts.append(
                         {
@@ -570,8 +567,19 @@ class BatchLiteratureSearchTool(BaseAction):
                         )
                         continue
                     if records:
-                        return {"query": query, "backend": tool_name, "records": records, "attempts": query_attempts, "failures": query_failures}
-            return {"query": query, "backend": "", "records": [], "attempts": query_attempts, "failures": query_failures}
+                        successful_backends.append(tool_name)
+                        for record in records:
+                            item = dict(record)
+                            item["_backend"] = tool_name
+                            combined_records.append(item)
+            return {
+                "query": query,
+                "backend": "multi_source" if successful_backends else "",
+                "backends": successful_backends,
+                "records": combined_records,
+                "attempts": query_attempts,
+                "failures": query_failures,
+            }
 
         added = 0
         findings_added = 0
@@ -591,11 +599,12 @@ class BatchLiteratureSearchTool(BaseAction):
             for row in records:
                 if added >= target:
                     break
-                candidate = _paper_record_from_tool(row, query, tool_name)
+                record_backend = str(row.get("_backend", "") or tool_name)
+                candidate = _paper_record_from_tool(row, query, record_backend)
                 if not candidate["title"]:
                     continue
                 candidate["candidate_query"] = query
-                candidate["candidate_backend"] = tool_name
+                candidate["candidate_backend"] = record_backend
                 candidate_added, _candidate_key = _append_jsonl_dedup(
                     self.candidates_path,
                     candidate,
@@ -620,7 +629,7 @@ class BatchLiteratureSearchTool(BaseAction):
                         ["source_url", "doi", "title", "year"],
                     )
                     if record_findings:
-                        finding_record = _finding_from_paper(record, query, tool_name)
+                        finding_record = _finding_from_paper(record, query, record_backend)
                         finding_added, _finding_key = _append_jsonl_dedup(
                             self.findings_path,
                             finding_record,
@@ -1125,36 +1134,37 @@ class BatchClaimGenerationTool(BaseAction):
                 ),
             }
 
+        subject = str(topic or "the research topic").strip()
         buckets = [
             (
-                "method",
-                "RIS/IRS-assisted ISAC studies concentrate on joint beamforming, channel estimation, resource allocation, and optimization under sensing-communication trade-offs.",
-                "方法路线需要区分优化、学习和混合方案，并说明不同证据深度。",
-            ),
-            (
-                "gap",
-                "Many available records rely on abstract-level evidence or metadata, so claims about full experimental superiority should remain cautious.",
-                "摘要级证据不足以支撑强性能结论，需要全文阅读或可复现实验补充。",
-            ),
-            (
-                "future_direction",
-                "High-mobility scenarios such as vehicular networks, UAV platforms, and movable or STAR-RIS architectures are promising future directions for RIS-enabled ISAC.",
-                "动态场景带来 CSI、轨迹、鲁棒性和实时优化挑战。",
-            ),
-            (
                 "limitation",
-                "Current evidence mixes direct RIS-ISAC papers with broader RIS communication papers, so the final review should explicitly separate direct and contextual evidence.",
-                "论文池相关性不均，需要在综述中标注证据层级。",
+                f"The current evidence for {subject} is limited by the recorded evidence depth and source coverage.",
+                "摘要或元数据证据不足以支撑强结论，需要全文复核或可复现分析。",
+            ),
+            (
+                "boundary_condition",
+                f"The boundary conditions for findings about {subject} remain insufficiently compared across contexts and populations.",
+                "该判断用于提示异质性检验，不代表现有研究已经证明存在情境差异。",
+            ),
+            (
+                "measurement",
+                f"Alternative operationalizations may change the measured relationship or outcome for {subject}.",
+                "需要在研究协议中明确构念、代理变量和测量误差后再形成假设。",
+            ),
+            (
+                "robustness",
+                f"Conclusions about {subject} should be stress-tested with alternative data, specifications, and methods.",
+                "稳健性建议不等同于因果识别，具体检验取决于研究设计和数据。",
             ),
             (
                 "research_question",
-                "A useful review question is how RIS configuration jointly affects sensing accuracy, communication rate, energy efficiency, and deployment robustness.",
-                "该问题可组织后续章节中的评价指标和开放问题。",
+                f"A defensible next step is to test which contexts, measurements, data, or methods change conclusions about {subject}.",
+                "该问题是候选研究方向，必须结合最近似研究和数据可得性进一步收窄。",
             ),
             (
-                "claim",
-                "RIS can be treated as an environmental control layer for ISAC, but its practical value depends on channel acquisition, hardware constraints, and deployment geometry.",
-                "该观点需要同时引用系统设计、信道估计和资源优化证据。",
+                "replication",
+                f"A traceable replication or extension could clarify how sensitive reported findings about {subject} are to analytical choices.",
+                "只有获得适当数据许可、代码和运行环境后，才能判断复现是否可行。",
             ),
         ]
 
@@ -1318,17 +1328,16 @@ class SynthesizeFindingsTool(BaseAction):
 def _cluster_name_for_card(row: dict[str, Any]) -> str:
     text = _paper_text(row)
     checks = [
-        ("beamforming_and_optimization", ["beamforming", "optimization", "precoding", "resource allocation"]),
-        ("channel_and_sensing_estimation", ["channel estimation", "csi", "localization", "sensing accuracy", "crb"]),
-        ("learning_based_methods", ["learning", "neural", "deep", "reinforcement", "data-driven"]),
-        ("mobility_and_network_scenarios", ["vehicular", "uav", "mobile", "mobility", "high-mobility"]),
-        ("hardware_and_ris_architectures", ["star-ris", "active ris", "movable", "hardware", "phase shift"]),
-        ("survey_and_taxonomy", ["survey", "taxonomy", "overview", "tutorial", "review"]),
+        ("empirical_and_causal", ["causal", "difference-in-differences", "instrumental variable", "panel data", "regression"]),
+        ("analytical_and_optimization", ["optimization", "linear programming", "integer programming", "game theory", "equilibrium"]),
+        ("predictive_and_computational", ["prediction", "machine learning", "neural", "deep learning", "forecast"]),
+        ("behavioral_and_qualitative", ["experiment", "survey", "interview", "case study", "qualitative"]),
+        ("review_and_design_science", ["systematic review", "taxonomy", "overview", "tutorial", "design science"]),
     ]
     for name, tokens in checks:
         if any(token in text for token in tokens):
             return name
-    return "system_modeling_and_applications"
+    return "general_management_science"
 
 
 def _short_join(values: list[str], limit: int = 4, item_limit: int = 220) -> list[str]:

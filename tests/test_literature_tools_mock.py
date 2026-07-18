@@ -67,8 +67,8 @@ class TestLiteratureToolsPureFunctions(unittest.TestCase):
         self.assertTrue(_short_text("x" * 1000, 50).endswith("..."))
 
     def test_research_query_candidates(self):
-        candidates = _research_query_candidates("智能反射表面")
-        self.assertTrue(any("RIS" in c for c in candidates))
+        query = "AI adoption and firm innovation"
+        self.assertEqual(_research_query_candidates(query), [query])
 
 
 class TestLiteratureToolsMock(unittest.TestCase):

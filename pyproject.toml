@@ -4,11 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "riffband"
-version = "0.2.0"
-description = "轻量级多 Agent 编排引擎 + 研究模式（CLI + MCP）"
+version = "0.3.0"
+description = "基于 RiffBand Agent Runtime 的管理科学 AI 科研工作台"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.13",
+    "ddgs>=9.13",
+    "fastapi>=0.115",
     "google-genai>=1.73",
     "mistune>=3.1",
     "openai>=1.99",
@@ -17,11 +19,16 @@ dependencies = [
     "PyYAML>=6.0",
     "python-dotenv>=1.2",
     "rich>=13",
+    "uvicorn>=0.34",
 ]
 
 [project.scripts]
 riffband = "ui.shell:_entry"
 riffband-mcp = "mcp_server:_entry"
+ai4ms-web = "api.app:_entry"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+web = ["static/*"]

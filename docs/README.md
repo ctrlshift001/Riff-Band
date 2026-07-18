@@ -45,7 +45,7 @@
 - 工程参考基线：AI4MS DevPack `v0.3`；
 - 当前 Git 分支：`ai4s`；
 - 当前代码仍保留 RiffBand 兼容入口；
-- 当前代码基础仍以 CLI/MCP 和本地 artifact 为主，九步 Web/API/SQLite、审批和 Stata BYOL Runner 正在六天冲刺中实现；
+- 九步 Web/FastAPI/SQLite、不可变 revision、人工审批和 Docker 基础已经可运行；分阶段 Agent、Stata BYOL Runner、证据关联和导出仍在六天冲刺中实现；
 - 最终比赛交付为同时提供浏览器 GUI 和 `/api/v1` 的 Docker 镜像，部署与调用文档随实现补齐；
 - HTML 可视化报告是保留并升级的现有能力，不属于待删除的旧产品资料。
 

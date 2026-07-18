@@ -673,8 +673,6 @@ class MainAgent(BaseAgent):
 
     def _academic_queries_from_terms(self, terms: List[str], limit: int = 12) -> List[str]:
         raw_terms = [str(term).strip() for term in terms if str(term).strip()]
-        joined = " ".join(raw_terms)
-        lower = joined.lower()
         queries: List[str] = []
         seen: set[str] = set()
 
@@ -689,36 +687,9 @@ class MainAgent(BaseAgent):
             queries.append(text)
 
         for term in raw_terms:
-            term_lower = term.lower()
-            if any(token in term_lower for token in ["intelligent reflecting surface", "reconfigurable intelligent surface", "integrated sensing", "isac", "ris"]):
-                add(term)
-
-        mentions_ris = any(token in joined for token in ["智能反射面", "智能反射表面", "可重构智能表面"]) or any(
-            token in lower for token in ["ris", "intelligent reflecting surface", "reconfigurable intelligent surface"]
-        )
-        mentions_isac = any(token in joined for token in ["通信感知一体化", "通感一体化", "感知通信一体化"]) or any(
-            token in lower for token in ["isac", "integrated sensing and communication"]
-        )
-        if mentions_ris and mentions_isac:
-            add('"reconfigurable intelligent surface" "integrated sensing and communication"')
-            add('"intelligent reflecting surface" "integrated sensing and communication"')
-            add('"RIS" "ISAC"')
-            add('"RIS-assisted" "integrated sensing and communication"')
-            add('"reconfigurable intelligent surface" "ISAC" beamforming')
-            add('"intelligent reflecting surface" "joint sensing and communication"')
-            add('"reconfigurable intelligent surface" survey "integrated sensing and communication"')
-        elif mentions_ris:
-            add('"reconfigurable intelligent surface" wireless communication')
-            add('"intelligent reflecting surface" survey')
-        elif mentions_isac:
-            add('"integrated sensing and communication" survey')
-            add('"ISAC" beamforming')
-
-        for term in raw_terms:
             if len(queries) >= limit:
                 break
-            if re.search(r"[A-Za-z]", term) and len(term.split()) >= 3:
-                add(term)
+            add(term)
         return queries[:limit]
 
     def _literature_search_task_params(self) -> Dict[str, Any]:
@@ -728,22 +699,15 @@ class MainAgent(BaseAgent):
         plan_terms = self._extract_search_terms_from_scratchpad()
         queries = self._academic_queries_from_terms(plan_terms)
         if not queries:
-            queries = [
-                f"{topic}",
-                '"reconfigurable intelligent surface" "integrated sensing and communication"',
-                '"RIS" "ISAC"',
-                '"reconfigurable intelligent surface" "ISAC" beamforming',
-                '"intelligent reflecting surface" "joint sensing and communication"',
-                '"reconfigurable intelligent surface" survey "integrated sensing and communication"',
-            ]
+            queries = [topic]
 
         query_text = "\n".join(f"- {query}" for query in queries)
         return {
             "task_instruction": (
                 "任务类型: research\n"
                 f"期望产出: 基于 Step 1 的检索式和研究主题顺序检索，立即记录候选论文到 candidates.jsonl，再筛选出至少 {min_papers} 篇合格论文进入 papers.jsonl/shortlist.jsonl。\n"
-                "完成标准: 先调用 batch_literature_search；该工具会按 OpenAlex -> Semantic Scholar -> arXiv -> Crossref -> DBLP 检索、写入 candidates、筛选 shortlist。Step 2 只负责检索、筛选和去重，不写跨论文 findings。\n"
-                "具体任务: 使用组合后的学术 query，而不是单个宽泛关键词。同一工具失败后由 batch 工具自动切换下一检索源。"
+                "完成标准: 先调用 batch_literature_search；该工具会查询全部启用来源、写入 candidates、筛选 shortlist。Step 2 只负责检索、筛选和去重，不写跨论文 findings。\n"
+                "具体任务: 使用 Profile 或用户确认的组合学术 query，不在通用层追加课题关键词。单个后端失败不应丢弃其他来源。"
             ),
             "context": (
                 f"研究主题: {topic}\n"
@@ -778,7 +742,7 @@ class MainAgent(BaseAgent):
                 "priority_terms:\n"
                 + "\n".join(f"- {term}" for term in terms[:20])
                 + "\n"
-                "batch_paper_enrichment 会按摘要可用性、主题词匹配、RIS/ISAC 相关性和年份排序，并写入 knowledge-card 风格的 paper_cards.jsonl。"
+                "batch_paper_enrichment 会按摘要可用性、用户/Profile 主题词匹配、年份和标识完整性排序，并写入 knowledge-card 风格的 paper_cards.jsonl。"
             ),
             "tools": [
                 "batch_paper_enrichment",

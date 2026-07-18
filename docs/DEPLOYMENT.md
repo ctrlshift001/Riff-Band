@@ -1,6 +1,6 @@
 # AI4MS Docker 部署契约
 
-> 状态：目标交付契约。仓库当前尚未包含 Dockerfile；实现完成后，本文件必须通过全新机器 smoke test 才能作为最终部署说明提交。
+> 状态：已提供 Dockerfile、Compose、浏览器 GUI 与 API 基础实现；提交前仍须在装有 Docker 的全新机器完成镜像 smoke test。
 
 ## 1. 交付形态
 
@@ -72,7 +72,7 @@ docker compose up --build
 
 必须挂载 volume。删除容器后，项目、审批、运行索引和报告仍应保留；删除 volume 才视为删除本地产品数据。
 
-## 6. Stata Runner
+## 6. Stata 运行器
 
 镜像不得包含 Stata 安装文件、许可证、序列号或破解组件。`RunnerService` 通过运行时配置连接用户或机构已有授权环境。
 

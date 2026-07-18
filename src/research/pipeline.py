@@ -579,7 +579,7 @@ class ResearchPipeline:
         debate_chars = int(digest["debate_log"]["chars"])
         report_chars = int(digest["report"]["chars"])
         scratchpad_chars = int(digest["scratchpad"]["chars"])
-        direct_isac_findings = int(digest["findings"]["direct_isac_count"])
+        traceable_findings = int(digest["findings"]["traceable_count"])
 
         if step.key == "literature_search":
             if findings_count:
@@ -627,8 +627,8 @@ class ResearchPipeline:
             if findings_count == 0:
                 issues.append("claim_generation requires structured findings, but findings.jsonl is empty.")
                 blocking = True
-            elif direct_isac_findings == 0:
-                warnings.append("No finding directly mentions ISAC/通信感知一体化/通感; generated claims must mark relevance uncertainty.")
+            elif traceable_findings == 0:
+                warnings.append("No finding has source_url or evidence; generated claims must remain provisional.")
             if scratchpad_chars == 0:
                 warnings.append("scratchpad synthesis is missing; use findings directly and record assumptions.")
         elif step.key == "insight_generation":
@@ -746,7 +746,7 @@ class ResearchPipeline:
             "findings": {
                 "path": str(self.artifacts.findings),
                 "count": len(findings),
-                "direct_isac_count": self._count_direct_isac_findings(findings),
+                "traceable_count": self._count_traceable_findings(findings),
                 "sample": self._sample_rows(findings, ["finding", "evidence", "source_url"], limit=5),
             },
             "papers": {
@@ -847,14 +847,13 @@ class ResearchPipeline:
         return sample
 
     @staticmethod
-    def _count_direct_isac_findings(findings: list[dict[str, Any]]) -> int:
-        keywords = ("isac", "integrated sensing", "通信感知一体化", "通感一体化", "感知")
-        count = 0
-        for row in findings:
-            text = json.dumps(row, ensure_ascii=False).lower()
-            if any(keyword.lower() in text for keyword in keywords):
-                count += 1
-        return count
+    def _count_traceable_findings(findings: list[dict[str, Any]]) -> int:
+        return sum(
+            1
+            for row in findings
+            if str(row.get("source_url", "") or "").strip()
+            or str(row.get("evidence", "") or "").strip()
+        )
 
     @staticmethod
     def _existing_report_sections(report_text: str) -> list[str]:

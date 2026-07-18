@@ -1,0 +1,15 @@
+services:
+  ai4ms-workbench:
+    build:
+      context: .
+    image: ai4ms-workbench:competition
+    ports:
+      - "8000:8000"
+    environment:
+      AI4MS_DATA_DIR: /app/data
+    volumes:
+      - ai4ms-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  ai4ms-data:

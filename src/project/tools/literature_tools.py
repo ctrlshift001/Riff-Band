@@ -182,48 +182,7 @@ def _contains_cjk(text: str) -> bool:
 
 def _research_query_candidates(query: str) -> list[str]:
     q = str(query or "").strip()
-    candidates = [q] if q else []
-
-    replacements = {
-        "智能反射面": "intelligent reflecting surface OR reconfigurable intelligent surface OR RIS",
-        "智能反射表面": "intelligent reflecting surface OR reconfigurable intelligent surface OR RIS",
-        "可重构智能表面": "reconfigurable intelligent surface OR RIS",
-        "通信感知一体化": "integrated sensing and communication OR ISAC",
-        "通感一体化": "integrated sensing and communication OR ISAC",
-        "感知通信一体化": "integrated sensing and communication OR ISAC",
-        "赋能": "performance enhancement OR optimization",
-        "车联网": "vehicular network",
-        "波束赋形": "beamforming",
-    }
-    expanded_parts = [
-        value
-        for key, value in replacements.items()
-        if key in q
-    ]
-    if expanded_parts:
-        candidates.append(" AND ".join(f"({part})" for part in expanded_parts))
-    lower = q.lower()
-    mentions_ris = any(term in q for term in ["智能反射面", "智能反射表面", "可重构智能表面"]) or any(
-        term in lower
-        for term in ["ris", "reconfigurable intelligent surface", "intelligent reflecting surface"]
-    )
-    mentions_isac = any(term in q for term in ["通信感知一体化", "通感一体化", "感知通信一体化"]) or any(
-        term in lower
-        for term in ["isac", "integrated sensing and communication"]
-    )
-    if mentions_ris and mentions_isac:
-        candidates.append('"reconfigurable intelligent surface" AND "integrated sensing and communication"')
-        candidates.append('"intelligent reflecting surface" AND "integrated sensing and communication"')
-        candidates.append('"RIS" AND "ISAC"')
-        candidates.append('"reconfigurable intelligent surface" AND sensing AND communication')
-    if mentions_ris:
-        candidates.append('"reconfigurable intelligent surface"')
-        candidates.append('"intelligent reflecting surface"')
-    if mentions_isac:
-        candidates.append('"integrated sensing and communication"')
-        candidates.append('"ISAC"')
-    return list(dict.fromkeys(item for item in candidates if item))
-
+    return [q] if q else []
 
 def _arxiv_query_candidates(query: str) -> list[str]:
     return _research_query_candidates(query)

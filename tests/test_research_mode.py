@@ -229,7 +229,7 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
             sources_dir=Path("workspace/sources"),
             workspace_dir=Path("workspace"),
         )
-        pipeline = pipeline_module.ResearchPipeline(ResearchRequest(topic="RIS ISAC", trigger="cli"), cfg)
+        pipeline = pipeline_module.ResearchPipeline(ResearchRequest(topic="AI adoption", trigger="cli"), cfg)
         steps = {step.key: step for step in RESEARCH_STEPS}
 
         debate_readiness = pipeline._assess_material_readiness(steps["claim_debate"])
@@ -238,11 +238,11 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
 
         append_jsonl(
             pipeline.artifacts.findings,
-            {"finding": "RIS supports ISAC sensing", "source_url": "https://example.org"},
+            {"finding": "AI adoption is associated with innovation", "source_url": "https://example.org"},
         )
         append_jsonl(
             pipeline.artifacts.claims,
-            {"claim": "RIS can improve ISAC coverage", "source_urls": ["https://example.org"]},
+            {"claim": "Complementary capability may improve AI value", "source_urls": ["https://example.org"]},
         )
 
         debate_readiness = pipeline._assess_material_readiness(steps["claim_debate"])
@@ -338,7 +338,7 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
 
     def test_literature_search_starts_single_batch_search_plan(self):
         agent = MainAgent()
-        agent.instruction = "[研究主题]\n研究智能反射面在通信感知一体化系统中的赋能\n"
+        agent.instruction = "[研究主题]\n人工智能采用与企业创新\n"
         agent.sub_models = ["worker-model"]
         agent.meta = {
             "profile_name": "research_mode",
@@ -356,7 +356,7 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
         self.assertIn("read_papers", params["tools"])
         self.assertNotIn("semantic_scholar_search", params["tools"])
         self.assertIn("立即记录", params["task_instruction"])
-        self.assertIn('"reconfigurable intelligent surface"', params["context"])
+        self.assertIn("人工智能采用与企业创新", params["context"])
 
     def test_literature_search_uses_step1_scratchpad_terms_when_available(self):
         root = Path("workspace") / "test_search_plan"
@@ -366,12 +366,12 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "## 研究问题拆解",
-                    "中文关键词: 通信感知一体化, 智能反射面",
-                    "英文关键词: integrated sensing and communication, reconfigurable intelligent surface",
+                    "中文关键词: 人工智能采用, 企业创新",
+                    "英文关键词: artificial intelligence adoption, firm innovation",
                     "检索式:",
-                    "- RIS ISAC beamforming",
-                    "- RIS assisted vehicular sensing",
-                    "- Intelligent Reflecting Surface in Integrated Sensing and Communication",
+                    "- AI adoption firm innovation",
+                    "- generative AI organizational capability",
+                    "- technology adoption firm performance",
                 ]
             ),
             encoding="utf-8",
@@ -392,9 +392,9 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
         params = agent._literature_search_task_params()
         context = params["context"]
 
-        self.assertIn("integrated sensing and communication", context)
-        self.assertIn("RIS ISAC beamforming", agent._extract_search_terms_from_scratchpad())
-        self.assertIn('"RIS" "ISAC"', context)
+        self.assertIn("artificial intelligence adoption", context)
+        self.assertIn("AI adoption firm innovation", agent._extract_search_terms_from_scratchpad())
+        self.assertIn("technology adoption firm performance", context)
 
     def test_step3_prompt_samples_paper_notes_instead_of_injecting_all(self):
         cfg = AgentConfig(
@@ -404,7 +404,7 @@ class TestResearchMode(unittest.IsolatedAsyncioTestCase):
             workspace_dir=Path("workspace"),
         )
         pipeline = pipeline_module.ResearchPipeline(
-            ResearchRequest(topic="RIS ISAC", trigger="internal"),
+            ResearchRequest(topic="AI adoption and firm innovation", trigger="internal"),
             cfg,
         )
         for index in range(30):
