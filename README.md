@@ -1,8 +1,8 @@
 # AI4MS / RiffBand
 
-An auditable, human-approved, and reproducible AI research workspace for management science.
+An AI research workbench vertically integrated for management science, from research ideas and literature to analysis, evidence, and delivery.
 
-> The `ai4s` branch is transforming RiffBand from a general research-orchestration prototype into the AI4MS product. The existing CLI, MCP server, agent runtime, research pipeline, and visual HTML report remain available while Topic Scout, Research Protocol, approval workflows, evidence lineage, and the Stata workbench are developed.
+> The `ai4s` branch is transforming RiffBand into a complete single-user AI4MS workbench. The existing CLI, MCP server, agent runtime, research pipeline, and visual HTML report are the engineering foundation. The nine-step web workspace, persistent project state, approvals, method/data planning, Stata integration, evidence review, and delivery surfaces are under active implementation. Planned capabilities are not presented here as already shipped.
 
 [中文](README.zh-CN.md) | [Documentation](docs/README.md) | [Product](docs/00_PRODUCT.md) | [Roadmap](docs/00_ROADMAP.md)
 
@@ -10,18 +10,24 @@ An auditable, human-approved, and reproducible AI research workspace for managem
 
 AI4MS is not an automatic paper generator. It organizes the decisions, evidence, assumptions, revisions, approvals, and reproducibility records required to move from an early research idea to a defensible research output.
 
+Its product shape can be understood as a lightweight, management-science vertical counterpart to Bohrium: literature, research workflow, method/data planning, scientific computing, and delivery live in one workbench, with deeper support for research design, Stata, evidence boundaries, and human decisions. This comparison describes product direction only; AI4MS is not affiliated with Bohrium and does not claim access to its non-public capabilities.
+
 ```text
 Research idea
-  -> TopicBrief
-  -> RelatedResearchReport
-  -> human topic approval (G0)
-  -> ResearchProtocol
-  -> theory, data, methods, and analysis
-  -> Claim-Evidence-Assumption
-  -> writing, visual HTML report, and reproducibility package
+  -> 1. State the idea
+  -> 2. Review existing research
+  -> 3. Select a worthwhile topic
+  -> 4. Confirm theory and research design
+  -> 5. Confirm data and compliance
+  -> 6. Prepare analysis plans and Stata code
+  -> 7. Run, diagnose, and reproduce
+  -> 8. Review evidence and interpretation
+  -> 9. Write, approve, and deliver
 ```
 
-The first product slice is Topic Scout. It performs horizon scanning, systematic expansion, and counter-search before proposing research streams, consensus and conflicts, six types of candidate gaps, feasibility evidence, and two or three candidate research questions. A model may propose a gap, but only a human may approve it.
+All nine steps live in one project workbench. Each step exposes the current task, an AI draft, structured editing, supporting evidence or run artifacts, approve/return actions, and a clear handoff. Topic Scout supplies real multi-source retrieval, research landscapes, counter-search, and candidate topics; later workspaces continue through design, data, methods, code, diagnostics, Claim-Evidence review, and delivery.
+
+The six-day competition build is a local single-user web product backed by SQLite and file artifacts. Every step has a real code path; organization login, multi-party approval, and cloud compute are deployment enhancements rather than substitutes for the product workflow.
 
 ## Human-in-the-Loop Research
 
@@ -66,6 +72,17 @@ Current research commands remain available during migration:
 ```
 
 These CLI/MCP parameters are compatibility interfaces, not the final AI4MS information architecture.
+
+## Competition Delivery
+
+The competition build will be delivered as a Dockerized web product with a browser GUI. One container exposes:
+
+- `/` for the nine-step management-science workbench;
+- `/api/v1` for remote invocation;
+- `/docs` for OpenAPI documentation;
+- `/healthz` for deployment health checks.
+
+SQLite, project artifacts, and HTML reports persist through a Docker volume. Model and search credentials are injected at runtime. Stata remains an external bring-your-own-license runner and is never bundled into the image.
 
 ## Documentation
 

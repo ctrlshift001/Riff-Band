@@ -49,7 +49,7 @@ pytest -q -p no:cacheprovider --basetemp <writable-workspace-temp>
 | `test_mcp_research_tool_returns_before_long_job_finishes` | 测试导入 `src/mcp_server.py`，但按根兼容模块的 `_module` 属性进行 monkeypatch |
 | `test_mcp_cancel_research_sets_cancel_event` | 同一 MCP 模块边界问题 |
 
-两项均属于需要修复的测试/模块边界问题。Windows 下若 pytest 默认临时目录不可写，应通过 `--basetemp` 指定仓库内可写的隔离目录。AI4MS Sprint 0 应先使基线测试转绿，再进行领域重构。
+两项均属于需要修复的测试/模块边界问题。Windows 下若 pytest 默认临时目录不可写，应通过 `--basetemp` 指定仓库内可写的隔离目录。九步工作台接入现有 Runtime 前，应先使基线测试转绿或明确隔离兼容层失败。
 
 ## 5. 示例运行状态
 
@@ -61,12 +61,13 @@ pytest -q -p no:cacheprovider --basetemp <writable-workspace-temp>
 - findings、papers/sources 和 HTML 图表标记达到 Gate；
 - partial 状态不能被当作完成结果。
 
-## 6. Sprint 0 退出条件
+## 6. 九步工作台接入条件
 
 - 现有测试通过；
 - 三个跨题型 fixture 无通信领域串扰；
 - DomainProfile 可以注入当前 pipeline；
-- ResearchProtocol Schema 和 legacy adapter round-trip 通过；
+- TopicBrief、ResearchProtocol、ProjectState 和 legacy adapter round-trip 通过；
 - 多源检索保留全部 backend provenance；
-- Artifact Manifest v2 包含 ID、hash 和 lineage；
-- 旧 CLI/MCP 仍能调用同一 service 层。
+- Web、CLI/MCP 能调用同一 service 层；
+- SQLite 项目状态和文件 artifact 在进程重启后可恢复；
+- 九步状态机不能被 Agent 自批或静默跳过。

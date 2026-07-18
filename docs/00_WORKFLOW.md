@@ -4,30 +4,33 @@
 
 - `ai4s`：AI4MS 产品改造集成分支；
 - `dev`：RiffBand 现有能力的对照基线；
-- `feature/*`：独立功能开发；
+- `feat/*`：独立功能开发；
 - `fix/*`：缺陷修复；
 - `docs/*`：文档和 Schema 整理；
 - `experiment/*`：不保证进入产品的验证代码。
 
 不要直接把未完成的大型重构长期堆在 `ai4s`。从 `ai4s` 创建短生命周期分支，通过小型 PR 回收。
 
-## 2. 推荐 PR 顺序
+## 2. 六天并行开发
 
-改造按以下边界拆分，避免把基础设施、产品功能和前端同时揉进一个提交：
+当前目标是完整九步工作台，不能按长期基础设施路线串行开发。两条工作流从同一 Schema 和示例出发并行推进：
 
-1. 测试、开发依赖、锁文件和 CI；
-2. DomainProfile 与去领域硬编码；
-3. ResearchProtocol 与 legacy adapter；
-4. 多源检索并集、快照和 provenance；
-5. PaperCard v2；
-6. Artifact Manifest v2；
-7. Gate Registry；
-8. Topic Scout 结构对象；
-9. Revision 与 Approval；
-10. Stata Runner；
-11. FastAPI、PostgreSQL 和 Web。
+| 工作流 | 分支前缀 | 主要内容 |
+|---|---|---|
+| Core Workbench | `feat/core-workbench-*` | FastAPI、SQLite、ProjectState、stage transition、检索、审批、Runner、导出与测试 |
+| Product Workbench | `feat/product-workbench-*` | 九步 Web 界面、MS Profile、Prompt、方法数据内容、HTML 报告、fixtures 与演示 |
 
-每个 PR 应对应验收矩阵中的一个或一组明确 ID。
+建议 PR 边界：
+
+1. 公共 Schema、API 示例和九步状态机；
+2. Web shell、项目创建和通用 stage workspace；
+3. 步骤 1-3 的检索、综述和选题；
+4. 步骤 4-5 的设计、方法、数据和合规；
+5. 步骤 6-7 的代码、Runner、结果和稳健性；
+6. 步骤 8-9 的证据、写作、HTML 和研究包；
+7. Docker、健康检查、API 示例、端到端测试、演示数据和发布。
+
+两人每天至少两次合流。公共 Schema 变更先合入 `ai4s`，前后端不得通过复制字段或临时 JSON 绕过契约。
 
 ## 3. 目录边界
 
@@ -39,7 +42,10 @@
 - `src/protocols`：ResearchProtocol 和 legacy adapter；
 - `src/artifacts_v2`：manifest、hash 和 lineage；
 - `src/research`：阶段流水线与兼容入口；
-- `src/api`、`src/services`、`src/db`：平台服务层，建立后再启用；
+- `src/api`：FastAPI 路由、请求响应模型和静态工作台入口；
+- `src/services`：九步用例、检索、审批、Runner 和导出服务；
+- `src/db`：SQLite repository 与迁移；
+- `src/web`：九步工作台 HTML/CSS/JS，不承载科研事实计算；
 - `docs/refer/AI4MS-DevPack_v0.3`：只作为调研和规格参考，不由运行时写入。
 
 新增代码应先匹配现有目录边界。只有职责已经稳定时才创建新顶层包。
@@ -95,6 +101,8 @@ Schema 变更必须同时列出迁移策略和旧数据读取方式。
 - HTML 报告是否与底层结构对象和证据一致；
 - Licensed/Sensitive/Restricted 数据是否进入不允许的模型或日志；
 - 新功能是否有失败、取消、重试和审计路径。
+- 九步是否共享同一 ProjectState，而不是形成互不连通的页面；
+- 页面上的批准动作是否真的改变服务端状态并约束后续步骤；
 
 ## 7. 仓库卫生
 
@@ -109,6 +117,7 @@ pytest -q -p no:cacheprovider
 禁止提交：
 
 - `.env`、API key、许可证序列号和授权码；
+- 含密钥、许可证或用户数据的 Docker layer、镜像导出和 Compose 配置；
 - `workspace/`、运行日志、缓存和临时输出；
 - 受限论文全文和无权再分发的数据；
 - Stata 安装包、许可证和未经批准的第三方 ado；
@@ -119,7 +128,7 @@ pytest -q -p no:cacheprovider
 以下变化不能只改代码：
 
 - 产品范围变化：更新 `00_PRODUCT.md`；
-- 阶段和排期变化：更新 `00_ROADMAP.md`；
+- 九步范围、分工和 DDL 变化：更新 `00_ROADMAP.md`；
 - API/Schema/SQL 变化：同步 DevPack 契约或其正式迁移版本；
 - 命令与配置变化：更新根 README 和 `00_GUIDELINE.md`；
 - 新风险或许可边界：更新风险登记和治理文档。

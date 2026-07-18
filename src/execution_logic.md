@@ -1,6 +1,6 @@
 # AI4MS 兼容 Runtime 执行逻辑
 
-本文档说明 AI4MS 当前复用的 RiffBand Runtime：MainAgent 三阶段控制、子 Agent 会话复用、并发委派和日志约定。它描述的是迁移期已经实现的执行层，不是 AI4MS 最终产品流程；ResearchProtocol、S0-S9、G0-G5、Revision/Approval 和平台服务以 `docs/` 中的新文档为准。
+本文档说明 AI4MS 当前复用的 RiffBand Runtime：MainAgent 三阶段控制、子 Agent 会话复用、并发委派和日志约定。它描述的是已经实现的执行层，不是用户直接面对的产品流程；MS 垂直工作台的九步 ProjectState、ResearchProtocol、G0-G5、Revision/Approval、Runner 和 Web 服务以 `docs/` 中的新文档为准。
 
 ## 1. 启动与配置
 
