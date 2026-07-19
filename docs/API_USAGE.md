@@ -1,6 +1,6 @@
 # AI4MS 远程 API 调用说明
 
-> 状态：九步工作台基础 API 已实现。OpenAPI `http://localhost:8000/docs` 是当前接口事实；检索任务、Runner 和导出端点将在对应服务接入时扩展。
+> 状态：S0-S9 十阶段工作台基础 API 已实现。OpenAPI `http://localhost:8000/docs` 是当前接口事实；检索任务、Runner 和导出端点将在对应服务接入时扩展。
 
 ## 1. 基础地址
 
@@ -8,7 +8,7 @@
 http://localhost:8000/api/v1
 ```
 
-健康检查：`GET /healthz`。领域画像：`GET /api/v1/meta/domain-profile`。九步定义：`GET /api/v1/meta/stages`。
+健康检查：`GET /healthz`。领域画像：`GET /api/v1/meta/domain-profile`。十阶段定义：`GET /api/v1/meta/stages`。
 
 ## 2. 最小调用流程
 
@@ -20,7 +20,7 @@ curl -X POST http://localhost:8000/api/v1/projects \
   -d '{"title":"生成式AI与企业创新","initial_idea":"生成式AI使用是否提升企业创新绩效？"}'
 ```
 
-响应包含 `project_id`、`current_stage`、九个 `stages`、审批记录和进度。创建项目时会生成 `idea` 的第一个不可变 revision。
+响应包含 `project_id`、`current_stage`、十个 `stages`、审批记录和进度。创建项目时会生成 `problem`（S0）的第一个不可变 revision。
 
 ### 列出和读取项目
 
@@ -43,7 +43,7 @@ curl -X POST http://localhost:8000/api/v1/projects/PROJECT_ID/stages/literature/
 ### 保存阶段资产
 
 ```bash
-curl -X PUT http://localhost:8000/api/v1/projects/PROJECT_ID/stages/idea \
+curl -X PUT http://localhost:8000/api/v1/projects/PROJECT_ID/stages/problem \
   -H "Content-Type: application/json" \
   -d '{"content":{"research_object":"平台企业","questions":["AI采用如何影响创新？"]},"change_reason":"收窄研究对象","author_type":"human"}'
 ```
@@ -53,7 +53,7 @@ curl -X PUT http://localhost:8000/api/v1/projects/PROJECT_ID/stages/idea \
 ### 提交人工决定
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/projects/PROJECT_ID/stages/idea/decisions \
+curl -X POST http://localhost:8000/api/v1/projects/PROJECT_ID/stages/problem/decisions \
   -H "Content-Type: application/json" \
   -d '{"decision":"approve","reason":"范围清晰，可以检索","actor_type":"human"}'
 ```
@@ -63,7 +63,7 @@ curl -X POST http://localhost:8000/api/v1/projects/PROJECT_ID/stages/idea/decisi
 ## 3. 当前基础覆盖
 
 - 创建、读取和列出项目；
-- 读取领域画像和九步定义；
+- 读取领域画像和十阶段定义；
 - 读取当前阶段或指定阶段；
 - 生成结构草稿、保存不可变 revision；
 - 提交人工审批并推进或阻塞阶段；

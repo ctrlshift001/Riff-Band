@@ -30,6 +30,7 @@ class StageDefinition(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     key: str
+    code: str
     position: int
     title: str
     short_title: str
@@ -39,15 +40,16 @@ class StageDefinition(BaseModel):
 
 
 STAGE_DEFINITIONS: tuple[StageDefinition, ...] = (
-    StageDefinition(key="idea", position=1, title="说出想法", short_title="研究想法", description="澄清研究对象、目标、范围和未知项。", artifact_type="TopicBrief"),
-    StageDefinition(key="literature", position=2, title="查看已有研究", short_title="已有研究", description="检索、筛选并组织论文、流派、共识与争议。", artifact_type="RelatedResearchReport"),
-    StageDefinition(key="topic", position=3, title="选择值得做的课题", short_title="课题选择", description="复核候选空白并比较可行课题。", artifact_type="TopicCandidate", gate="G0"),
-    StageDefinition(key="design", position=4, title="确认理论与研究设计", short_title="理论设计", description="形成机制、问题、识别或求解思路与关键假设。", artifact_type="ResearchProtocol", gate="G1"),
-    StageDefinition(key="data", position=5, title="确认数据与合规", short_title="数据方法", description="确认数据、变量、方法、许可、隐私与风险。", artifact_type="DataPlan", gate="G2"),
-    StageDefinition(key="analysis", position=6, title="制定分析计划和代码", short_title="分析计划", description="编辑分析步骤、模型式和 do-file revision。", artifact_type="AnalysisPlan", gate="G3"),
-    StageDefinition(key="run", position=7, title="运行、稳健性与复现", short_title="运行诊断", description="管理 Runner、日志、结果、诊断和复现元数据。", artifact_type="RunArtifact"),
-    StageDefinition(key="evidence", position=8, title="审核证据和结果解释", short_title="证据解释", description="连接 Claim、支持证据、反证、限制和结果。", artifact_type="ClaimEvidence", gate="G4"),
-    StageDefinition(key="delivery", position=9, title="写作、发布和交付", short_title="成果交付", description="生成报告、引用、HTML 和可复现研究包。", artifact_type="ResearchPackage", gate="G5"),
+    StageDefinition(key="problem", code="S0", position=1, title="问题识别", short_title="问题识别", description="澄清研究对象、问题边界、已有认识和候选研究空白。", artifact_type="TopicBrief", gate="G0"),
+    StageDefinition(key="literature", code="S1", position=2, title="文献综述", short_title="文献综述", description="检索、筛选并组织论文、研究流派、共识、争议和覆盖限制。", artifact_type="RelatedResearchReport", gate="覆盖检查"),
+    StageDefinition(key="theory", code="S2", position=3, title="理论构建", short_title="理论构建", description="形成理论机制、研究问题、竞争解释和可证伪命题。", artifact_type="TheoryModel", gate="G1 前置"),
+    StageDefinition(key="design", code="S3", position=4, title="研究设计", short_title="研究设计", description="确认分析单位、主备设计、识别假设、风险和停止条件。", artifact_type="ResearchProtocol", gate="G1"),
+    StageDefinition(key="data", code="S4", position=5, title="数据与变量", short_title="数据与变量", description="确认数据合同、变量口径、许可、隐私、伦理和质量风险。", artifact_type="DataContract", gate="G2"),
+    StageDefinition(key="identification", code="S5", position=6, title="识别与检验", short_title="识别与检验", description="冻结估计目标、分析计划、模型设定、诊断与代码计划。", artifact_type="AnalysisPlan", gate="G3"),
+    StageDefinition(key="analysis", code="S6", position=7, title="结果分析", short_title="结果分析", description="管理获批代码、Runner、运行日志、结果和可复现产物。", artifact_type="RunArtifact", gate="G3 后运行"),
+    StageDefinition(key="robustness", code="S7", position=8, title="稳健性检验", short_title="稳健性检验", description="执行替代口径、模型、样本和安慰剂检验，并保留失败结果。", artifact_type="RobustnessReport", gate="G4 前置"),
+    StageDefinition(key="evidence", code="S8", position=9, title="机制与异质性", short_title="机制与异质性", description="连接核心主张、机制、异质性、支持证据、反证和解释边界。", artifact_type="ClaimEvidence", gate="G4"),
+    StageDefinition(key="delivery", code="S9", position=10, title="结论与政策含义", short_title="结论与政策", description="生成论文草稿、政策含义、引用、HTML 报告和可复现发布包。", artifact_type="ResearchPackage", gate="G5"),
 )
 
 STAGES_BY_KEY = {stage.key: stage for stage in STAGE_DEFINITIONS}
@@ -77,4 +79,3 @@ class StageDecisionRequest(BaseModel):
 
 class DraftRequest(BaseModel):
     instruction: str = Field(default="", max_length=2000)
-

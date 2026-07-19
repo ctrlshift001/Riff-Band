@@ -1,6 +1,6 @@
 # AI4MS 文档索引
 
-本目录是 `ai4s` 分支的产品与工程文档入口。当前唯一产品定位是：面向管理科学的垂直 AI 科研工作台，产品形态类似 MS 领域的轻量玻尔，并在一个项目中覆盖介绍书的九个用户步骤。
+本目录是 `ai4ms` 分支的产品与工程文档入口。当前唯一产品定位是：面向管理科学的垂直 AI 科研工作台，产品形态类似 MS 领域的轻量玻尔，并把介绍书的用户任务落到前端 S0-S9 十阶段中。
 
 ## 文档权威顺序
 
@@ -18,12 +18,12 @@
 | 文档 | 用途 |
 |---|---|
 | [00_PRODUCT.md](00_PRODUCT.md) | AI4MS 产品定位、用户、核心对象与能力边界 |
-| [00_ROADMAP.md](00_ROADMAP.md) | 7 月 26 日截止的双人六天 DDL、九步工作台架构、分工与验收 |
+| [00_ROADMAP.md](00_ROADMAP.md) | 7 月 26 日截止的双人六天 DDL、十阶段工作台架构、分工与验收 |
 | [00_GUIDELINE.md](00_GUIDELINE.md) | 当前运行方式与 AI4MS 开发原则 |
 | [00_WORKFLOW.md](00_WORKFLOW.md) | 分支、提交、评审和仓库卫生规则 |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker GUI/API 部署契约、持久化、配置与验收 |
 | [API_USAGE.md](API_USAGE.md) | 远程 API 调用流程和最小接口覆盖 |
-| [ai4ms/BASELINE.md](ai4ms/BASELINE.md) | `ai4s` 分支改造前工程基线 |
+| [ai4ms/BASELINE.md](ai4ms/BASELINE.md) | AI4MS 改造前工程基线 |
 
 ## AI4MS DevPack v0.3
 
@@ -43,9 +43,9 @@
 ## 当前版本口径
 
 - 工程参考基线：AI4MS DevPack `v0.3`；
-- 当前 Git 分支：`ai4s`；
+- 当前 Git 分支：`ai4ms`；
 - 当前代码仍保留 RiffBand 兼容入口；
-- 九步 Web/FastAPI/SQLite、不可变 revision、人工审批和 Docker 基础已经可运行；分阶段 Agent、Stata BYOL Runner、证据关联和导出仍在六天冲刺中实现；
+- 十阶段 Next.js/FastAPI/SQLite、不可变 revision、人工审批和 Docker 基础已经可运行；分阶段 Agent、Stata BYOL Runner、证据关联、导出和 Docker 单入口仍在六天冲刺中实现；
 - 最终比赛交付为同时提供浏览器 GUI 和 `/api/v1` 的 Docker 镜像，部署与调用文档随实现补齐；
 - HTML 可视化报告是保留并升级的现有能力，不属于待删除的旧产品资料。
 

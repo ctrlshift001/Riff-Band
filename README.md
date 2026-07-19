@@ -2,7 +2,7 @@
 
 面向管理科学（MS）的垂直 AI 科研工作台：从研究想法、文献和设计，到分析、证据、HTML 可视化报告与成果交付。
 
-> 当前 `ai4s` 分支已经提供可运行的九步浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像和 Docker 打包文件。现有 CLI、MCP、Agent Runtime、研究流水线和 HTML 报告继续作为工程基础；分阶段 AI、方法数据、Stata、证据和成果交付服务仍在六天冲刺中实现，本文档不把规划能力写成已上线能力。
+> 当前 `ai4ms` 分支已经提供可运行的 S0-S9 十阶段浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像和 Docker 基础文件。现有 CLI、MCP、Agent Runtime、研究流水线和 HTML 报告继续作为工程基础；分阶段 AI、方法数据、Stata、证据和成果交付服务仍在六天冲刺中实现，本文档不把规划能力写成已上线能力。
 
 [文档索引](docs/README.md) | [产品定义](docs/00_PRODUCT.md) | [开发路线](docs/00_ROADMAP.md) | [开发指南](docs/00_GUIDELINE.md)
 
@@ -16,23 +16,24 @@ AI4MS 不是自动论文生成器。它更像一名严谨的科研项目经理�
 
 ```text
 研究想法
-  -> 1. 说出想法
-  -> 2. 查看已有研究
-  -> 3. 选择值得做的课题
-  -> 4. 确认理论与研究设计
-  -> 5. 确认数据与合规
-  -> 6. 制定分析计划和 Stata 代码
-  -> 7. 运行、稳健性检查和复现
-  -> 8. 审核证据和结果解释
-  -> 9. 写作、发布和交付
+  -> S0. 问题识别
+  -> S1. 文献综述
+  -> S2. 理论构建
+  -> S3. 研究设计
+  -> S4. 数据与变量
+  -> S5. 识别与检验
+  -> S6. 结果分析
+  -> S7. 稳健性检验
+  -> S8. 机制与异质性
+  -> S9. 结论与政策含义
 ```
 
 ## 当前实现
 
-九步已经进入同一个项目工作台，当前基础能力包括：
+S0-S9 十阶段已经进入同一个项目工作台，当前基础能力包括：
 
 - 创建、读取和切换科研项目；
-- 查看九步状态并逐步解锁；
+- 查看十阶段状态并逐步解锁；
 - 编辑和保存结构化阶段资产；
 - 为每次修改生成不可变 revision 和 SHA-256 hash；
 - 人工执行批准、退回修改和阻塞决定；
@@ -42,7 +43,7 @@ AI4MS 不是自动论文生成器。它更像一名严谨的科研项目经理�
 
 当前“生成草稿”只生成明确标记为 `structure_template` 的结构模板，不伪装成模型研究结果。后续 Agent 服务继续复用同一 revision 和审批接口。
 
-保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。课题侦察、研究设计、数据方法、Stata Runner、Claim-Evidence 审核和成果导出将在现有九步结构上继续接入。
+保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。课题侦察、研究设计、数据方法、Stata Runner、Claim-Evidence 审核和成果导出将在现有十阶段结构上继续接入。
 
 ## 人机协作
 
@@ -93,18 +94,28 @@ Copy-Item .env.example .env
 Copy-Item aorchestra.yaml.example aorchestra.yaml
 ```
 
-启动九步浏览器工作台：
+终端 1 启动 FastAPI：
 
 ```powershell
 ai4ms-web
 ```
 
+终端 2 启动 Next.js 十阶段工作台：
+
+```powershell
+cd src/web
+npm ci
+npm run dev
+```
+
 打开以下地址：
 
-- 工作台：`http://localhost:8000/`
+- Next.js 工作台：`http://localhost:3000/`
 - 远程 API：`http://localhost:8000/api/v1`
 - OpenAPI：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/healthz`
+
+Next.js 默认把同源 `/api/v1` 和 `/healthz` 代理到 `http://127.0.0.1:8000`。需要连接其他 FastAPI 地址时，在 `src/web/.env.local` 设置 `AI4MS_API_INTERNAL_URL`。
 
 兼容 CLI 和 MCP 入口：
 

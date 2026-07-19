@@ -1,21 +1,36 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import {
+  ApiError,
+  createProject,
+  createStageDraft,
+  decideStage,
+  getProject,
+  listProjects,
+  saveStage,
+  type ApprovalDecision,
+  type Project,
+  type ProjectStage,
+  type ProjectSummary,
+  type StageStatus,
+} from "@/lib/api";
 
 type ViewKey = "journey" | "evidence" | "methods" | "runs" | "approvals";
 type SuggestionState = "pending" | "accepted" | "modified" | "rejected";
 
 const stages = [
-  { id: "S0", name: "问题识别", agent: "Topic Agent", gate: "G0", status: "done", output: "课题简报与已有研究报告", decision: "确认边界、改写问题或暂停课题", check: "候选空白完成反向检索" },
-  { id: "S1", name: "文献综述", agent: "Literature Agent", gate: "覆盖检查", status: "done", output: "检索协议、论文卡与证据流派", decision: "修改检索式并决定纳入/排除", check: "核心结论全部可回溯" },
-  { id: "S2", name: "理论构建", agent: "Theory Agent", gate: "G1 前置", status: "done", output: "理论图、研究问题与竞争解释", decision: "选择理论并确认贡献边界", check: "问题可证伪且存在竞争解释" },
-  { id: "S3", name: "研究设计", agent: "Design Agent", gate: "G1", status: "active", output: "研究协议、设计备忘录与假设表", decision: "选择主备设计、接受风险并送审", check: "estimand、识别假设和停止条件完整" },
-  { id: "S4", name: "数据与变量", agent: "Data Agent", gate: "G2", status: "todo", output: "数据合同、变量表与伦理清单", decision: "确认数据权限、代理变量和运行位置", check: "许可、隐私和关键口径通过" },
-  { id: "S5", name: "识别与检验", agent: "Analysis Plan Agent", gate: "G3", status: "todo", output: "分析计划、模型卡与代码计划", decision: "逐项修改并冻结主次分析", check: "计划与代码逐项对应" },
-  { id: "S6", name: "结果分析", agent: "Stata Analyst", gate: "G3 后运行", status: "todo", output: "do-file、运行日志与结果产物", decision: "审代码、批准运行和选择重跑分支", check: "获批代码与数据签名一致" },
-  { id: "S7", name: "稳健性检验", agent: "Robustness Agent", gate: "G4 前置", status: "todo", output: "稳健性矩阵与复现报告", decision: "追加检验或接受失败影响", check: "关键失败项不可被隐藏" },
-  { id: "S8", name: "机制与异质性", agent: "Evidence Agent", gate: "G4", status: "todo", output: "主张、证据边与解释备忘录", decision: "改写、降级或撤回主张", check: "每条主张连接结果与反证" },
-  { id: "S9", name: "结论与政策含义", agent: "Writing Agent", gate: "G5", status: "todo", output: "论文草稿、答复信与发布包", decision: "重写、披露并批准发布", check: "引用、数字与复现包一致" },
+  { key: "problem", id: "S0", name: "问题识别", agent: "Topic Agent", gate: "G0", output: "课题简报与已有研究报告", decision: "确认边界、改写问题或暂停课题", check: "候选空白完成反向检索" },
+  { key: "literature", id: "S1", name: "文献综述", agent: "Literature Agent", gate: "覆盖检查", output: "检索协议、论文卡与证据流派", decision: "修改检索式并决定纳入/排除", check: "核心结论全部可回溯" },
+  { key: "theory", id: "S2", name: "理论构建", agent: "Theory Agent", gate: "G1 前置", output: "理论图、研究问题与竞争解释", decision: "选择理论并确认贡献边界", check: "问题可证伪且存在竞争解释" },
+  { key: "design", id: "S3", name: "研究设计", agent: "Design Agent", gate: "G1", output: "研究协议、设计备忘录与假设表", decision: "选择主备设计、接受风险并送审", check: "estimand、识别假设和停止条件完整" },
+  { key: "data", id: "S4", name: "数据与变量", agent: "Data Agent", gate: "G2", output: "数据合同、变量表与伦理清单", decision: "确认数据权限、代理变量和运行位置", check: "许可、隐私和关键口径通过" },
+  { key: "identification", id: "S5", name: "识别与检验", agent: "Analysis Plan Agent", gate: "G3", output: "分析计划、模型卡与代码计划", decision: "逐项修改并冻结主次分析", check: "计划与代码逐项对应" },
+  { key: "analysis", id: "S6", name: "结果分析", agent: "Stata Analyst", gate: "G3 后运行", output: "do-file、运行日志与结果产物", decision: "审代码、批准运行和选择重跑分支", check: "获批代码与数据签名一致" },
+  { key: "robustness", id: "S7", name: "稳健性检验", agent: "Robustness Agent", gate: "G4 前置", output: "稳健性矩阵与复现报告", decision: "追加检验或接受失败影响", check: "关键失败项不可被隐藏" },
+  { key: "evidence", id: "S8", name: "机制与异质性", agent: "Evidence Agent", gate: "G4", output: "主张、证据边与解释备忘录", decision: "改写、降级或撤回主张", check: "每条主张连接结果与反证" },
+  { key: "delivery", id: "S9", name: "结论与政策含义", agent: "Writing Agent", gate: "G5", output: "论文草稿、答复信与发布包", decision: "重写、披露并批准发布", check: "引用、数字与复现包一致" },
 ] as const;
 
 const navItems: { key: ViewKey; label: string; short: string }[] = [
@@ -89,44 +104,52 @@ function StateBadge({ state }: { state: string }) {
     conflict: "有冲突",
     approved: "已批准",
     draft: "待提交",
-    blocked: "前置阻塞",
     locked: "未解锁",
     succeeded: "运行成功",
     running: "正在运行",
+    not_started: "未解锁",
+    in_progress: "进行中",
+    needs_review: "待审批",
+    blocked: "已阻塞",
   };
   return <span className={`state-badge state-${state}`}>{labels[state] ?? state}</span>;
 }
 
-function ProgressNodes({ activeIndex }: { activeIndex: number }) {
+function ProgressNodes({ activeIndex, stageStates }: { activeIndex: number; stageStates: ProjectStage[] }) {
   return (
     <div className="progress-nodes" aria-label={`研究进度，第 ${activeIndex + 1} 阶段，共 10 阶段`}>
-      {stages.map((stage, index) => (
-        <div className={`progress-node ${index < activeIndex ? "is-done" : ""} ${index === activeIndex ? "is-current" : ""}`} key={stage.id}>
-          <span>{index < activeIndex ? "✓" : ""}</span>
+      {stages.map((stage, index) => {
+        const isDone = stageStates[index]?.status === "approved";
+        return (
+        <div className={`progress-node ${isDone ? "is-done" : ""} ${index === activeIndex ? "is-current" : ""}`} key={stage.id}>
+          <span>{isDone ? "✓" : ""}</span>
           <small>{stage.id}</small>
         </div>
-      ))}
+      )})}
     </div>
   );
 }
 
-function StageRail({ activeIndex, onSelect }: { activeIndex: number; onSelect: (index: number) => void }) {
+function StageRail({ activeIndex, stageStates, onSelect }: { activeIndex: number; stageStates: ProjectStage[]; onSelect: (index: number) => void }) {
   return (
     <aside className="stage-rail" aria-label="科研阶段导航">
       <div className="stage-rail-label">科研阶段</div>
       <div className="stage-list">
-        {stages.map((stage, index) => (
+        {stages.map((stage, index) => {
+          const state = stageStates[index]?.status;
+          const isDone = state === "approved";
+          return (
           <button
-            className={`stage-item ${index < activeIndex ? "is-done" : ""} ${index === activeIndex ? "is-active" : ""}`}
+            className={`stage-item ${isDone ? "is-done" : ""} ${state === "not_started" ? "is-locked" : ""} ${index === activeIndex ? "is-active" : ""}`}
             key={stage.id}
             onClick={() => onSelect(index)}
             aria-current={index === activeIndex ? "step" : undefined}
           >
-            <span className="stage-dot">{index < activeIndex ? "✓" : stage.id.replace("S", "")}</span>
+            <span className="stage-dot">{isDone ? "✓" : stage.id.replace("S", "")}</span>
             <span className="stage-id">{stage.id}</span>
             <span className="stage-name">{stage.name}</span>
           </button>
-        ))}
+        )})}
       </div>
       <div className="rail-footer">
         <span className="rail-lock">人</span>
@@ -141,11 +164,15 @@ function AgentPanel({
   suggestionStates,
   onDecision,
   onSubmit,
+  canSubmit,
+  busy,
 }: {
   stageIndex: number;
   suggestionStates: Record<number, SuggestionState>;
   onDecision: (id: number, state: SuggestionState) => void;
   onSubmit: () => void;
+  canSubmit: boolean;
+  busy: boolean;
 }) {
   const stage = stages[stageIndex];
   const stageSuggestions = stageIndex === 3
@@ -198,7 +225,7 @@ function AgentPanel({
       </div>
       <div className="agent-submit-wrap">
         <div className="submit-readiness"><span>{Object.values(suggestionStates).filter((s) => s !== "pending").length}</span> 条建议已处理</div>
-        <button className="primary-action" onClick={onSubmit}>提交 {stage.gate} 审批 <span>→</span></button>
+        <button className="primary-action" onClick={onSubmit} disabled={!canSubmit || busy}>{busy ? "正在同步…" : `提交 ${stage.gate} 审批`} <span>→</span></button>
       </div>
     </aside>
   );
@@ -286,6 +313,116 @@ function GenericStage({ stageIndex }: { stageIndex: number }) {
   );
 }
 
+function StageAssetEditor({
+  stage,
+  busy,
+  onSave,
+  onDraft,
+  onDecision,
+}: {
+  stage?: ProjectStage;
+  busy: boolean;
+  onSave: (content: Record<string, unknown>, reason: string) => Promise<void>;
+  onDraft: (instruction: string) => Promise<void>;
+  onDecision: (decision: ApprovalDecision, reason: string) => Promise<void>;
+}) {
+  const [contentText, setContentText] = useState(() => JSON.stringify(stage?.content ?? {}, null, 2));
+  const [changeReason, setChangeReason] = useState("人工更新阶段资产");
+  const [instruction, setInstruction] = useState("");
+  const [decisionReason, setDecisionReason] = useState("");
+  const [editorError, setEditorError] = useState("");
+
+  const locked = !stage || stage.status === "not_started";
+
+  async function submitSave() {
+    try {
+      const parsed = JSON.parse(contentText) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("阶段资产必须是 JSON 对象");
+      }
+      setEditorError("");
+      await onSave(parsed as Record<string, unknown>, changeReason);
+    } catch (error) {
+      if (error instanceof SyntaxError || (error instanceof Error && error.message.includes("JSON"))) {
+        setEditorError(error instanceof Error ? error.message : "JSON 格式不正确");
+        return;
+      }
+      throw error;
+    }
+  }
+
+  return (
+    <section className="content-card asset-editor">
+      <div className="card-heading">
+        <div><p className="eyebrow">FastAPI stage asset</p><h2>阶段资产</h2></div>
+        {stage ? <StateBadge state={stage.status} /> : <StateBadge state="locked" />}
+      </div>
+      <div className="asset-meta">
+        <span>{stage?.artifact_type ?? "尚未连接项目"}</span>
+        <span>Revision {stage?.revision ?? 0}</span>
+        <span>{stage?.content_hash ? `SHA-256 ${stage.content_hash.slice(0, 10)}…` : "尚无内容哈希"}</span>
+      </div>
+      <textarea
+        className="asset-json"
+        aria-label="阶段资产 JSON"
+        value={contentText}
+        onChange={(event) => setContentText(event.target.value)}
+        disabled={locked || busy}
+        spellCheck={false}
+      />
+      {editorError && <p className="form-error">{editorError}</p>}
+      {locked ? (
+        <div className="locked-notice">前一阶段批准后，本阶段将自动解锁。</div>
+      ) : (
+        <>
+          <div className="asset-control-row">
+            <label><span>草稿生成要求</span><input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：补齐研究对象、边界和反向检索字段" /></label>
+            <button className="outline-compact" onClick={() => onDraft(instruction)} disabled={busy}>生成结构草稿</button>
+          </div>
+          <div className="asset-control-row">
+            <label><span>版本变更说明</span><input value={changeReason} onChange={(event) => setChangeReason(event.target.value)} /></label>
+            <button className="primary-action" onClick={submitSave} disabled={busy}>保存新 revision</button>
+          </div>
+          <div className="decision-row">
+            <label><span>审批意见</span><input value={decisionReason} onChange={(event) => setDecisionReason(event.target.value)} placeholder="退回或阻塞时说明原因" /></label>
+            <button onClick={() => onDecision("request_changes", decisionReason)} disabled={busy || !stage.revision}>退回修改</button>
+            <button className="danger-button" onClick={() => onDecision("reject", decisionReason)} disabled={busy || !stage.revision}>阻塞阶段</button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function NewProjectModal({
+  open,
+  busy,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onCreate: (title: string, idea: string) => Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  const [idea, setIdea] = useState("");
+
+  if (!open) return null;
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.currentTarget === event.target && !busy && onClose()}>
+      <section className="approval-modal project-modal" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
+        <button className="modal-close" onClick={onClose} disabled={busy} aria-label="关闭创建课题窗口">×</button>
+        <p className="eyebrow">New research project</p>
+        <h2 id="new-project-title">创建科研课题</h2>
+        <label className="modal-field"><span>课题名称</span><input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} autoFocus /></label>
+        <label className="modal-field"><span>初始科学问题</span><textarea value={idea} onChange={(event) => setIdea(event.target.value)} maxLength={4000} /></label>
+        <div className="modal-actions"><button onClick={onClose} disabled={busy}>取消</button><button className="primary-action" disabled={busy || !title.trim() || !idea.trim()} onClick={() => onCreate(title.trim(), idea.trim())}>{busy ? "正在创建…" : "创建并进入 S0"}</button></div>
+      </section>
+    </div>
+  );
+}
+
 function EvidenceLibrary() {
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("全部");
@@ -365,14 +502,37 @@ function RunsView() {
   );
 }
 
-function ApprovalsView({ g1Submitted, onOpen }: { g1Submitted: boolean; onOpen: () => void }) {
-  const cards = gateCards.map((gate) => gate.id === "G1" && g1Submitted ? { ...gate, status: "review", time: "刚刚提交 · 等待 2 人会签" } : gate);
+function ApprovalsView({ project, onOpen }: { project: Project | null; onOpen: (stageIndex: number) => void }) {
+  const gateStageIndices = [0, 3, 4, 5, 8, 9];
+  const cards = gateCards.map((gate, index) => {
+    const stageIndex = gateStageIndices[index];
+    const stage = project?.stages[stageIndex];
+    const status = !stage || stage.status === "not_started"
+      ? "locked"
+      : stage.status === "needs_review"
+        ? "review"
+        : stage.status === "in_progress"
+          ? "draft"
+          : stage.status;
+    return {
+      ...gate,
+      status,
+      stageIndex,
+      asset: stage ? `${stage.artifact_type} · revision ${stage.revision}` : gate.asset,
+      time: stage?.updated_at ? new Date(stage.updated_at).toLocaleString("zh-CN") : "等待前置阶段",
+      disabled: !stage || stage.status === "not_started" || stage.revision < 1,
+    };
+  });
+  const approved = project?.stages.filter((stage) => stage.status === "approved").length ?? 0;
+  const pending = project?.stages.filter((stage) => stage.status === "needs_review").length ?? 0;
+  const blocked = project?.stages.filter((stage) => stage.status === "blocked").length ?? 0;
+  const returned = project?.approvals.filter((event) => event.decision === "request_changes").length ?? 0;
   return (
     <div className="approvals-view page-view">
       <header className="view-header"><div><p className="eyebrow">Human Approval Center</p><h1>人工审批中心</h1><p>批准的是确定版本和哈希。上游语义变化会使受影响的下游审批自动失效。</p></div><button className="outline-compact">查看审批规则</button></header>
-      <div className="approval-summary"><div><strong>1</strong><span>已批准</span></div><div><strong>{g1Submitted ? 1 : 0}</strong><span>待审批</span></div><div><strong>1</strong><span>前置阻塞</span></div><div><strong>0</strong><span>失效待复核</span></div></div>
+      <div className="approval-summary"><div><strong>{approved}</strong><span>已批准阶段</span></div><div><strong>{pending}</strong><span>待审批</span></div><div><strong>{blocked}</strong><span>已阻塞</span></div><div><strong>{returned}</strong><span>退回记录</span></div></div>
       <div className="approval-layout">
-        <section className="gate-list">{cards.map((gate) => <button className={`gate-card gate-${gate.status}`} onClick={gate.id === "G1" ? onOpen : undefined} key={gate.id}><span className="gate-code">{gate.id}</span><div><h2>{gate.title}</h2><p>{gate.asset}</p><small>批准人：{gate.owner}</small></div><div className="gate-state"><StateBadge state={gate.status} /><small>{gate.time}</small></div><span className="gate-arrow">→</span></button>)}</section>
+        <section className="gate-list">{cards.map((gate) => <button className={`gate-card gate-${gate.status}`} onClick={() => onOpen(gate.stageIndex)} disabled={gate.disabled} key={gate.id}><span className="gate-code">{gate.id}</span><div><h2>{gate.title}</h2><p>{gate.asset}</p><small>批准人：{gate.owner}</small></div><div className="gate-state"><StateBadge state={gate.status} /><small>{gate.time}</small></div><span className="gate-arrow">→</span></button>)}</section>
         <aside className="approval-rule-card"><p className="eyebrow">Four-eyes policy</p><h2>关键决定至少经过两种角色</h2><div className="reviewer-stack"><span>研</span><span>导</span><span>法</span></div><p>研究者提交，导师或 PI 与方法审核者分别确认价值和方法。Agent 永远不能成为批准人。</p><hr /><h3>上游变化会发生什么？</h3><ul><li>课题边界变化 → G0–G5 失效</li><li>主设计变化 → G1–G5 失效</li><li>主模型或 do-file 变化 → G3–G5 失效</li><li>纯排版变化 → 仅重查 G5 输出</li></ul></aside>
       </div>
     </div>
@@ -382,15 +542,20 @@ function ApprovalsView({ g1Submitted, onOpen }: { g1Submitted: boolean; onOpen: 
 function ApprovalModal({
   open,
   stageIndex,
+  stageState,
+  busy,
   onClose,
   onConfirm,
 }: {
   open: boolean;
   stageIndex: number;
+  stageState?: ProjectStage;
+  busy: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (reason: string) => Promise<void>;
 }) {
   const [checked, setChecked] = useState([true, true, false]);
+  const [reason, setReason] = useState("已检查本阶段资产、证据限制和未解决风险，同意批准当前 revision。");
   if (!open) return null;
   const stage = stages[stageIndex];
   const allChecked = checked.every(Boolean);
@@ -399,15 +564,15 @@ function ApprovalModal({
       <section className="approval-modal" role="dialog" aria-modal="true" aria-labelledby="approval-title">
         <button className="modal-close" onClick={onClose} aria-label="关闭审批窗口">×</button>
         <p className="eyebrow">Human approval · {stage.gate}</p>
-        <h2 id="approval-title">提交“{stage.name}”审批</h2>
-        <p>本次提交将冻结当前 revision。审批人会看到与上一批准版的差异、证据状态和未解决风险。</p>
-        <div className="review-packet"><div><span>审批对象</span><strong>{stage.output}</strong></div><div><span>当前版本</span><strong>Revision 4 · 7c91…ae20</strong></div><div><span>默认批准人</span><strong>导师 + 方法审核者</strong></div></div>
+        <h2 id="approval-title">批准“{stage.name}”当前版本</h2>
+        <p>本次操作会批准确定的 revision 和内容哈希，并解锁下一阶段。后续修改本阶段会自动使下游状态失效。</p>
+        <div className="review-packet"><div><span>审批对象</span><strong>{stageState?.artifact_type ?? stage.output}</strong></div><div><span>当前版本</span><strong>Revision {stageState?.revision ?? 0} · {stageState?.content_hash?.slice(0, 10) ?? "尚无哈希"}…</strong></div><div><span>执行角色</span><strong>Human reviewer</strong></div></div>
         <h3>提交前由研究者确认</h3>
         <div className="modal-checks">
           {["我已检查研究问题、变量口径和主设计", "我已阅读冲突证据与当前覆盖限制", "我理解批准后再修改主设计会使下游审批失效"].map((item, index) => <label key={item}><input type="checkbox" checked={checked[index]} onChange={() => setChecked((current) => current.map((value, itemIndex) => itemIndex === index ? !value : value))} /><span>{item}</span></label>)}
         </div>
-        <label className="reason-field"><span>提交说明</span><textarea defaultValue="主设计采用企业与年份双向固定效应；双重差分保留为备选设计。请重点审核采用指标和识别边界。" /></label>
-        <div className="modal-actions"><button onClick={onClose}>继续修改</button><button className="primary-action" disabled={!allChecked} onClick={onConfirm}>确认提交人工审批</button></div>
+        <label className="reason-field"><span>审批说明</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <div className="modal-actions"><button onClick={onClose} disabled={busy}>继续修改</button><button className="primary-action" disabled={!allChecked || busy || !stageState?.revision} onClick={() => onConfirm(reason)}>{busy ? "正在批准…" : "确认批准并推进"}</button></div>
       </section>
     </div>
   );
@@ -415,78 +580,251 @@ function ApprovalModal({
 
 export default function Home() {
   const [view, setView] = useState<ViewKey>("journey");
-  const [activeStage, setActiveStage] = useState(3);
+  const [activeStage, setActiveStage] = useState(0);
   const [selectedDesign, setSelectedDesign] = useState("fe");
   const [question, setQuestion] = useState("生成式 AI 的引入是否显著提升了企业创新产出？其作用机制与边界条件是什么？");
   const [suggestionStates, setSuggestionStates] = useState<Record<number, SuggestionState>>({});
   const [approvalOpen, setApprovalOpen] = useState(false);
-  const [g1Submitted, setG1Submitted] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectMenu, setProjectMenu] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [project, setProject] = useState<Project | null>(null);
+  const [connectionState, setConnectionState] = useState<"loading" | "ready" | "error">("loading");
+  const [apiError, setApiError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const activeStageData = stages[activeStage];
+  const activeStageState = project?.stages[activeStage];
+  const pendingApprovals = project?.stages.filter((stage) => stage.status === "needs_review").length ?? 0;
   const pageTitle = useMemo(() => navItems.find((item) => item.key === view)?.short ?? "研究旅程", [view]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const availableProjects = await listProjects();
+        if (cancelled) return;
+        setProjects(availableProjects);
+        if (availableProjects.length > 0) {
+          const loadedProject = await getProject(availableProjects[0].project_id);
+          if (cancelled) return;
+          setProject(loadedProject);
+          const currentIndex = stages.findIndex((stage) => stage.key === loadedProject.current_stage);
+          setActiveStage(currentIndex >= 0 ? currentIndex : 0);
+          syncDesignFields(loadedProject);
+        }
+        setConnectionState("ready");
+      } catch (error) {
+        if (cancelled) return;
+        setConnectionState("error");
+        setApiError(readError(error));
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  function readError(error: unknown) {
+    if (error instanceof ApiError) return error.message;
+    if (error instanceof Error) return error.message;
+    return "无法连接 FastAPI 服务";
+  }
+
+  function syncDesignFields(nextProject: Project) {
+    const design = nextProject.stages.find((stage) => stage.key === "design");
+    const researchQuestion = design?.content.research_question;
+    const primaryMethod = design?.content.primary_method;
+    if (typeof researchQuestion === "string" && researchQuestion) setQuestion(researchQuestion);
+    if (typeof primaryMethod === "string" && primaryMethod) setSelectedDesign(primaryMethod);
+  }
+
+  function applyProject(nextProject: Project, followCurrent = false) {
+    setProject(nextProject);
+    syncDesignFields(nextProject);
+    const summary: ProjectSummary = {
+      project_id: nextProject.project_id,
+      title: nextProject.title,
+      initial_idea: nextProject.initial_idea,
+      status: nextProject.status,
+      current_stage: nextProject.current_stage,
+      created_at: nextProject.created_at,
+      updated_at: nextProject.updated_at,
+    };
+    setProjects((current) => [summary, ...current.filter((item) => item.project_id !== summary.project_id)]);
+    if (followCurrent) {
+      const nextIndex = stages.findIndex((stage) => stage.key === nextProject.current_stage);
+      if (nextIndex >= 0) setActiveStage(nextIndex);
+    }
+  }
 
   function showToast(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
   }
+
+  function handleError(error: unknown) {
+    setApiError(readError(error));
+    if (!(error instanceof ApiError)) setConnectionState("error");
+  }
+
+  async function openProject(projectId: string) {
+    setBusy(true);
+    setApiError("");
+    try {
+      const loadedProject = await getProject(projectId);
+      applyProject(loadedProject, true);
+      setProjectMenu(false);
+      setConnectionState("ready");
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateProject(title: string, idea: string) {
+    setBusy(true);
+    setApiError("");
+    try {
+      const created = await createProject(title, idea);
+      applyProject(created, true);
+      setNewProjectOpen(false);
+      setProjectMenu(false);
+      setView("journey");
+      setConnectionState("ready");
+      showToast("课题已创建，S0 问题识别已开始");
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveStage(content: Record<string, unknown>, reason: string) {
+    if (!project) return;
+    setBusy(true);
+    setApiError("");
+    try {
+      const finalContent = activeStageData.key === "design"
+        ? { ...content, research_question: question, primary_method: selectedDesign }
+        : content;
+      const updated = await saveStage(project.project_id, activeStageData.key, finalContent, reason);
+      applyProject(updated);
+      showToast(`${activeStageData.id} 已保存为 revision ${updated.stages[activeStage].revision}`);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateDraft(instruction: string) {
+    if (!project) return;
+    setBusy(true);
+    setApiError("");
+    try {
+      const updated = await createStageDraft(project.project_id, activeStageData.key, instruction);
+      applyProject(updated);
+      showToast(`${activeStageData.id} 结构草稿已写入 FastAPI`);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleStageDecision(decision: ApprovalDecision, reason: string) {
+    if (!project) return;
+    setBusy(true);
+    setApiError("");
+    try {
+      const updated = await decideStage(project.project_id, activeStageData.key, decision, reason);
+      applyProject(updated, decision === "approve");
+      if (decision === "approve") setApprovalOpen(false);
+      const message = decision === "approve" ? "已由人工批准并解锁下一阶段" : decision === "request_changes" ? "已退回修改" : "已阻塞本阶段";
+      showToast(`${activeStageData.gate} ${message}`);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function decideSuggestion(id: number, state: SuggestionState) {
     setSuggestionStates((current) => ({ ...current, [id]: state }));
     const verb = state === "accepted" ? "接受" : state === "modified" ? "转为人工修改" : state === "rejected" ? "拒绝" : "撤销处理";
-    showToast(`已${verb}建议，决定记录已保存`);
+    showToast(`已${verb}建议，请在阶段资产中保存最终内容`);
   }
-  function confirmApproval() {
-    setApprovalOpen(false);
-    if (activeStage === 3) setG1Submitted(true);
-    showToast(`${activeStageData.gate} 审批包已提交，AI 无法自行通过`);
-  }
+
   function selectStage(index: number) {
     setActiveStage(index);
     setView("journey");
   }
+
+  function openApproval(stageIndex = activeStage) {
+    const stage = project?.stages[stageIndex];
+    if (!stage || stage.status === "not_started" || stage.revision < 1) {
+      showToast("该阶段尚未解锁或没有可审批的 revision");
+      return;
+    }
+    setActiveStage(stageIndex);
+    setApprovalOpen(true);
+  }
+
+  const stageStatusLabels: Record<StageStatus, string> = {
+    not_started: "未解锁",
+    in_progress: "进行中",
+    needs_review: "待人工审批",
+    approved: "已批准",
+    blocked: "已阻塞",
+  };
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <button className="brand" onClick={() => setView("journey")} aria-label="返回研究旅程"><span>AI</span>4MS</button>
         <nav className="topnav" aria-label="主导航">
-          {navItems.map((item) => <button className={view === item.key ? "is-active" : ""} onClick={() => setView(item.key)} key={item.key}><span>{item.label}</span><small>{item.short}</small>{item.key === "approvals" && g1Submitted && <i>1</i>}</button>)}
+          {navItems.map((item) => <button className={view === item.key ? "is-active" : ""} onClick={() => setView(item.key)} key={item.key}><span>{item.label}</span><small>{item.short}</small>{item.key === "approvals" && pendingApprovals > 0 && <i>{pendingApprovals}</i>}</button>)}
         </nav>
         <div className="topbar-actions">
-          <div className="project-switcher-wrap"><button className="project-switcher" onClick={() => setProjectMenu((open) => !open)} aria-expanded={projectMenu}><span>当前项目</span><strong>生成式 AI 与企业创新</strong><b>⌄</b></button>{projectMenu && <div className="project-menu"><button className="is-current"><span>企</span><div><strong>生成式 AI 与企业创新</strong><small>S3 · 研究设计</small></div><b>✓</b></button><button><span>碳</span><div><strong>低碳物流路径优化</strong><small>S1 · 文献综述</small></div></button><hr /><button className="new-project">＋ 创建新课题</button></div>}</div>
-          <button className="icon-button" aria-label="通知">●<i>2</i></button>
+          <div className="project-switcher-wrap"><button className="project-switcher" onClick={() => setProjectMenu((open) => !open)} aria-expanded={projectMenu}><span>当前项目</span><strong>{project?.title ?? (connectionState === "loading" ? "正在连接 FastAPI…" : "尚未创建课题")}</strong><b>⌄</b></button>{projectMenu && <div className="project-menu">{projects.map((item) => { const stage = stages.find((candidate) => candidate.key === item.current_stage); return <button className={item.project_id === project?.project_id ? "is-current" : ""} onClick={() => void openProject(item.project_id)} disabled={busy} key={item.project_id}><span>{item.title.slice(0, 1)}</span><div><strong>{item.title}</strong><small>{stage?.id ?? "S0"} · {stage?.name ?? "问题识别"}</small></div>{item.project_id === project?.project_id && <b>✓</b>}</button>; })}<hr /><button className="new-project" onClick={() => setNewProjectOpen(true)}>＋ 创建新课题</button></div>}</div>
+          <button className="icon-button" aria-label="待审批通知">●{pendingApprovals > 0 && <i>{pendingApprovals}</i>}</button>
           <button className="user-button" aria-label="用户菜单">N</button>
         </div>
       </header>
 
+      {(connectionState !== "ready" || apiError) && <div className={`connection-banner connection-${connectionState}`}><strong>{connectionState === "loading" ? "正在连接 FastAPI" : connectionState === "error" ? "FastAPI 连接失败" : "操作未完成"}</strong><span>{apiError || "正在读取项目与阶段状态…"}</span>{connectionState === "error" && <button onClick={() => window.location.reload()}>重新连接</button>}</div>}
+
       <main className={`main-shell view-${view}`}>
-        {view === "journey" && <StageRail activeIndex={activeStage} onSelect={selectStage} />}
+        {view === "journey" && <StageRail activeIndex={activeStage} stageStates={project?.stages ?? []} onSelect={selectStage} />}
         <div className="main-content">
+          {!project && connectionState === "ready" && <section className="empty-project"><p className="eyebrow">Workspace ready</p><h1>从一个科学问题开始</h1><p>创建课题后，S0-S9 的资产、版本和人工审批会持久化到 FastAPI 与 SQLite。</p><button className="primary-action" onClick={() => setNewProjectOpen(true)}>创建第一个课题</button></section>}
           {view === "journey" && (
             <>
               <header className="journey-header">
-                <div><p className="eyebrow">Research Journey · {activeStageData.agent}</p><h1>{activeStageData.name}</h1><p><strong>{activeStage + 1}/10</strong> 阶段 <span>·</span> <b>{activeStageData.gate} {activeStage === 3 && g1Submitted ? "审批中" : "待确认"}</b></p></div>
-                <ProgressNodes activeIndex={activeStage} />
+                <div><p className="eyebrow">Research Journey · {activeStageData.agent}</p><h1>{activeStageData.name}</h1><p><strong>{activeStage + 1}/10</strong> 阶段 <span>·</span> <b>{activeStageData.gate} {activeStageState ? stageStatusLabels[activeStageState.status] : "等待创建课题"}</b></p></div>
+                <ProgressNodes activeIndex={activeStage} stageStates={project?.stages ?? []} />
               </header>
               <div className="journey-grid">
-                <section className="stage-content">
+                <section className="stage-content stage-content-stack">
                   {activeStage === 3 ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} /> : <GenericStage stageIndex={activeStage} />}
+                  <StageAssetEditor key={`${activeStageState?.key ?? "empty"}-${activeStageState?.revision ?? 0}`} stage={activeStageState} busy={busy} onSave={handleSaveStage} onDraft={handleCreateDraft} onDecision={handleStageDecision} />
                 </section>
-                <AgentPanel stageIndex={activeStage} suggestionStates={suggestionStates} onDecision={decideSuggestion} onSubmit={() => setApprovalOpen(true)} />
+                <AgentPanel stageIndex={activeStage} suggestionStates={suggestionStates} onDecision={decideSuggestion} onSubmit={() => openApproval()} canSubmit={Boolean(activeStageState && activeStageState.status !== "not_started" && activeStageState.status !== "approved" && activeStageState.revision > 0)} busy={busy} />
               </div>
             </>
           )}
           {view === "evidence" && <EvidenceLibrary />}
           {view === "methods" && <MethodsView />}
           {view === "runs" && <RunsView />}
-          {view === "approvals" && <ApprovalsView g1Submitted={g1Submitted} onOpen={() => setApprovalOpen(true)} />}
+          {view === "approvals" && <ApprovalsView project={project} onOpen={openApproval} />}
         </div>
       </main>
 
-      <ApprovalModal open={approvalOpen} stageIndex={activeStage} onClose={() => setApprovalOpen(false)} onConfirm={confirmApproval} />
+      <ApprovalModal open={approvalOpen} stageIndex={activeStage} stageState={activeStageState} busy={busy} onClose={() => setApprovalOpen(false)} onConfirm={(reason) => handleStageDecision("approve", reason)} />
+      {newProjectOpen && <NewProjectModal open busy={busy} onClose={() => setNewProjectOpen(false)} onCreate={handleCreateProject} />}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
       <div className="screen-reader-status" aria-live="polite">当前页面：{pageTitle}</div>
     </div>
   );
 }
-

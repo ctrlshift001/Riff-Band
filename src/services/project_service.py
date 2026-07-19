@@ -30,15 +30,16 @@ class StageLockedError(RuntimeError):
 
 
 STAGE_TEMPLATES: dict[str, dict[str, Any]] = {
-    "idea": {"research_object": "", "objective": "", "geography": "", "time_range": "", "questions": [], "unknowns": []},
+    "problem": {"initial_idea": "", "research_object": "", "problem_boundary": "", "objective": "", "questions": [], "candidate_gaps": [], "counter_searches": [], "unknowns": []},
     "literature": {"query_blocks": [], "sources": [], "papers": [], "research_streams": [], "consensus": [], "conflicts": [], "unknowns": [], "coverage_limits": []},
-    "topic": {"gap_candidates": [], "counter_searches": [], "topic_candidates": [], "selected_candidate_id": None},
+    "theory": {"theoretical_lenses": [], "mechanisms": [], "research_questions": [], "competing_explanations": [], "falsifiable_propositions": [], "contribution_boundary": ""},
     "design": {"research_question": "", "theoretical_mechanism": [], "unit_of_analysis": "", "design_lane": "", "primary_method": "", "alternative_methods": [], "assumptions": [], "falsification": []},
-    "data": {"data_sources": [], "variables": [], "method_cards": [], "formula_cards": [], "license_status": "unknown", "privacy_risks": [], "blocking_issues": []},
-    "analysis": {"analysis_steps": [], "variable_table": [], "model_specifications": [], "diagnostics": [], "do_file": "", "runner_profile": "stata_byol"},
-    "run": {"runner_status": "not_checked", "runs": [], "robustness_checks": [], "reproducibility": {}, "blocking_issues": []},
-    "evidence": {"claims": [], "evidence_links": [], "counter_evidence": [], "limitations": [], "interpretation": ""},
-    "delivery": {"outline": [], "approved_claims": [], "references": [], "visual_report_path": "", "research_package_path": "", "release_notes": ""},
+    "data": {"data_sources": [], "data_contracts": [], "variables": [], "license_status": "unknown", "privacy_risks": [], "ethics_checks": [], "blocking_issues": []},
+    "identification": {"estimand": "", "analysis_steps": [], "variable_table": [], "model_specifications": [], "diagnostics": [], "code_plan": [], "assumptions": []},
+    "analysis": {"runner_status": "not_checked", "approved_code_revision": "", "do_file": "", "runs": [], "results": [], "reproducibility": {}, "blocking_issues": []},
+    "robustness": {"robustness_matrix": [], "alternative_measures": [], "alternative_samples": [], "placebo_tests": [], "failed_checks": [], "reproducibility_report": ""},
+    "evidence": {"claims": [], "mechanisms": [], "heterogeneity": [], "evidence_links": [], "counter_evidence": [], "limitations": [], "interpretation": ""},
+    "delivery": {"conclusions": [], "policy_implications": [], "outline": [], "approved_claims": [], "references": [], "visual_report_path": "", "research_package_path": "", "release_notes": ""},
 }
 
 
@@ -82,7 +83,7 @@ class ProjectService:
         stage = next(item for item in project["stages"] if item["key"] == stage_key)
         content = deepcopy(STAGE_TEMPLATES[stage_key])
         content.update(stage.get("content") or {})
-        if stage_key == "idea":
+        if stage_key == "problem":
             content.setdefault("initial_idea", project["initial_idea"])
         content["draft_source"] = "structure_template"
         if request.instruction:

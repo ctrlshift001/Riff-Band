@@ -11,6 +11,14 @@ from uuid import uuid4
 from services.models import STAGE_DEFINITIONS, ApprovalDecision, ProjectStatus, StageStatus
 
 
+LEGACY_STAGE_RENAMES: tuple[tuple[str, str], ...] = (
+    ("idea", "problem"),
+    ("topic", "theory"),
+    ("analysis", "identification"),
+    ("run", "analysis"),
+)
+
+
 def _now() -> str:
     from datetime import datetime, timezone
 
@@ -80,6 +88,7 @@ class ProjectStore:
                     ON approval_events(project_id, stage_key, created_at DESC);
                 """
             )
+            self._synchronize_stage_model(conn)
 
     def create_project(self, title: str, initial_idea: str) -> dict[str, Any]:
         project_id = f"prj_{uuid4().hex[:12]}"
@@ -106,12 +115,132 @@ class ProjectStore:
             self._write_revision(
                 conn,
                 project_id=project_id,
-                stage_key="idea",
+                stage_key="problem",
                 content={"initial_idea": initial_idea, "questions": [], "unknowns": []},
                 change_reason="Project created",
                 author_type="human",
             )
         return self.get_project(project_id)
+
+    def _synchronize_stage_model(self, conn: sqlite3.Connection) -> None:
+        project_rows = conn.execute("SELECT project_id, current_stage FROM projects").fetchall()
+        definitions = {stage.key: stage for stage in STAGE_DEFINITIONS}
+        valid_keys = set(definitions)
+        timestamp = _now()
+
+        for project in project_rows:
+            project_id = str(project["project_id"])
+            current_stage = str(project["current_stage"])
+
+            for old_key, new_key in LEGACY_STAGE_RENAMES:
+                old_state = conn.execute(
+                    "SELECT * FROM stage_states WHERE project_id = ? AND stage_key = ?",
+                    (project_id, old_key),
+                ).fetchone()
+                if old_state is None or old_key == new_key:
+                    continue
+                new_state = conn.execute(
+                    "SELECT 1 FROM stage_states WHERE project_id = ? AND stage_key = ?",
+                    (project_id, new_key),
+                ).fetchone()
+                if new_state is not None:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO stage_states
+                        (project_id, stage_key, position, status, current_revision, approved_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        project_id,
+                        new_key,
+                        int(old_state["position"]),
+                        str(old_state["status"]),
+                        int(old_state["current_revision"]),
+                        old_state["approved_at"],
+                        str(old_state["updated_at"]),
+                    ),
+                )
+                conn.execute(
+                    "UPDATE stage_revisions SET stage_key = ? WHERE project_id = ? AND stage_key = ?",
+                    (new_key, project_id, old_key),
+                )
+                conn.execute(
+                    "UPDATE approval_events SET stage_key = ? WHERE project_id = ? AND stage_key = ?",
+                    (new_key, project_id, old_key),
+                )
+                conn.execute(
+                    "DELETE FROM stage_states WHERE project_id = ? AND stage_key = ?",
+                    (project_id, old_key),
+                )
+                if current_stage == old_key:
+                    current_stage = new_key
+
+            existing_rows = conn.execute(
+                "SELECT stage_key FROM stage_states WHERE project_id = ?",
+                (project_id,),
+            ).fetchall()
+            existing_keys = {str(row["stage_key"]) for row in existing_rows}
+            for stage in STAGE_DEFINITIONS:
+                if stage.key in existing_keys:
+                    conn.execute(
+                        "UPDATE stage_states SET position = ? WHERE project_id = ? AND stage_key = ?",
+                        (stage.position, project_id, stage.key),
+                    )
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO stage_states
+                        (project_id, stage_key, position, status, current_revision, approved_at, updated_at)
+                    VALUES (?, ?, ?, ?, 0, NULL, ?)
+                    """,
+                    (
+                        project_id,
+                        stage.key,
+                        stage.position,
+                        StageStatus.NOT_STARTED.value,
+                        timestamp,
+                    ),
+                )
+
+            obsolete_keys = existing_keys - valid_keys
+            for obsolete_key in obsolete_keys:
+                conn.execute(
+                    "DELETE FROM stage_states WHERE project_id = ? AND stage_key = ?",
+                    (project_id, obsolete_key),
+                )
+
+            stage_statuses = {
+                str(row["stage_key"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT stage_key, status FROM stage_states WHERE project_id = ?",
+                    (project_id,),
+                ).fetchall()
+            }
+            first_unapproved = next(
+                (
+                    stage.key
+                    for stage in STAGE_DEFINITIONS
+                    if stage_statuses.get(stage.key) != StageStatus.APPROVED.value
+                ),
+                STAGE_DEFINITIONS[-1].key,
+            )
+            if current_stage not in valid_keys or definitions[current_stage].position > definitions[first_unapproved].position:
+                current_stage = first_unapproved
+
+            current_state = conn.execute(
+                "SELECT status FROM stage_states WHERE project_id = ? AND stage_key = ?",
+                (project_id, current_stage),
+            ).fetchone()
+            if current_state and current_state["status"] == StageStatus.NOT_STARTED.value:
+                conn.execute(
+                    "UPDATE stage_states SET status = ?, updated_at = ? WHERE project_id = ? AND stage_key = ?",
+                    (StageStatus.IN_PROGRESS.value, timestamp, project_id, current_stage),
+                )
+            conn.execute(
+                "UPDATE projects SET current_stage = ? WHERE project_id = ?",
+                (current_stage, project_id),
+            )
 
     def list_projects(self) -> list[dict[str, Any]]:
         with self._connect() as conn:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 from fastapi.testclient import TestClient
 
 from api.app import create_app
@@ -31,7 +33,8 @@ def test_health_meta_and_web_assets(tmp_path):
 
     assert client.get("/healthz").json()["status"] == "ok"
     stages = client.get("/api/v1/meta/stages").json()["items"]
-    assert [stage["position"] for stage in stages] == list(range(1, 10))
+    assert [stage["position"] for stage in stages] == list(range(1, 11))
+    assert [stage["code"] for stage in stages] == [f"S{index}" for index in range(10)]
     assert stages[-1]["artifact_type"] == "ResearchPackage"
     profile = client.get("/api/v1/meta/domain-profile").json()
     assert profile["key"] == "management_science"
@@ -49,7 +52,7 @@ def test_project_stage_gate_and_revision_flow(tmp_path):
     project = _create_project(client)
     project_id = project["project_id"]
 
-    assert project["current_stage"] == "idea"
+    assert project["current_stage"] == "problem"
     assert project["stages"][0]["revision"] == 1
     assert project["stages"][1]["status"] == "not_started"
     assert project["stages"][0]["content_hash"]
@@ -61,7 +64,7 @@ def test_project_stage_gate_and_revision_flow(tmp_path):
     assert locked.status_code == 409
     assert locked.json()["error"]["code"] == "stage_locked"
 
-    project = _approve(client, project_id, "idea")
+    project = _approve(client, project_id, "problem")
     assert project["current_stage"] == "literature"
     assert project["stages"][1]["status"] == "in_progress"
 
@@ -87,7 +90,7 @@ def test_upstream_change_invalidates_downstream_and_persists(tmp_path):
     client = TestClient(create_app(tmp_path))
     project = _create_project(client)
     project_id = project["project_id"]
-    project = _approve(client, project_id, "idea")
+    project = _approve(client, project_id, "problem")
 
     drafted = client.post(
         f"/api/v1/projects/{project_id}/stages/literature/draft",
@@ -99,7 +102,7 @@ def test_upstream_change_invalidates_downstream_and_persists(tmp_path):
     assert project["stages"][2]["status"] == "in_progress"
 
     changed = client.put(
-        f"/api/v1/projects/{project_id}/stages/idea",
+        f"/api/v1/projects/{project_id}/stages/problem",
         json={
             "content": {"research_object": "platform firms", "questions": ["What changes?"]},
             "change_reason": "Narrowed research object",
@@ -108,7 +111,7 @@ def test_upstream_change_invalidates_downstream_and_persists(tmp_path):
     )
     assert changed.status_code == 200
     project = changed.json()
-    assert project["current_stage"] == "idea"
+    assert project["current_stage"] == "problem"
     assert project["stages"][0]["revision"] == 2
     assert project["stages"][1]["status"] == "needs_review"
     assert project["stages"][2]["status"] == "not_started"
@@ -132,3 +135,81 @@ def test_validation_and_missing_resources(tmp_path):
     unknown_stage = client.get(f"/api/v1/projects/{project['project_id']}/stages/unknown")
     assert unknown_stage.status_code == 404
     assert unknown_stage.json()["error"]["code"] == "stage_not_found"
+
+
+def test_complete_s0_to_s9_flow(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    project = _create_project(client)
+    project_id = project["project_id"]
+    stage_keys = [stage["key"] for stage in project["stages"]]
+
+    for index, stage_key in enumerate(stage_keys):
+        if index > 0:
+            drafted = client.post(
+                f"/api/v1/projects/{project_id}/stages/{stage_key}/draft",
+                json={"instruction": f"Create {stage_key} structure"},
+            )
+            assert drafted.status_code == 200
+            assert drafted.json()["stages"][index]["revision"] == 1
+        project = _approve(client, project_id, stage_key)
+
+    assert project["status"] == "completed"
+    assert project["current_stage"] == "delivery"
+    assert project["progress"] == {"approved": 10, "total": 10}
+    assert all(stage["status"] == "approved" for stage in project["stages"])
+
+
+def test_legacy_nine_stage_database_is_migrated_without_losing_revisions(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    project = _create_project(client)
+    project_id = project["project_id"]
+    db_path = tmp_path / "ai4ms.db"
+
+    with sqlite3.connect(db_path) as conn:
+        renames = (
+            ("analysis", "run"),
+            ("identification", "analysis"),
+            ("theory", "topic"),
+            ("problem", "idea"),
+        )
+        for new_key, old_key in renames:
+            conn.execute(
+                "UPDATE stage_revisions SET stage_key = ? WHERE project_id = ? AND stage_key = ?",
+                (old_key, project_id, new_key),
+            )
+            conn.execute(
+                "UPDATE approval_events SET stage_key = ? WHERE project_id = ? AND stage_key = ?",
+                (old_key, project_id, new_key),
+            )
+            conn.execute(
+                "UPDATE stage_states SET stage_key = ? WHERE project_id = ? AND stage_key = ?",
+                (old_key, project_id, new_key),
+            )
+        conn.execute(
+            "DELETE FROM stage_states WHERE project_id = ? AND stage_key = 'robustness'",
+            (project_id,),
+        )
+        conn.execute(
+            "UPDATE projects SET current_stage = 'idea' WHERE project_id = ?",
+            (project_id,),
+        )
+
+    migrated = TestClient(create_app(tmp_path)).get(f"/api/v1/projects/{project_id}")
+    assert migrated.status_code == 200
+    payload = migrated.json()
+    assert payload["current_stage"] == "problem"
+    assert [stage["key"] for stage in payload["stages"]] == [
+        "problem",
+        "literature",
+        "theory",
+        "design",
+        "data",
+        "identification",
+        "analysis",
+        "robustness",
+        "evidence",
+        "delivery",
+    ]
+    assert payload["stages"][0]["revision"] == 1
+    assert payload["stages"][0]["content"]["initial_idea"]
+    assert payload["stages"][7]["revision"] == 0

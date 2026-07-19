@@ -11,7 +11,7 @@
 - OpenAPI：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/healthz`
 
-容器内运行 FastAPI、九步 Web 工作台、SQLite 和本地任务执行器。Stata 不进入镜像，而是由可选外部 BYOL Runner 提供。
+目标容器运行 FastAPI、十阶段 Web 工作台、SQLite 和本地任务执行器。当前 Dockerfile 仍服务兼容静态入口，Next.js 单入口打包尚待发布阶段完成；Stata 不进入镜像，而是由可选外部 BYOL Runner 提供。
 
 ## 2. 部署包文件
 
@@ -86,7 +86,7 @@ docker compose up --build
 
 - 在无 Python 环境的新机器上仅使用 Docker 启动；
 - `/healthz`、`/`、`/docs` 和最小项目 API 正常；
-- 完成一个九步示例项目并重启容器；
+- 完成一个十阶段示例项目并重启容器；
 - 重启后项目和报告仍存在；
 - 检查镜像历史、日志和导出包中没有密钥或许可证；
 - 保存一个不依赖现场联网的只读演示项目和 HTML 报告。
