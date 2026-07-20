@@ -3,10 +3,10 @@
   --navy: #111113;
   --navy-2: #1d1d20;
   --navy-3: #2c2c2e;
-  --teal: #2c2c2e;
-  --teal-dark: #111113;
-  --teal-soft: #f0f0f2;
-  --page: #f3f3f5;
+  --teal: #5f7892;
+  --teal-dark: #526b83;
+  --teal-soft: #eef2f5;
+  --page: #f5f5f7;
   --paper: #ffffff;
   --card: rgba(255, 255, 255, 0.84);
   --ink: #1d1d1f;
@@ -20,8 +20,8 @@
   --plum: #636366;
   --plum-soft: #eeeeef;
   --success: #3a3a3c;
-  --shadow: 0 28px 78px rgba(0, 0, 0, 0.095), 0 2px 12px rgba(0, 0, 0, 0.035);
-  --shadow-soft: 0 14px 42px rgba(0, 0, 0, 0.065), 0 1px 5px rgba(0, 0, 0, 0.025);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 14px 40px rgba(0, 0, 0, 0.05);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.05);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-serif: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
@@ -1208,4 +1208,389 @@ h1, h2, h3, .journey-header h1, .view-header h1 {
   border-color: rgba(255,255,255,.9);
   background: rgba(248,248,249,.93);
   box-shadow: 0 22px 58px rgba(0,0,0,.18), inset 0 1px #fff;
+}
+
+/* Apple Liquid Glass audit — restrained mist-blue accent.
+   Design guidance informed by naplesblue/apple-design-skill (MIT). */
+:root {
+  --accent-muted: #5f7892;
+  --accent-strong: #526b83;
+  --accent-soft: rgba(95,120,146,.09);
+  --hairline: rgba(0,0,0,.07);
+  --hover: #fbfbfd;
+  --track: #e8e8ed;
+  --r-card: 18px;
+  --r-panel: 22px;
+  --r-hero: 26px;
+  --r-sheet: 16px;
+  --r-pill: 999px;
+  --ease-spring: cubic-bezier(.32,.72,0,1);
+  --ease-out-quart: cubic-bezier(.25,1,.5,1);
+}
+
+html,
+body {
+  background: #f5f5f7;
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.app-shell {
+  filter: none;
+  background: #f5f5f7;
+  font-optical-sizing: auto;
+}
+.app-shell::before {
+  display: none;
+}
+
+.topbar {
+  background: rgba(245,245,247,.76);
+  border-bottom: 1px solid var(--hairline);
+  box-shadow: 0 1px 12px rgba(0,0,0,.035);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+.brand span {
+  color: var(--accent-strong);
+  background: none;
+  -webkit-text-fill-color: var(--accent-strong);
+}
+.topnav button.is-active {
+  background: rgba(0,0,0,.055);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.project-switcher {
+  background: rgba(255,255,255,.78);
+  border-color: rgba(0,0,0,.08);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.035);
+}
+.project-menu {
+  background: rgba(255,255,255,.86);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+.project-menu > button:hover,
+.project-menu > button.is-current {
+  background: var(--accent-soft);
+}
+
+.stage-rail {
+  background: #f1f1f3;
+  border-right: 1px solid var(--hairline);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.stage-item:hover {
+  background: rgba(255,255,255,.72);
+}
+.stage-item.is-active {
+  background: var(--accent-strong);
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 12px 28px rgba(82,107,131,.18);
+}
+.stage-item.is-done .stage-dot,
+.rail-lock {
+  border-color: rgba(82,107,131,.3);
+  color: var(--accent-strong);
+  background: rgba(95,120,146,.07);
+}
+.stage-id,
+.journey-header > div > p:last-child b,
+.progress-node.is-current small,
+.eyebrow,
+.text-button,
+.row-action,
+.stage-summary-grid button,
+.result-number {
+  color: var(--accent-strong);
+}
+.stage-item.is-active .stage-id {
+  color: #fff;
+}
+.progress-node.is-done span {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+.progress-node.is-done::before,
+.progress-node.is-done::after,
+.progress-node.is-current::before {
+  background: var(--accent-muted);
+}
+.progress-node.is-current span {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 5px rgba(95,120,146,.11), 0 1px 3px rgba(0,0,0,.09);
+}
+
+.content-card,
+.stage-summary-grid article,
+.stage-handoff-card,
+.metric-strip,
+.approval-summary,
+.method-card,
+.method-detail,
+.approval-rule-card,
+.plan-grid article,
+.results-grid article,
+.library-panel,
+.workbench-shell {
+  border-color: transparent;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05), 0 14px 40px rgba(0,0,0,.05);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.content-card,
+.metric-strip,
+.approval-summary,
+.library-panel,
+.workbench-shell {
+  border-radius: var(--r-panel);
+}
+.method-card,
+.stage-summary-grid article,
+.plan-grid article,
+.results-grid article {
+  border-radius: var(--r-card);
+}
+.question-card textarea,
+.search-field,
+.plan-grid dl div {
+  background: #f5f5f7;
+}
+.question-card textarea:hover,
+.question-card textarea:focus,
+.search-field:focus-within {
+  border-color: rgba(82,107,131,.32);
+  box-shadow: 0 0 0 4px rgba(95,120,146,.1);
+}
+
+.design-options {
+  gap: 0;
+  overflow: hidden;
+}
+.design-option {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.design-option + .design-option {
+  border-top: 1px solid var(--hairline);
+}
+.design-option:hover {
+  border-color: transparent;
+  background: var(--hover);
+  box-shadow: none;
+}
+.design-option.is-selected {
+  border-color: transparent;
+  background: var(--accent-soft);
+  box-shadow: none;
+}
+.is-selected .radio-ui {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+.recommend-mark,
+.filter-chips button.is-active,
+.fit-score {
+  border-color: rgba(82,107,131,.18);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.agent-panel {
+  border-color: rgba(255,255,255,.1);
+  border-radius: var(--r-hero);
+  background: #171719;
+  box-shadow: 0 2px 8px rgba(0,0,0,.1), 0 30px 80px rgba(0,0,0,.2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.agent-panel .eyebrow {
+  color: #b7c3ce;
+}
+.agent-avatar {
+  color: #fff;
+  background: var(--accent-muted);
+  box-shadow: 0 1px 2px rgba(0,0,0,.16), 0 10px 24px rgba(0,0,0,.18);
+}
+.agent-live span {
+  background: #8ea2b5;
+  box-shadow: 0 0 0 4px rgba(142,162,181,.12);
+}
+.suggestion-list {
+  gap: 0;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: var(--r-card);
+  background: rgba(255,255,255,.055);
+}
+.suggestion-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.suggestion-card + .suggestion-card {
+  border-top: 1px solid rgba(255,255,255,.09);
+}
+.suggestion-card:hover {
+  transform: none;
+  background: rgba(255,255,255,.045);
+  box-shadow: none;
+}
+.suggestion-title > span {
+  color: #fff;
+  background: var(--accent-muted);
+  box-shadow: none;
+}
+.diff-before {
+  color: #aeaeb2;
+  background: rgba(255,255,255,.035);
+}
+.diff-after {
+  color: #e7edf2;
+  background: rgba(95,120,146,.18);
+}
+.suggestion-actions button.button-accept {
+  border-color: var(--accent-muted);
+  background: var(--accent-muted);
+  color: #fff;
+}
+
+.primary-action,
+.primary-compact {
+  border: 0;
+  background: var(--accent-strong);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.1), 0 12px 28px rgba(82,107,131,.2);
+}
+.primary-action:hover:not(:disabled),
+.primary-compact:hover {
+  background: #475f76;
+  box-shadow: 0 1px 2px rgba(0,0,0,.12), 0 16px 34px rgba(82,107,131,.24);
+}
+.stage-hero-card {
+  border: 0;
+  border-radius: var(--r-hero);
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05), 0 14px 40px rgba(0,0,0,.05);
+}
+.stage-hero-index,
+.run-state-icon {
+  background: var(--accent-strong);
+  color: #fff;
+}
+.readiness-track span,
+.method-fit i {
+  background: var(--accent-muted);
+}
+.method-score-ring,
+.score-circle {
+  border-color: rgba(95,120,146,.12);
+  border-top-color: var(--accent-strong);
+  border-right-color: var(--accent-strong);
+}
+
+.filter-chips button {
+  min-height: 44px;
+}
+.run-gate-banner {
+  border-color: rgba(82,107,131,.14);
+  background: var(--accent-soft);
+}
+.run-gate-banner > div > span,
+.run-state-icon.state-succeeded {
+  background: var(--accent-muted);
+}
+.workbench-tabs .is-active span {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+
+.gate-list {
+  gap: 0;
+  overflow: hidden;
+  border-radius: var(--r-panel);
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05), 0 14px 40px rgba(0,0,0,.05);
+}
+.gate-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.gate-card + .gate-card {
+  border-top: 1px solid var(--hairline);
+}
+.gate-card:hover {
+  transform: none;
+  background: var(--hover);
+  box-shadow: none;
+}
+.reviewer-stack span:nth-child(2) {
+  background: #6e6e73;
+}
+.reviewer-stack span:nth-child(3) {
+  background: #aeaeb2;
+  color: #1d1d1f;
+}
+
+.approval-modal {
+  border-radius: var(--r-hero);
+  background: rgba(255,255,255,.86);
+  box-shadow: 0 2px 8px rgba(0,0,0,.1), 0 30px 80px rgba(0,0,0,.24);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+.modal-checks input {
+  accent-color: var(--accent-strong);
+}
+.toast {
+  background: rgba(255,255,255,.86);
+  box-shadow: 0 2px 8px rgba(0,0,0,.08), 0 20px 54px rgba(0,0,0,.14);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+.metric-strip strong,
+.approval-summary strong,
+.progress-node,
+.fit-score,
+.result-number,
+.gate-code,
+.run-log,
+table {
+  font-variant-numeric: tabular-nums;
+}
+.method-card {
+  transition: transform .2s var(--ease-out-quart), box-shadow .2s var(--ease-out-quart);
+}
+.method-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(0,0,0,.1);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .topbar,
+  .project-menu,
+  .approval-modal,
+  .toast {
+    background: #fff;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root { --hairline: rgba(0,0,0,.18); }
+  .content-card,
+  .library-panel,
+  .metric-strip,
+  .approval-summary,
+  .workbench-shell {
+    border: 1px solid rgba(0,0,0,.18);
+  }
 }
