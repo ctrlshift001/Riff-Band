@@ -31,7 +31,7 @@ html { background: var(--page); }
 body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--font-sans); font-size: 14px; }
 button, input, textarea { font: inherit; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid rgba(15, 143, 135, 0.22); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid rgba(0, 113, 227, 0.22); outline-offset: 2px; }
 h1, h2, h3, p { margin-top: 0; }
 h1, .journey-header h1, .view-header h1 { font-family: var(--font-serif); letter-spacing: -0.03em; }
 
