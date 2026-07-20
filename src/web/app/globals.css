@@ -3,25 +3,25 @@
   --navy: #111113;
   --navy-2: #1d1d20;
   --navy-3: #2c2c2e;
-  --teal: #0071e3;
-  --teal-dark: #0066cc;
-  --teal-soft: #eaf3ff;
-  --page: #f5f5f7;
+  --teal: #2c2c2e;
+  --teal-dark: #111113;
+  --teal-soft: #f0f0f2;
+  --page: #f3f3f5;
   --paper: #ffffff;
   --card: rgba(255, 255, 255, 0.84);
   --ink: #1d1d1f;
   --muted: #6e6e73;
   --line: rgba(29, 29, 31, 0.09);
   --line-strong: rgba(29, 29, 31, 0.14);
-  --warning: #9a6700;
-  --warning-soft: #fff8e7;
-  --danger: #d70015;
-  --danger-soft: #fff0f2;
-  --plum: #6e5ce6;
-  --plum-soft: #f1efff;
-  --success: #248a3d;
-  --shadow: 0 24px 70px rgba(0, 0, 0, 0.09), 0 2px 12px rgba(0, 0, 0, 0.035);
-  --shadow-soft: 0 10px 35px rgba(0, 0, 0, 0.055);
+  --warning: #48484a;
+  --warning-soft: #eeeeef;
+  --danger: #1d1d1f;
+  --danger-soft: #e5e5e7;
+  --plum: #636366;
+  --plum-soft: #eeeeef;
+  --success: #3a3a3c;
+  --shadow: 0 28px 78px rgba(0, 0, 0, 0.095), 0 2px 12px rgba(0, 0, 0, 0.035);
+  --shadow-soft: 0 14px 42px rgba(0, 0, 0, 0.065), 0 1px 5px rgba(0, 0, 0, 0.025);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-serif: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
@@ -915,4 +915,297 @@ h1, h2, h3, .journey-header h1, .view-header h1 {
   .workbench-tabs { border-bottom-color: rgba(29,29,31,.08); }
   .gate-card { border-radius: 19px; }
   .approval-modal { padding: 27px 22px; border-radius: 25px; }
+}
+
+/* Monochrome atelier visual system */
+.app-shell {
+  filter: grayscale(1);
+  background:
+    radial-gradient(circle at 12% -6%, rgba(255,255,255,.98), transparent 30%),
+    radial-gradient(circle at 88% 0, rgba(214,214,218,.36), transparent 29%),
+    linear-gradient(180deg, #fafafa 0%, #f3f3f5 42%, #eeeeef 100%);
+}
+.app-shell::before {
+  opacity: .72;
+  background:
+    linear-gradient(118deg, rgba(255,255,255,.72), transparent 44%, rgba(198,198,202,.16)),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.012) 0 1px, transparent 1px 48px);
+}
+
+.topbar {
+  background: rgba(250,250,251,.82);
+  border-bottom-color: rgba(0,0,0,.075);
+  box-shadow: 0 1px 0 rgba(255,255,255,.95), 0 14px 36px rgba(0,0,0,.045);
+}
+.brand span {
+  background: linear-gradient(145deg, #111113 10%, #7b7b80 88%);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+.topnav button.is-active {
+  background: rgba(0,0,0,.075);
+  box-shadow: inset 0 1px rgba(255,255,255,.86);
+}
+.topnav i,
+.icon-button i {
+  background: #2c2c2e;
+  color: #fff;
+}
+.project-switcher {
+  background: rgba(255,255,255,.82);
+  border-color: rgba(0,0,0,.09);
+  box-shadow: 0 8px 26px rgba(0,0,0,.045), inset 0 1px rgba(255,255,255,.96);
+}
+.project-menu > button:hover,
+.project-menu > button.is-current {
+  background: rgba(0,0,0,.055);
+}
+
+.stage-rail {
+  background: rgba(244,244,246,.78);
+  border-right-color: rgba(0,0,0,.075);
+}
+.stage-item:hover {
+  background: rgba(255,255,255,.9);
+}
+.stage-item.is-active {
+  background: linear-gradient(145deg, #2c2c2f 0%, #101011 58%, #37373a 100%);
+  box-shadow:
+    0 18px 34px rgba(0,0,0,.18),
+    inset 0 1px rgba(255,255,255,.26),
+    inset 0 -1px rgba(0,0,0,.4);
+}
+.stage-item.is-done .stage-dot,
+.rail-lock {
+  border-color: rgba(0,0,0,.22);
+  color: #3a3a3c;
+  background: rgba(0,0,0,.045);
+}
+.stage-id,
+.journey-header > div > p:last-child b,
+.progress-node.is-current small,
+.eyebrow,
+.text-button,
+.row-action,
+.stage-summary-grid button,
+.result-number {
+  color: #2c2c2e;
+}
+.progress-node.is-done span {
+  border-color: #2c2c2e;
+  background: linear-gradient(145deg, #3a3a3c, #111113);
+}
+.progress-node.is-done::before,
+.progress-node.is-done::after,
+.progress-node.is-current::before {
+  background: #3a3a3c;
+}
+.progress-node.is-current span {
+  border-color: #2c2c2e;
+  box-shadow: 0 0 0 5px rgba(0,0,0,.075), 0 5px 15px rgba(0,0,0,.12);
+}
+
+.content-card,
+.stage-summary-grid article,
+.stage-handoff-card,
+.metric-strip,
+.approval-summary,
+.method-card,
+.method-detail,
+.approval-rule-card,
+.gate-card,
+.plan-grid article,
+.results-grid article,
+.library-panel,
+.workbench-shell {
+  border-color: rgba(255,255,255,.88);
+  background: rgba(255,255,255,.76);
+  box-shadow:
+    0 24px 64px rgba(0,0,0,.07),
+    0 3px 12px rgba(0,0,0,.025),
+    inset 0 1px rgba(255,255,255,.98),
+    inset 0 -1px rgba(0,0,0,.025);
+}
+.question-card textarea,
+.search-field,
+.plan-grid dl div {
+  background: rgba(235,235,237,.76);
+}
+.question-card textarea:hover,
+.question-card textarea:focus,
+.search-field:focus-within {
+  border-color: rgba(0,0,0,.2);
+  box-shadow: 0 0 0 4px rgba(0,0,0,.055);
+}
+.design-option.is-selected {
+  border-color: rgba(0,0,0,.28);
+  background: linear-gradient(145deg, rgba(255,255,255,.96), rgba(226,226,229,.8));
+  box-shadow: 0 15px 38px rgba(0,0,0,.075), inset 0 1px rgba(255,255,255,.95);
+}
+.is-selected .radio-ui {
+  border-color: #1d1d1f;
+  background: #1d1d1f;
+}
+.recommend-mark,
+.filter-chips button.is-active,
+.fit-score {
+  border-color: rgba(0,0,0,.14);
+  background: rgba(0,0,0,.07);
+  color: #1d1d1f;
+}
+
+.agent-panel {
+  border-color: rgba(255,255,255,.17);
+  background:
+    radial-gradient(circle at 88% -4%, rgba(255,255,255,.18), transparent 28%),
+    radial-gradient(circle at 0 28%, rgba(255,255,255,.075), transparent 36%),
+    linear-gradient(150deg, #29292c 0%, #151516 47%, #060607 100%);
+  box-shadow:
+    0 34px 90px rgba(0,0,0,.27),
+    inset 0 1px rgba(255,255,255,.15),
+    inset 0 -1px rgba(0,0,0,.7);
+}
+.agent-panel .eyebrow {
+  color: #d1d1d6;
+}
+.agent-avatar {
+  color: #111113;
+  background: linear-gradient(145deg, #ffffff, #a7a7ab);
+  box-shadow: 0 12px 28px rgba(0,0,0,.28), inset 0 1px #fff;
+}
+.agent-live span {
+  background: #f2f2f4;
+  box-shadow: 0 0 0 4px rgba(255,255,255,.1);
+}
+.suggestion-title > span {
+  background: #f1f1f3;
+  color: #111113;
+  box-shadow: inset 0 1px #fff;
+}
+.diff-before {
+  color: #a6a6aa;
+  background: rgba(255,255,255,.045);
+  border-bottom-color: rgba(255,255,255,.08);
+}
+.diff-after {
+  color: #f5f5f7;
+  background: rgba(255,255,255,.11);
+}
+.suggestion-actions button.button-accept {
+  border-color: rgba(255,255,255,.9);
+  background: #f5f5f7;
+  color: #111113;
+}
+.result-accepted,
+.result-modified,
+.result-rejected {
+  color: #f5f5f7;
+}
+
+.primary-action,
+.primary-compact {
+  border: 1px solid rgba(255,255,255,.18);
+  background: linear-gradient(180deg, #353538, #111113);
+  color: #fff;
+  box-shadow:
+    0 15px 32px rgba(0,0,0,.2),
+    inset 0 1px rgba(255,255,255,.22),
+    inset 0 -1px rgba(0,0,0,.5);
+}
+.primary-action:hover:not(:disabled),
+.primary-compact:hover {
+  box-shadow:
+    0 19px 38px rgba(0,0,0,.25),
+    inset 0 1px rgba(255,255,255,.28);
+}
+.stage-hero-card {
+  border-color: rgba(255,255,255,.9);
+  background: linear-gradient(135deg, rgba(255,255,255,.94), rgba(222,222,225,.76));
+}
+.stage-hero-index,
+.run-state-icon {
+  background: linear-gradient(145deg, #3a3a3c, #111113);
+  color: #f5f5f7;
+}
+.readiness-track span,
+.method-fit i {
+  background: linear-gradient(90deg, #111113, #68686d);
+}
+.method-score-ring,
+.score-circle {
+  border-color: rgba(0,0,0,.1);
+  border-top-color: #2c2c2e;
+  border-right-color: #2c2c2e;
+}
+
+.run-gate-banner {
+  border-color: rgba(0,0,0,.11);
+  background: linear-gradient(90deg, rgba(226,226,229,.82), rgba(255,255,255,.82));
+}
+.run-gate-banner > div > span {
+  background: linear-gradient(145deg, #717176, #2c2c2e);
+}
+.workbench-tabs button.is-active {
+  color: #1d1d1f;
+}
+.workbench-tabs .is-active span {
+  border-color: #2c2c2e;
+  background: #2c2c2e;
+}
+.preflight-checks div {
+  border-color: rgba(0,0,0,.1);
+  background: rgba(235,235,237,.75);
+}
+.run-state-icon.state-succeeded {
+  background: linear-gradient(145deg, #717176, #2c2c2e);
+}
+
+.state-supported,
+.state-approved,
+.state-succeeded {
+  color: #2c2c2e;
+  background: #f0f0f2;
+  border-color: #d1d1d4;
+}
+.state-pending,
+.state-draft,
+.state-review {
+  color: #3a3a3c;
+  background: #e5e5e7;
+  border-color: #c7c7ca;
+}
+.state-conflict,
+.state-blocked {
+  color: #fff;
+  background: #2c2c2e;
+  border-color: #2c2c2e;
+}
+.state-locked {
+  color: #717176;
+  background: #f2f2f4;
+  border-color: #dedee0;
+}
+.gate-approved .gate-code,
+.gate-draft .gate-code,
+.gate-review .gate-code {
+  border-color: rgba(0,0,0,.14);
+  background: rgba(0,0,0,.065);
+}
+.reviewer-stack span:nth-child(2) { background: #66666b; }
+.reviewer-stack span:nth-child(3) { background: #aaaab0; color: #111113; }
+
+.approval-modal {
+  border-color: rgba(255,255,255,.9);
+  background: rgba(247,247,248,.92);
+  box-shadow:
+    0 48px 120px rgba(0,0,0,.28),
+    inset 0 1px rgba(255,255,255,.98);
+}
+.modal-checks input {
+  accent-color: #1d1d1f;
+}
+.toast {
+  border-color: rgba(255,255,255,.9);
+  background: rgba(248,248,249,.93);
+  box-shadow: 0 22px 58px rgba(0,0,0,.18), inset 0 1px #fff;
 }
