@@ -22,6 +22,7 @@ export type DeepRoute =
   | { kind: "project-overview"; projectId: string }
   | { kind: "evidence-record"; title: string }
   | { kind: "method-record"; methodId: string }
+  | { kind: "formula-record"; formulaId: string }
   | { kind: "approval-gate"; gateId: string }
   | { kind: "asset-version"; gateId: string };
 
@@ -57,6 +58,7 @@ export type StageDraft = {
   humanConfirmed: boolean;
   version: number;
   savedAt: string;
+  syncHistory: string[];
 };
 
 export type CheckIssue = {
@@ -88,6 +90,29 @@ export type MethodRecord = {
   goal: string;
   assumptions: readonly string[];
   engine: string;
+  dataShape: string;
+  estimand: string;
+  formula: string;
+  diagnostics: readonly string[];
+  failureRule: string;
+  stata: string;
+  python: string;
+  tags: readonly string[];
+  source: string;
+};
+
+export type FormulaRecord = {
+  id: string;
+  title: string;
+  family: string;
+  methodId: string;
+  formula: string;
+  purpose: string;
+  symbols: readonly { symbol: string; meaning: string }[];
+  assumptions: readonly string[];
+  diagnostics: readonly string[];
+  stata: string;
+  source: string;
 };
 
 export type GateRecord = {
@@ -113,6 +138,7 @@ export function createStageDraft(stage: StageDescriptor, project: ResearchProjec
     humanConfirmed: false,
     version: 1,
     savedAt: "尚未保存",
+    syncHistory: [],
   };
 }
 
@@ -251,6 +277,10 @@ export function StageDraftWorkspace({
     setDirty(false);
     onSave(next, newVersion ? `已创建 Revision ${next.version}` : "草稿修改已保存");
   };
+  const openChat = () => {
+    if (dirty) save(false);
+    onOpenChat();
+  };
   return (
     <div className="deep-page draft-workspace">
       <DeepHeader
@@ -274,7 +304,7 @@ export function StageDraftWorkspace({
               <Field label="工作目标"><textarea rows={4} value={form.objective} onChange={(event) => update("objective", event.target.value)} /></Field>
               <Field label="研究边界"><textarea rows={5} value={form.scope} onChange={(event) => update("scope", event.target.value)} /></Field>
             </div>}
-            {tab === 1 && <div className="field-stack"><Field label="交付正文" hint="支持人工增删、改写和粘贴结构化内容"><textarea className="document-editor" rows={22} value={form.content} onChange={(event) => update("content", event.target.value)} /></Field><div className="writing-assist"><span>AI 写作协助不会自动覆盖正文</span><button onClick={onOpenChat}>与 {stage.agent} 讨论这一段</button></div></div>}
+            {tab === 1 && <div className="field-stack"><Field label="交付正文" hint="支持人工增删、改写和粘贴结构化内容"><textarea className="document-editor" rows={22} value={form.content} onChange={(event) => update("content", event.target.value)} /></Field><div className="writing-assist"><span>AI 写作协助不会自动覆盖正文</span><button onClick={openChat}>与 {stage.agent} 讨论并同步</button></div></div>}
             {tab === 2 && <div className="field-stack">
               <div className="linked-evidence-summary"><div><strong>12</strong><span>已连接来源</span></div><div><strong>9</strong><span>全文已核验</span></div><div><strong>1</strong><span>冲突证据</span></div><button onClick={onOpenEvidence}>打开证据库</button></div>
               <Field label="证据覆盖说明" hint="说明支持、冲突、未核验与不可外推的范围"><textarea rows={10} value={form.evidenceNote} onChange={(event) => update("evidenceNote", event.target.value)} /></Field>
@@ -296,7 +326,8 @@ export function StageDraftWorkspace({
         <aside className="draft-inspector">
           <div className="completion-card"><div className="completion-ring" style={{ "--progress": `${completeness * 3.6}deg` } as CSSProperties}><strong>{completeness}%</strong></div><div><span>草稿完整度</span><p>按必填字段与有效内容计算</p></div></div>
           <dl><div><dt>阶段</dt><dd>{stage.id} · {stage.name}</dd></div><div><dt>协作智能体</dt><dd>{stage.agent}</dd></div><div><dt>审批门</dt><dd>{stage.gate}</dd></div><div><dt>当前版本</dt><dd>Revision {form.version}</dd></div></dl>
-          <div className="inspector-actions"><button onClick={onOpenCheck}>运行一致性检查 <span>→</span></button><button onClick={onOpenDecisions}>查看人工决定项 <span>→</span></button><button onClick={onOpenChat}>与阶段智能体协作 <span>→</span></button></div>
+          {form.syncHistory.length > 0 && <div className="sync-audit-card"><strong>智能体同步记录</strong>{form.syncHistory.slice(0, 3).map((item) => <p key={item}>{item}</p>)}</div>}
+          <div className="inspector-actions"><button onClick={onOpenCheck}>运行一致性检查 <span>→</span></button><button onClick={onOpenDecisions}>查看人工决定项 <span>→</span></button><button onClick={openChat}>与阶段智能体协作 <span>→</span></button></div>
           <div className="inspector-note"><strong>离开前检查</strong><p>{dirty ? "还有未保存的修改。请先保存，避免丢失当前编辑内容。" : "当前编辑内容已保存，可以继续检查或返回阶段主页。"}</p></div>
         </aside>
       </div>
@@ -436,6 +467,38 @@ export function MethodRecordPage({ method, onBack, onAdd, onSave }: { method: Me
   const [tab, setTab] = useState(0);
   const formula: Record<string, string> = { M01: "Y_it = βD_it + γX_it + α_i + λ_t + ε_it", M02: "Y_it = α + β(Treat_i × Post_t) + γ_i + λ_t + ε_it", M03: "D_it = πZ_it + γX_it + u_it\nY_it = βD̂_it + γX_it + ε_it", M04: "Y_it = α_i + λ_t + Σₖ≠₋₁ βₖ1[t-T_i=k] + ε_it" };
   return <div className="deep-page method-record-page"><DeepHeader level="L3 · 方法卡" eyebrow={`${method.id} · ${method.family}`} title={method.name} description={method.goal} trail={["方法库"]} onBack={onBack} actions={<><button onClick={() => onSave("方法卡备注已保存")}>保存备注</button><button className="primary-action" onClick={onAdd}>加入研究设计</button></>} /><section className="method-record-hero"><div className="method-fit-large"><strong>{method.fit}</strong><span>设计适配度</span></div><div><p className="eyebrow">Estimand & formula</p><pre>{formula[method.id]}</pre><small>{method.engine}</small></div></section><div className="record-layout"><section className="record-main"><nav className="editor-tabs">{["适用目标", "识别假设", "Stata 实现", "失败与诊断"].map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}>{item}</button>)}</nav><div className="record-body">{tab === 0 && <div className="field-stack"><Field label="当前课题中的估计目标"><textarea rows={5} defaultValue="估计生成式 AI 工具采用对企业创新质量的平均影响，并区分企业内变化与共同年份冲击。" /></Field><Field label="为什么考虑该方法"><textarea rows={6} defaultValue={`${method.goal}。推荐分数仅用于比较，最终选择需要结合数据结构和识别假设。`} /></Field></div>}{tab === 1 && <div className="assumption-audit">{method.assumptions.map((item, index) => <article key={item}><span>A{index + 1}</span><div><strong>{item}</strong><p>状态：{index === 0 ? "已有初步证据" : "需要在分析计划中检验"}</p></div><select defaultValue={index === 0 ? "support" : "pending"}><option value="support">已有支持</option><option value="pending">待检查</option><option value="fail">不满足</option></select></article>)}</div>}{tab === 2 && <div className="stata-implementation"><pre><code>{method.id === "M01" ? "xtset firm_id year\nxtreg innovation_quality ai_adoption controls i.year, fe vce(cluster firm_id)" : method.id === "M02" ? "xtdidregress (innovation_quality controls) (ai_adoption), group(firm_id) time(year)" : "* 代码模板将在分析计划中由研究者确认"}</code></pre><Field label="实现备注"><textarea rows={5} defaultValue="正式代码必须映射到 G3 已批准的 AnalysisPlan，并锁定数据签名、软件版本和输出路径。" /></Field></div>}{tab === 3 && <div className="diagnostic-matrix">{["关键假设不满足", "样本有效变异不足", "标准误层级错误", "结果对口径高度敏感"].map((item, index) => <article key={item}><span>{index === 0 ? "阻塞" : "检查"}</span><div><strong>{item}</strong><p>{index === 0 ? "停止核心因果表述，不能自动切换到更复杂模型。" : "写入诊断计划并保留完整结果。"}</p></div></article>)}</div>}</div></section><aside className="record-aside"><p className="eyebrow">Method boundary</p><h2>进入设计前</h2><ul>{method.assumptions.map((item) => <li key={item}>{item}</li>)}</ul><div className="record-warning"><strong>人工选择</strong><p>加入研究设计只会创建候选版本；主模型、备选模型和失败条件必须由研究者在 G1/G3 确认。</p></div></aside></div></div>;
+}
+
+export function MethodRecordWorkspace({ method, onBack, onAdd, onSave }: { method: MethodRecord; onBack: () => void; onAdd: () => void; onSave: (message: string) => void }) {
+  const [tab, setTab] = useState(0);
+  const [note, setNote] = useState(`将 ${method.name} 作为候选方法；进入主分析前核对数据结构、关键假设与失败规则。`);
+  const tabs = ["适用与目标", "假设审计", "实现模板", "诊断与失败"];
+  return <div className="deep-page method-record-page">
+    <DeepHeader level="L3 · 完整方法卡" eyebrow={`${method.id} · ${method.family}`} title={method.name} description={method.goal} trail={["方法与公式库", "方法库"]} onBack={onBack} actions={<><button onClick={() => onSave("方法卡人工备注已保存")}>保存备注</button><button className="primary-action" onClick={onAdd}>加入研究设计</button></>} />
+    <section className="method-record-hero enhanced-method-hero"><div className="method-fit-large"><strong>{method.fit}</strong><span>当前课题适配度</span></div><div><p className="eyebrow">Estimand / decision objective</p><h2>{method.estimand}</h2><pre>{method.formula}</pre><small>{method.engine} · 来源：{method.source}</small></div></section>
+    <div className="record-layout"><section className="record-main"><nav className="editor-tabs">{tabs.map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}>{item}</button>)}</nav><div className="record-body">
+      {tab === 0 && <div className="field-stack"><div className="method-fact-grid"><article><span>数据结构</span><strong>{method.dataShape}</strong></article><article><span>方法家族</span><strong>{method.family}</strong></article><article><span>执行引擎</span><strong>{method.engine}</strong></article><article><span>失败处理</span><strong>阻塞核心表述</strong></article></div><Field label="当前课题采用说明" hint="仅保存候选说明，不会自动变更主模型"><textarea rows={7} value={note} onChange={(event) => setNote(event.target.value)} /></Field><div className="method-tag-row">{method.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>}
+      {tab === 1 && <div className="assumption-audit">{method.assumptions.map((item, index) => <article key={item}><span>A{index + 1}</span><div><strong>{item}</strong><p>需绑定证据、诊断或人工理由；不能由适配分数代替。</p></div><select defaultValue="pending"><option value="support">已有支持</option><option value="pending">待检查</option><option value="fail">不满足</option></select></article>)}</div>}
+      {tab === 2 && <div className="implementation-split"><article><div><span>Stata</span><button onClick={() => onSave("Stata 模板已复制")}>复制</button></div><pre><code>{method.stata}</code></pre></article><article><div><span>Python / Solver</span><button onClick={() => onSave("Python / Solver 模板已复制")}>复制</button></div><pre><code>{method.python}</code></pre></article><div className="implementation-policy"><strong>运行规则</strong><p>模板只能写入 S5 分析计划草稿。正式运行需锁定代码、数据签名、环境与输出路径，并通过 G3 人工审批。</p></div></div>}
+      {tab === 3 && <div className="diagnostic-matrix">{method.diagnostics.map((item, index) => <article key={item}><span>{index === 0 ? "必检" : "诊断"}</span><div><strong>{item}</strong><p>结果写入诊断资产并保留通过、失败与未运行状态。</p></div></article>)}<article className="is-blocking"><span>停止</span><div><strong>{method.failureRule}</strong><p>触发后不得静默切换方法；需由研究者决定降级、补证或修改设计。</p></div></article></div>}
+    </div></section><aside className="record-aside"><p className="eyebrow">Decision guardrail</p><h2>方法选择边界</h2><ul>{method.assumptions.map((item) => <li key={item}>{item}</li>)}</ul><div className="record-warning"><strong>来源不是结论</strong><p>开源实现只用于能力和接口参考。方法适用性、公式口径与推断强度仍由研究者和方法审核者确认。</p></div></aside></div>
+  </div>;
+}
+
+export function FormulaRecordPage({ formula, onBack, onAdd, onSave }: { formula: FormulaRecord; onBack: () => void; onAdd: () => void; onSave: (message: string) => void }) {
+  const [tab, setTab] = useState(0);
+  const [mapping, setMapping] = useState<Record<string, string>>(() => Object.fromEntries(formula.symbols.map((item) => [item.symbol, item.meaning])));
+  const [note, setNote] = useState("公式定义与当前研究设计一致；仍需在 S5 冻结变量口径、样本和标准误/求解器设置。");
+  return <div className="deep-page formula-record-page">
+    <DeepHeader level="L3 · 公式卡" eyebrow={`${formula.id} · ${formula.family}`} title={formula.title} description={formula.purpose} trail={["方法与公式库", "公式库"]} onBack={onBack} actions={<><button onClick={() => onSave("公式结构检查已运行：符号均有定义")}>校验符号</button><button className="primary-action" onClick={onAdd}>加入分析计划</button></>} />
+    <section className="formula-hero"><div><span>FORMULA</span><pre>{formula.formula}</pre></div><aside><small>关联方法</small><strong>{formula.methodId}</strong><small>来源</small><strong>{formula.source}</strong></aside></section>
+    <div className="record-layout"><section className="record-main"><nav className="editor-tabs">{["符号映射", "假设与诊断", "Stata 实现", "采用说明"].map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}>{item}</button>)}</nav><div className="record-body">
+      {tab === 0 && <div className="symbol-table"><header><span>符号</span><span>当前研究中的定义</span><span>状态</span></header>{formula.symbols.map((item) => <label key={item.symbol}><code>{item.symbol}</code><input value={mapping[item.symbol] ?? ""} onChange={(event) => setMapping((current) => ({ ...current, [item.symbol]: event.target.value }))} /><b>{(mapping[item.symbol] ?? "").trim() ? "已定义" : "缺失"}</b></label>)}</div>}
+      {tab === 1 && <div className="formula-audit-grid"><article><p className="eyebrow">Assumptions</p><h2>成立条件</h2><ul>{formula.assumptions.map((item) => <li key={item}>{item}</li>)}</ul></article><article><p className="eyebrow">Diagnostics</p><h2>必须输出</h2><ul>{formula.diagnostics.map((item) => <li key={item}>{item}</li>)}</ul></article></div>}
+      {tab === 2 && <div className="stata-implementation"><pre><code>{formula.stata}</code></pre><div className="implementation-policy"><strong>禁止隐式执行</strong><p>公式卡生成的代码先进入可编辑草稿；只有已审批 revision 能进入机构 Stata Runner。</p></div></div>}
+      {tab === 3 && <div className="field-stack"><Field label="为什么采用这张公式卡"><textarea rows={8} value={note} onChange={(event) => setNote(event.target.value)} /></Field><button className="primary-action formula-save-note" onClick={() => onSave("公式采用说明已保存")}>保存人工说明</button></div>}
+    </div></section><aside className="record-aside"><p className="eyebrow">Formula integrity</p><h2>完整性检查</h2><dl><div><dt>符号定义</dt><dd>{Object.values(mapping).filter((item) => item.trim()).length} / {formula.symbols.length}</dd></div><div><dt>成立条件</dt><dd>{formula.assumptions.length} 项</dd></div><div><dt>诊断输出</dt><dd>{formula.diagnostics.length} 项</dd></div><div><dt>版本状态</dt><dd>可人工修改</dd></div></dl><div className="record-warning"><strong>公式不是装饰</strong><p>每个符号必须连接变量字典，每个参数必须说明解释边界，每个结论必须能回到运行产物。</p></div></aside></div>
+  </div>;
 }
 
 export function ApprovalGatePage({ gate, onBack, onOpenAsset, onSubmit }: { gate: GateRecord; onBack: () => void; onOpenAsset: () => void; onSubmit: () => void }) {
