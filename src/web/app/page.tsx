@@ -17,13 +17,16 @@ import {
   createCheckIssues,
   createStageDraft as createLocalStageDraft,
   EvidenceRecordPage,
+  FormulaRecordPage,
   IssueRemediationPage,
-  MethodRecordPage,
+  MethodRecordWorkspace,
   ProjectOverviewPage,
   ProjectWizard,
   StageDecisionsWorkspace,
   StageDraftWorkspace,
   type DeepRoute,
+  type FormulaRecord,
+  type MethodRecord,
   type ResearchProject,
   type StageDraft,
 } from "./deep-workspaces";
@@ -44,6 +47,8 @@ type ChatMessage = {
   text: string;
   time: string;
 };
+type ChatSyncTarget = "content" | "summary" | "evidenceNote" | "decision";
+type ChatSyncMode = "append" | "replace";
 
 const stages = [
   { key: "problem", id: "S0", name: "问题识别", agent: "Topic Agent", gate: "G0", status: "done", output: "课题简报与已有研究报告", decision: "确认边界、改写问题或暂停课题", check: "候选空白完成反向检索" },
@@ -69,6 +74,19 @@ const agentProfiles = [
   { mission: "建立稳健性矩阵，主动暴露失败检验和结论边界。", skills: ["稳健性", "安慰剂", "敏感性"], starters: ["生成稳健性检验矩阵", "设计安慰剂检验", "如何解释失败的稳健性结果"] },
   { mission: "把主张连接到文献、模型结果、反证与适用边界。", skills: ["证据图谱", "机制检验", "异质性"], starters: ["检查每条主张的证据链", "规划机制检验", "识别需要降级的结论"] },
   { mission: "协作形成论文、审稿回复与可复现发布包。", skills: ["论文写作", "引用核查", "发布复现"], starters: ["生成论文结构", "改写贡献表述", "检查数字与引用一致性"] },
+] as const;
+
+const agentToolProfiles = [
+  { tools: ["OpenAlex / Crossref 检索", "选题新颖性扫描", "研究可行性评分"], rule: "先检索同义词与反向问题；没有来源时不得宣称研究空白。" },
+  { tools: ["布尔检索式生成", "主动学习筛选", "全文证据提取"], rule: "纳入/排除理由逐条保存；摘要级证据不得直接支撑核心结论。" },
+  { tools: ["理论实体抽取", "因果图编辑器", "竞争解释生成"], rule: "每条机制至少连接一个可检验结果和一个竞争解释。" },
+  { tools: ["方法适配检索", "Estimand 构造器", "识别假设审计"], rule: "只推荐候选设计；选择主设计、接受风险必须由人确认。" },
+  { tools: ["数据目录连接器", "变量字典生成", "许可与隐私扫描"], rule: "下载、上传或连接受限数据前必须通过 G2；默认最小权限。" },
+  { tools: ["公式库", "功效与样本量", "分析计划编译器"], rule: "公式、变量、诊断与代码任务逐项映射；冻结前允许人工修改。" },
+  { tools: ["Stata do-file 生成", "静态安全检查", "机构 Runner"], rule: "仅 G3 批准的哈希可正式运行；智能体不能自行启动或安装依赖。" },
+  { tools: ["稳健性矩阵", "安慰剂与敏感性", "结果差异比较"], rule: "失败项不得隐藏；新增检验标记为探索性并触发人工解释。" },
+  { tools: ["主张—证据图", "机制/异质性审计", "反证检索"], rule: "每条主张绑定结果、来源、反证与适用边界后才能送审。" },
+  { tools: ["结构化写作", "数字与引用核验", "交付包导出"], rule: "对话内容先同步为可编辑正文；发布前必须通过 G5 人工批准。" },
 ] as const;
 
 const navItems: { key: ViewKey; label: string; short: string }[] = [
@@ -118,11 +136,38 @@ const libraryEvidence = [
   { title: "AI Adoption and Firm Performance", authors: "Representative evidence card", year: 2024, stream: "企业采用与绩效", method: "双重差分", status: "待全文" },
 ];
 
-const methods = [
-  { id: "M01", name: "面板固定效应", family: "实证解释", fit: 92, goal: "估计企业内部变化与创新结果的关系", assumptions: ["组内变异充分", "无随时间变化的遗漏混杂", "聚类层级正确"], engine: "Stata · xtreg" },
-  { id: "M02", name: "双重差分", family: "因果识别", fit: 84, goal: "利用采用事件与对照组识别平均处理效应", assumptions: ["平行趋势", "无提前反应", "处理组间无溢出"], engine: "Stata · treatment effects" },
-  { id: "M03", name: "工具变量 / 2SLS", family: "因果识别", fit: 61, goal: "缓解 AI 采用的内生选择问题", assumptions: ["工具相关", "排除限制", "单调性"], engine: "Stata · ivregress" },
-  { id: "M04", name: "事件研究", family: "动态效应", fit: 78, goal: "展示采用前后的动态路径与提前趋势", assumptions: ["可靠处理时点", "基准期明确", "异质处理适当"], engine: "Stata · event study" },
+const methods: MethodRecord[] = [
+  { id: "M01", name: "面板固定效应", family: "计量与面板", fit: 92, goal: "估计同一研究对象随时间变化与结果之间的关系。", estimand: "组内变化的条件平均关联 / 处理效应", dataShape: "个体 × 时间面板", formula: "Y_it = βD_it + γX_it + α_i + λ_t + ε_it", assumptions: ["组内有效变异充分", "无随时间变化的遗漏混杂", "聚类层级与处理分配一致"], diagnostics: ["组内/组间变异分解", "序列相关与聚类层级", "高维固定效应吸收检查"], failureRule: "核心变量缺少组内变异或关键时变混杂无法处理时，停止因果表述。", engine: "Stata · xtreg / reghdfe", stata: "xtset firm_id year\nxtreg y treatment controls i.year, fe vce(cluster firm_id)", python: "PanelOLS.from_formula('y ~ treatment + controls + EntityEffects + TimeEffects', data)", tags: ["panel", "fixed effects", "cluster SE"], source: "statsmodels / linearmodels" },
+  { id: "M02", name: "双重差分", family: "因果识别", fit: 86, goal: "利用处理发生前后与对照组差异识别平均处理效应。", estimand: "ATT / group-time ATT", dataShape: "处理组与对照组的重复横截面或面板", formula: "Y_it = α_i + λ_t + β(Treat_i × Post_t) + γX_it + ε_it", assumptions: ["条件平行趋势", "无提前反应", "处理组间无干扰或溢出已建模"], diagnostics: ["处理前动态系数", "分期处理异质性", "安慰剂时点与组别"], failureRule: "平行趋势或处理时点有效性被实质性否定时，不报告主因果效应。", engine: "Stata · xtdidregress / csdid", stata: "xtdidregress (y controls) (treated), group(id) time(year) vce(cluster id)", python: "model.identify_effect(); model.estimate_effect(...); model.refute_estimate(...)", tags: ["ATT", "policy evaluation", "staggered adoption"], source: "DoWhy / linearmodels" },
+  { id: "M03", name: "工具变量 / 2SLS", family: "因果识别", fit: 64, goal: "借助外生工具变量处理选择偏差、反向因果或测量误差。", estimand: "LATE（在单调性条件下）", dataShape: "横截面、面板或时间序列", formula: "D = πZ + γX + u;   Y = βD̂ + γX + ε", assumptions: ["工具相关性", "排除限制", "工具独立性与单调性"], diagnostics: ["第一阶段强度", "弱工具稳健推断", "过度识别与排除限制论证"], failureRule: "弱工具或排除限制缺乏可信论证时，工具变量结果只能作为探索性证据。", engine: "Stata · ivregress / ivreghdfe", stata: "ivregress 2sls y controls (treatment = instrument), vce(cluster id)\nestat firststage", python: "IV2SLS.from_formula('y ~ 1 + controls + [treatment ~ instrument]', data).fit()", tags: ["endogeneity", "LATE", "weak IV"], source: "linearmodels / DoWhy" },
+  { id: "M04", name: "事件研究", family: "动态效应", fit: 80, goal: "展示事件发生前后的动态路径、提前反应与效应持续性。", estimand: "相对事件时间的动态效应 β_k", dataShape: "具有可信事件时点的面板", formula: "Y_it = α_i + λ_t + Σ_{k≠-1} β_k 1[t-T_i=k] + ε_it", assumptions: ["事件时点可靠", "基准期与窗口预先定义", "分期处理异质性得到处理"], diagnostics: ["处理前联合检验", "事件窗口敏感性", "队列加权与组成变化"], failureRule: "事件前出现系统性趋势且无法解释时，动态因果路径不得进入核心结论。", engine: "Stata · eventstudyinteract", stata: "eventstudyinteract y lead* lag*, absorb(id year) cohort(first_treat) control_cohort(never)", python: "# cohort-specific event-time effects with explicit reference period", tags: ["dynamic effect", "pre-trend", "cohort"], source: "DoWhy / causal inference practice" },
+  { id: "M05", name: "断点回归 RDD", family: "准实验", fit: 45, goal: "利用阈值附近的处理跳跃识别局部平均处理效应。", estimand: "阈值处 LATE", dataShape: "连续运行变量 + 明确阈值", formula: "τ = lim_{x↓c}E[Y|X=x] − lim_{x↑c}E[Y|X=x]", assumptions: ["阈值附近潜在结果连续", "运行变量不可精确操纵", "带宽与多项式阶数合理"], diagnostics: ["密度操纵检验", "协变量连续性", "带宽与核函数敏感性"], failureRule: "运行变量存在操纵或阈值同时触发其他制度变化时，停止局部因果解释。", engine: "Stata · rdrobust", stata: "rdrobust y running, c(cutoff) covs(controls)\nrddensity running, c(cutoff)", python: "# local polynomial fit on each side of cutoff", tags: ["threshold", "local effect", "bandwidth"], source: "DoWhy / rdrobust ecosystem" },
+  { id: "M06", name: "倾向得分与加权", family: "选择校正", fit: 58, goal: "在可观测混杂条件下构造可比样本或加权总体。", estimand: "ATE / ATT / ATC", dataShape: "处理、结果与处理前协变量", formula: "ATE = E[DY/e(X) − (1-D)Y/(1-e(X))]", assumptions: ["条件可忽略性", "正值性 / 重叠", "协变量均为处理前变量"], diagnostics: ["重叠与极端权重", "加权后平衡", "未观测混杂敏感性"], failureRule: "严重违反重叠或关键混杂不可观测时，不将匹配/加权解释为已消除选择偏差。", engine: "Stata · teffects", stata: "teffects ipwra (y controls) (treated controls), atet\ntebalance summarize", python: "CausalModel(...).identify_effect(); model.estimate_effect(...)", tags: ["propensity score", "IPW", "balance"], source: "DoWhy / CausalML" },
+  { id: "M07", name: "合成控制", family: "政策评估", fit: 52, goal: "以加权对照单元构造处理单元未受处理时的反事实路径。", estimand: "处理单元的时间路径效应", dataShape: "少量处理单元 + 长期面板 + donor pool", formula: "Y^N_{1t} ≈ Σ_{j=2}^{J+1} w_jY_{jt},  w_j≥0, Σw_j=1", assumptions: ["加权对照可逼近处理前路径", "无干扰与预期效应", "donor pool 未受同类冲击"], diagnostics: ["处理前 RMSPE", "空间与时间安慰剂", "剔除高权重单元"], failureRule: "处理前拟合质量不足或 donor pool 被污染时，停止反事实效应解释。", engine: "Stata · synth / sdid", stata: "synth y predictors, trunit(1) trperiod(2022) nested", python: "# optimize non-negative donor weights subject to sum(w)=1", tags: ["synthetic control", "policy", "counterfactual"], source: "optimization + causal inference practice" },
+  { id: "M08", name: "动态面板 GMM", family: "计量与面板", fit: 47, goal: "处理含滞后因变量的动态面板与潜在内生解释变量。", estimand: "动态短期与长期参数", dataShape: "大 N、小 T 面板", formula: "Y_it = ρY_{i,t-1} + βD_it + α_i + ε_it", assumptions: ["误差序列相关结构符合矩条件", "工具变量集合有效", "工具数量受控"], diagnostics: ["AR(1)/AR(2)", "Hansen/Sargan", "工具数量与折叠策略"], failureRule: "AR(2) 或工具有效性失败、工具膨胀时，不报告 GMM 作为主结果。", engine: "Stata · xtabond2", stata: "xtabond2 y L.y treatment controls i.year, gmm(L.y treatment, collapse) iv(controls i.year) twostep robust", python: "# dynamic panel GMM with explicitly bounded instrument set", tags: ["dynamic panel", "GMM", "instrument proliferation"], source: "linearmodels / econometrics practice" },
+  { id: "M09", name: "中介、调节与 SEM", family: "机制模型", fit: 70, goal: "检验理论机制、间接效应、边界条件与测量结构。", estimand: "直接效应、间接效应与条件效应", dataShape: "横截面、面板或潜变量测量数据", formula: "M = aX + e_M;   Y = c′X + bM + d(X×W) + e_Y", assumptions: ["因果顺序由理论与设计支持", "中介—结果混杂得到处理", "测量模型可接受"], diagnostics: ["Bootstrap 间接效应", "测量信效度与拟合", "替代因果顺序"], failureRule: "仅凭横截面相关或拟合指标不得宣称机制得到因果验证。", engine: "Stata · sem / gsem", stata: "sem (mediator <- treatment controls) (y <- mediator treatment controls), vce(robust)\nnlcom _b[mediator:treatment]*_b[y:mediator]", python: "# structural equations with bootstrap confidence intervals", tags: ["mediation", "moderation", "latent variable"], source: "statsmodels / SEM practice" },
+  { id: "M10", name: "线性 / 混合整数规划", family: "优化与决策", fit: 76, goal: "在资源、容量和逻辑约束下最小化成本或最大化收益。", estimand: "最优目标值与决策变量", dataShape: "集合、参数、决策变量、约束", formula: "min cᵀx  s.t. Ax ≥ b,  x_j∈ℝ/ℤ/{0,1}", assumptions: ["目标与约束可线性表达", "参数口径一致", "求解容差与最优性差距已定义"], diagnostics: ["可行性与冲突约束", "MIP gap / bound", "影子价格与情景敏感性"], failureRule: "模型不可行或关键约束缺失时，不得将求解器输出称为可执行最优方案。", engine: "Pyomo / PuLP / OR-Tools", stata: "* Stata 用于估计输入参数；优化由受控 solver job 执行", python: "model = ConcreteModel(); model.x = Var(...); model.obj = Objective(...); model.cons = Constraint(...)", tags: ["LP", "MILP", "resource allocation"], source: "Pyomo / PuLP / OR-Tools" },
+  { id: "M11", name: "鲁棒优化", family: "优化与决策", fit: 68, goal: "在参数处于不确定集合内时寻找最坏情形下仍可接受的方案。", estimand: "最坏情形目标与鲁棒决策", dataShape: "确定性骨架 + 不确定集合", formula: "min_x max_{u∈U} f(x,u)  s.t. g(x,u)≤0, ∀u∈U", assumptions: ["不确定集合有业务依据", "保守度参数可解释", "鲁棒对应可求解"], diagnostics: ["价格—稳健性曲线", "集合半径敏感性", "样本外压力测试"], failureRule: "不确定集合任意设定或保守成本未披露时，不输出政策建议。", engine: "Pyomo + robust counterpart", stata: "* 参数分布与区间可由 Stata 估计后冻结入模型", python: "# construct uncertainty set U and solve robust counterpart", tags: ["uncertainty set", "min-max", "stress test"], source: "Pyomo optimization ecosystem" },
+  { id: "M12", name: "随机规划", family: "优化与决策", fit: 62, goal: "在未来情景与概率不确定性下共同优化当前和递延决策。", estimand: "期望目标、CVaR 与情景决策", dataShape: "场景树或抽样情景", formula: "min cᵀx + E_ξ[Q(x,ξ)]", assumptions: ["情景生成覆盖关键风险", "概率或样本权重可信", "非预见性约束正确"], diagnostics: ["样本平均逼近稳定性", "EVPI / VSS", "尾部风险与场景删减"], failureRule: "场景覆盖不足或概率假设未审计时，最优方案只能作为情景演示。", engine: "Pyomo / mpi-sppy", stata: "* 用 Stata 估计情景概率与输入分布；求解在隔离 solver 运行", python: "# first-stage x, scenario recourse y[s], non-anticipativity constraints", tags: ["stochastic programming", "scenario", "CVaR"], source: "Pyomo / mpi-sppy" },
+  { id: "M13", name: "网络流、路径与调度", family: "运营研究", fit: 73, goal: "求解路由、分配、最短路、最大流、排程和容量决策。", estimand: "可行路径/排程及其成本、服务与碳排", dataShape: "节点、边、订单、资源与时间窗", formula: "min Σ_{(i,j)} c_{ij}x_{ij}  s.t. flow balance & capacity", assumptions: ["网络拓扑与成本可信", "时间窗/容量约束完整", "离散决策尺度可求解"], diagnostics: ["可行性与约束冲突", "最优性界与运行时", "扰动、需求与边成本敏感性"], failureRule: "遗漏业务硬约束或仅给出不可部署路线时，不进入实施建议。", engine: "OR-Tools · CP-SAT / Routing", stata: "* Stata 负责需求估计与结果统计检验", python: "routing = pywrapcp.RoutingModel(...); routing.AddDimension(...); solution = routing.SolveWithParameters(params)", tags: ["routing", "scheduling", "network flow"], source: "Google OR-Tools" },
+  { id: "M14", name: "数据包络分析 DEA", family: "效率评价", fit: 55, goal: "比较多个决策单元在多投入多产出条件下的相对效率。", estimand: "效率前沿距离与松弛变量", dataShape: "DMU × 投入/产出", formula: "max_u,v uᵀy_o / vᵀx_o  s.t. uᵀy_j/vᵀx_j≤1", assumptions: ["投入产出同质且方向合理", "样本量足以支撑维度", "异常值与环境变量已处理"], diagnostics: ["规模报酬设定", "Bootstrap 偏差", "异常值与超效率敏感性"], failureRule: "DMU 不可比或维度相对样本过高时，不发布效率排名。", engine: "DEA solver / linear programming", stata: "* dea / teradial（需在 ado manifest 中锁定）", python: "# solve one LP per DMU with Pyomo/PuLP", tags: ["efficiency", "frontier", "benchmarking"], source: "Pyomo / PuLP modeling pattern" },
+  { id: "M15", name: "仿真与蒙特卡洛", family: "仿真与预测", fit: 66, goal: "评估随机系统、策略情景和估计量在重复试验下的表现。", estimand: "输出分布、风险指标或策略差异", dataShape: "输入分布 + 状态转移/业务规则", formula: "θ̂_MC = (1/R)Σ_{r=1}^R h(X_r)", assumptions: ["输入分布与依赖结构有依据", "预热期与重复次数足够", "随机种子与版本可复现"], diagnostics: ["蒙特卡洛标准误", "收敛与方差缩减", "输入分布敏感性"], failureRule: "输入分布未经校准或仿真误差未量化时，不将场景差异解释为稳健政策效应。", engine: "Stata simulate / Python", stata: "simulate b=_b[treatment], reps(1000) seed(20260721): myprogram", python: "rng = np.random.default_rng(seed); results = [simulate(rng) for _ in range(R)]", tags: ["simulation", "Monte Carlo", "scenario"], source: "statsmodels / scientific simulation practice" },
+  { id: "M16", name: "双重机器学习 / 因果森林", family: "因果机器学习", fit: 57, goal: "在高维控制变量下估计平均或异质处理效应。", estimand: "ATE / CATE / policy value", dataShape: "大样本、高维特征、处理与结果", formula: "Y-ĝ(X) = θ(X)(T-m̂(X)) + ε", assumptions: ["可忽略性或有效工具变量", "交叉拟合与正则化条件", "重叠与样本量充分"], diagnostics: ["交叉拟合稳定性", "重叠与校准", "异质性多重比较与策略验证"], failureRule: "仅发现异质性模式而缺乏样本外验证时，不将 CATE 排名写成确定性分群结论。", engine: "EconML / CausalML", stata: "* Stata 输出经批准的分析样本；CATE 在锁定 Python 环境运行", python: "est = CausalForestDML(...); est.fit(Y, T, X=X, W=W); est.effect(X)", tags: ["DML", "CATE", "causal forest"], source: "EconML / CausalML" },
+];
+
+const formulas: FormulaRecord[] = [
+  { id: "F01", title: "双向固定效应", family: "计量", methodId: "M01", formula: "Y_it = βD_it + γX_it + α_i + λ_t + ε_it", purpose: "吸收个体不变异质性与共同时间冲击。", symbols: [{ symbol: "Y_it", meaning: "个体 i 在 t 期的结果变量" }, { symbol: "D_it", meaning: "核心解释或处理变量" }, { symbol: "X_it", meaning: "预先定义的时变控制变量" }, { symbol: "α_i", meaning: "个体固定效应" }, { symbol: "λ_t", meaning: "时间固定效应" }], assumptions: ["严格外生或可辩护的条件外生", "组内变异充分"], diagnostics: ["组内变异", "聚类标准误", "残差结构"], stata: "xtreg y d controls i.year, fe vce(cluster id)", source: "linearmodels / statsmodels" },
+  { id: "F02", title: "双重差分 ATT", family: "因果", methodId: "M02", formula: "Y_it = α_i + λ_t + β(Treat_i×Post_t) + ε_it", purpose: "比较处理与对照组在处理前后的变化差异。", symbols: [{ symbol: "Treat_i", meaning: "处理组指示变量" }, { symbol: "Post_t", meaning: "处理后时期指示变量" }, { symbol: "β", meaning: "目标 ATT 参数" }], assumptions: ["平行趋势", "无提前反应", "无干扰"], diagnostics: ["事件研究前趋势", "组时异质性", "安慰剂"], stata: "xtdidregress (y controls) (treated), group(id) time(year)", source: "DoWhy causal workflow" },
+  { id: "F03", title: "事件时间动态系数", family: "因果", methodId: "M04", formula: "Y_it = α_i + λ_t + Σ_{k≠-1}β_k·1[t-T_i=k] + ε_it", purpose: "估计处理前后各相对时期的动态效应。", symbols: [{ symbol: "T_i", meaning: "个体首次处理时点" }, { symbol: "k", meaning: "相对事件时间" }, { symbol: "β_k", meaning: "相对基准期的动态效应" }], assumptions: ["处理时点可靠", "基准期固定", "队列异质性已处理"], diagnostics: ["处理前联合检验", "窗口敏感性", "队列权重"], stata: "eventstudyinteract y lead* lag*, absorb(id year) cohort(first_treat)", source: "event-study practice" },
+  { id: "F04", title: "两阶段最小二乘", family: "因果", methodId: "M03", formula: "D=πZ+γX+u;  Y=βD̂+γX+ε", purpose: "用工具变量诱导的外生处理变异估计局部效应。", symbols: [{ symbol: "Z", meaning: "工具变量" }, { symbol: "D̂", meaning: "第一阶段预测处理" }, { symbol: "β", meaning: "局部平均处理效应" }], assumptions: ["相关性", "排除限制", "独立性与单调性"], diagnostics: ["第一阶段 F", "弱工具稳健区间", "过度识别"], stata: "ivregress 2sls y controls (d=z), vce(cluster id)", source: "linearmodels / DoWhy" },
+  { id: "F05", title: "局部断点效应", family: "准实验", methodId: "M05", formula: "τ = lim_{x↓c}E[Y|X=x] − lim_{x↑c}E[Y|X=x]", purpose: "估计阈值两侧结果函数的局部跳跃。", symbols: [{ symbol: "X", meaning: "运行变量" }, { symbol: "c", meaning: "处理阈值" }, { symbol: "τ", meaning: "阈值处局部处理效应" }], assumptions: ["潜在结果连续", "不可精确操纵"], diagnostics: ["密度检验", "协变量连续", "带宽敏感性"], stata: "rdrobust y running, c(cutoff)", source: "RDD practice" },
+  { id: "F06", title: "IPW 加权均值", family: "选择校正", methodId: "M06", formula: "ATE = E[DY/e(X) − (1-D)Y/(1-e(X))]", purpose: "以处理概率倒数重构目标总体。", symbols: [{ symbol: "e(X)", meaning: "倾向得分 P(D=1|X)" }, { symbol: "D", meaning: "处理状态" }, { symbol: "Y", meaning: "观测结果" }], assumptions: ["条件可忽略性", "正值性"], diagnostics: ["平衡", "极端权重", "有效样本量"], stata: "teffects ipwra (y controls) (d controls), ate", source: "DoWhy / CausalML" },
+  { id: "F07", title: "中介间接效应", family: "机制", methodId: "M09", formula: "Indirect = a×b;  Total = c′ + a×b", purpose: "分解处理经中介路径传递的间接效应。", symbols: [{ symbol: "a", meaning: "处理对中介的效应" }, { symbol: "b", meaning: "控制处理后中介对结果的效应" }, { symbol: "c′", meaning: "直接效应" }], assumptions: ["因果顺序可信", "无中介—结果未测混杂"], diagnostics: ["Bootstrap 区间", "替代顺序", "测量误差"], stata: "sem (m <- x controls) (y <- m x controls)\nnlcom _b[m:x]*_b[y:m]", source: "SEM / mediation practice" },
+  { id: "F08", title: "线性 / 混合整数规划", family: "优化", methodId: "M10", formula: "min cᵀx  s.t. Ax≥b, x_j∈ℝ/ℤ/{0,1}", purpose: "将资源配置、选择与逻辑约束表达为可求解模型。", symbols: [{ symbol: "x", meaning: "决策变量向量" }, { symbol: "c", meaning: "目标系数" }, { symbol: "A,b", meaning: "约束矩阵与边界" }], assumptions: ["线性表达充分", "参数与单位一致"], diagnostics: ["可行性", "最优性 gap", "敏感性"], stata: "* 估计参数后导出 solver manifest", source: "Pyomo / PuLP / OR-Tools" },
+  { id: "F09", title: "鲁棒最坏情形", family: "优化", methodId: "M11", formula: "min_x max_{u∈U} f(x,u)", purpose: "在不确定集合内控制最坏情形损失。", symbols: [{ symbol: "x", meaning: "鲁棒决策" }, { symbol: "u", meaning: "不确定参数" }, { symbol: "U", meaning: "经审计的不确定集合" }], assumptions: ["不确定集合有经验依据", "鲁棒对应可求解"], diagnostics: ["保守成本", "集合半径", "压力测试"], stata: "* estimate uncertainty bounds; freeze into solver input", source: "Pyomo ecosystem" },
+  { id: "F10", title: "两阶段随机规划", family: "优化", methodId: "M12", formula: "min cᵀx + E_ξ[Q(x,ξ)]", purpose: "平衡当前决策与未来情景中的补救成本。", symbols: [{ symbol: "x", meaning: "第一阶段决策" }, { symbol: "ξ", meaning: "随机情景" }, { symbol: "Q", meaning: "情景补救价值函数" }], assumptions: ["情景覆盖充分", "非预见性约束正确"], diagnostics: ["VSS/EVPI", "场景稳定性", "尾部风险"], stata: "* scenario probability estimation only", source: "Pyomo / mpi-sppy" },
+  { id: "F11", title: "网络流平衡", family: "运营研究", methodId: "M13", formula: "Σ_j x_{ji} − Σ_j x_{ij} = b_i", purpose: "保证每个节点的流入、流出与供需守恒。", symbols: [{ symbol: "x_ij", meaning: "边 i→j 上的流量" }, { symbol: "b_i", meaning: "节点供给或需求" }], assumptions: ["拓扑完整", "容量与单位一致"], diagnostics: ["不可行约束", "容量瓶颈", "边成本扰动"], stata: "* validate demand and post-solution outcomes", source: "Google OR-Tools" },
+  { id: "F12", title: "双重机器学习残差式", family: "因果机器学习", methodId: "M16", formula: "Y-ĝ(X) = θ(X)(T-m̂(X)) + ε", purpose: "用正交化与交叉拟合降低高维干扰估计偏差。", symbols: [{ symbol: "ĝ(X)", meaning: "结果条件均值模型" }, { symbol: "m̂(X)", meaning: "处理条件均值模型" }, { symbol: "θ(X)", meaning: "条件处理效应" }], assumptions: ["混杂可由 X 控制", "交叉拟合", "重叠"], diagnostics: ["校准", "样本外稳定性", "策略价值"], stata: "* export approved analytic sample to locked Python runner", source: "EconML / CausalML" },
 ];
 
 const gateCards = [
@@ -272,6 +317,7 @@ function mapApiDrafts(project: ApiProject, localProject: ResearchProject) {
       humanConfirmed: typeof content.humanConfirmed === "boolean" ? content.humanConfirmed : base.humanConfirmed,
       version: remoteStage.revision || base.version,
       savedAt: remoteStage.revision_created_at ? new Date(remoteStage.revision_created_at).toLocaleString("zh-CN") : base.savedAt,
+      syncHistory: Array.isArray(content.syncHistory) ? content.syncHistory.filter((item): item is string => typeof item === "string") : base.syncHistory,
     };
   });
   return mapped;
@@ -329,12 +375,17 @@ function AgentChatDrawer({
   onClose: () => void;
   onSelectAgent: (index: number) => void;
   onSend: (text: string) => void;
-  onCapture: (text: string) => void;
+  onCapture: (text: string, target: ChatSyncTarget, mode: ChatSyncMode) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [syncCandidate, setSyncCandidate] = useState("");
+  const [syncTarget, setSyncTarget] = useState<ChatSyncTarget>("content");
+  const [syncMode, setSyncMode] = useState<ChatSyncMode>("append");
+  const [syncConfirmed, setSyncConfirmed] = useState(false);
   if (!open) return null;
   const stage = stages[agentIndex];
   const profile = agentProfiles[agentIndex];
+  const toolProfile = agentToolProfiles[agentIndex];
   const submit = () => {
     const value = draft.trim();
     if (!value || busy) return;
@@ -353,7 +404,7 @@ function AgentChatDrawer({
           <nav className="agent-directory" aria-label="选择科研智能体">
             <div className="agent-directory-label">10 个阶段智能体</div>
             {stages.map((item, index) => (
-              <button className={index === agentIndex ? "is-active" : ""} onClick={() => onSelectAgent(index)} key={item.id}>
+              <button className={index === agentIndex ? "is-active" : ""} onClick={() => { onSelectAgent(index); setSyncCandidate(""); setSyncConfirmed(false); }} key={item.id}>
                 <span>{item.id}</span><div><strong>{item.agent}</strong><small>{item.name}</small></div>
               </button>
             ))}
@@ -373,7 +424,7 @@ function AgentChatDrawer({
                 <article className={`chat-message is-${message.role}`} key={message.id}>
                   <div className="message-role">{message.role === "user" ? "你" : stage.agent}<time>{message.time}</time></div>
                   <p>{message.text}</p>
-                  {message.role === "assistant" && <button className="message-capture" onClick={() => onCapture(message.text)}>加入阶段记录</button>}
+                  {message.role === "assistant" && <button className="message-capture" onClick={() => { setSyncCandidate(message.text); setSyncTarget("content"); setSyncMode("append"); setSyncConfirmed(false); }}>同步到交付正文</button>}
                 </article>
               ))}
               {busy && <article className="chat-message is-assistant is-typing"><div className="message-role">{stage.agent}</div><p><span /><span /><span /> 正在整理回答</p></article>}
@@ -405,6 +456,8 @@ function AgentChatDrawer({
               <div><dt>需要人工决定</dt><dd>{stage.decision}</dd></div>
             </dl>
             <div className="context-notice"><strong>协作边界</strong><p>智能体可以提出建议和草稿，但不能替你接受风险、批准阶段或启动正式分析。</p></div>
+            <div className="agent-tool-mini"><strong>本阶段可调用工具</strong>{toolProfile.tools.map((tool) => <span key={tool}>{tool}</span>)}<p>{toolProfile.rule}</p></div>
+            {syncCandidate && <div className="chat-sync-panel"><div className="chat-sync-title"><span>SYNC</span><strong>同步到阶段资产</strong></div><p>同步前可选择目标和写入方式；确认后仍可在草稿中人工修改。</p><label><span>目标位置</span><select value={syncTarget} onChange={(event) => setSyncTarget(event.target.value as ChatSyncTarget)}><option value="content">交付正文</option><option value="summary">阶段摘要</option><option value="evidenceNote">证据说明</option><option value="decision">决定记录草稿</option></select></label><label><span>写入方式</span><select value={syncMode} onChange={(event) => setSyncMode(event.target.value as ChatSyncMode)}><option value="append">追加并保留原文</option><option value="replace">替换目标内容</option></select></label><div className="sync-preview">{syncCandidate}</div><div className="chat-sync-actions"><button onClick={() => setSyncCandidate("")}>取消</button><button className="primary-action" disabled={syncConfirmed} onClick={() => { onCapture(syncCandidate, syncTarget, syncMode); setSyncConfirmed(true); }}>{syncConfirmed ? "已同步" : "人工确认并同步"}</button></div>{syncConfirmed && <small>已生成同步记录，可到“当前草稿”继续修改。</small>}</div>}
           </aside>
         </div>
       </section>
@@ -653,31 +706,30 @@ function EvidenceLibrary({ onOpenRecord, onToast }: { onOpenRecord: (title: stri
   );
 }
 
-function MethodsView({ onOpenDetail, onOpenMethod, onAdd }: { onOpenDetail: (detail: DetailPanel) => void; onOpenMethod: (methodId: string) => void; onAdd: (methodId: string) => void }) {
+function MethodsView({ onOpenMethod, onOpenFormula, onAdd, onToast }: { onOpenMethod: (methodId: string) => void; onOpenFormula: (formulaId: string) => void; onAdd: (methodId: string) => void; onToast: (message: string) => void }) {
+  const [tab, setTab] = useState<"methods" | "formulas" | "diagnostics" | "design">("methods");
   const [selected, setSelected] = useState(methods[0].id);
-  const activeMethod = methods.find((method) => method.id === selected) ?? methods[0];
-  const formulaByMethod: Record<string, string> = {
-    M01: "Y_it = βD_it + γX_it + α_i + λ_t + ε_it",
-    M02: "Y_it = α + β(Treat_i × Post_t) + γ_i + λ_t + ε_it",
-    M03: "D_it = πZ_it + γX_it + u_it\nY_it = βD̂_it + γX_it + ε_it",
-    M04: "Y_it = α_i + λ_t + Σₖ≠₋₁ βₖ 1[t-T_i=k] + ε_it",
-  };
-  return (
-    <div className="methods-view page-view">
-      <header className="view-header"><div><p className="eyebrow">Method & Formula Studio</p><h1>方法库</h1><p>不按“模型更复杂”推荐，而是比较目标、数据、假设和失败条件。</p></div><button className="outline-compact" onClick={() => onOpenDetail({ eyebrow: "Formula library · 4 / 47", title: "当前课题推荐公式卡", description: "公式卡同时记录 estimand、识别假设、适用数据和 Stata 实现，不把公式复杂度等同于研究质量。", rows: methods.map((method) => ({ label: method.name, value: `${formulaByMethod[method.id]} · ${method.engine}` })), bullets: ["先明确估计目标，再选择模型", "主模型、稳健性模型和探索性模型必须分层", "每个模型都要对应失败条件与诊断结果"] })}>查看 47 张公式卡</button></header>
-      <div className="methods-layout">
-        <section className="method-card-grid" aria-label="候选方法">
-          {methods.map((method) => <button className={`method-card ${selected === method.id ? "is-selected" : ""}`} onClick={() => setSelected(method.id)} key={method.id}><div><span>{method.id}</span><span>{method.family}</span></div><h2>{method.name}</h2><p>{method.goal}</p><div className="method-fit"><span><i style={{ width: `${method.fit}%` }} /></span><strong>{method.fit}% 适配</strong></div><small>{method.engine}</small></button>)}
-        </section>
-        <aside className="method-detail">
-          <p className="eyebrow">当前比较</p><h2>{activeMethod.name}</h2><div className="method-score-ring"><strong>{activeMethod.fit}</strong><span>设计适配度</span></div>
-          <h3>进入设计前必须确认</h3><ul>{activeMethod.assumptions.map((item) => <li key={item}><span>!</span>{item}</li>)}</ul>
-          <div className="method-warning"><strong>方法边界</strong><p>推荐分数只是决策辅助；假设未通过时，平台会阻塞而不是自动换成更复杂模型。</p></div>
-          <div className="method-detail-actions"><button onClick={() => onOpenMethod(activeMethod.id)}>打开完整方法卡</button><button className="primary-action" onClick={() => onAdd(activeMethod.id)}>加入研究设计</button></div>
-        </aside>
-      </div>
-    </div>
-  );
+  const [query, setQuery] = useState("");
+  const [family, setFamily] = useState("全部");
+  const [compare, setCompare] = useState<string[]>(["M01", "M02"]);
+  const families = ["全部", ...Array.from(new Set(methods.map((method) => method.family)))];
+  const filteredMethods = methods.filter((method) => (family === "全部" || method.family === family) && `${method.name} ${method.goal} ${method.tags.join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const filteredFormulas = formulas.filter((formula) => (family === "全部" || formula.family.includes(family) || methods.find((method) => method.id === formula.methodId)?.family === family) && `${formula.title} ${formula.formula} ${formula.purpose}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const activeMethod = filteredMethods.find((method) => method.id === selected) ?? filteredMethods[0] ?? methods.find((method) => method.id === selected) ?? methods[0];
+  const toggleCompare = (methodId: string) => setCompare((current) => current.includes(methodId) ? current.filter((item) => item !== methodId) : current.length < 3 ? [...current, methodId] : [...current.slice(1), methodId]);
+  return <div className="methods-view page-view method-studio">
+    <header className="view-header method-studio-header"><div><p className="eyebrow">Method & Formula Studio · versioned registry</p><h1>方法与公式库</h1><p>从研究目标和数据结构出发，连接公式、假设、诊断、代码与人工选择记录。</p></div><div className="studio-metrics"><div><strong>{methods.length}</strong><span>核心方法</span></div><div><strong>47</strong><span>公式模板</span></div><div><strong>36</strong><span>诊断规则</span></div></div></header>
+    <nav className="studio-tabs" aria-label="方法工作台分区">{[["methods", "方法库"], ["formulas", "公式库"], ["diagnostics", "诊断规则"], ["design", "当前研究设计"]].map(([key, label]) => <button className={tab === key ? "is-active" : ""} onClick={() => setTab(key as typeof tab)} key={key}>{label}<span>{key === "methods" ? methods.length : key === "formulas" ? 47 : key === "diagnostics" ? 36 : compare.length}</span></button>)}</nav>
+    <section className="studio-toolbar"><label className="search-field"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索目标、方法、公式、诊断或标签" aria-label="搜索方法与公式" /></label><select value={family} onChange={(event) => setFamily(event.target.value)} aria-label="筛选方法家族">{families.map((item) => <option key={item}>{item}</option>)}</select><button onClick={() => { setQuery(""); setFamily("全部"); }}>清除筛选</button></section>
+
+    {tab === "methods" && <div className="method-library-shell"><section className="method-library-list" aria-label="候选方法">{filteredMethods.map((method) => <article className={`method-library-row ${selected === method.id ? "is-selected" : ""}`} key={method.id}><button className="method-row-main" onClick={() => setSelected(method.id)}><span className="method-code">{method.id}</span><div><div><b>{method.family}</b><small>{method.dataShape}</small></div><h2>{method.name}</h2><p>{method.goal}</p><div className="method-tag-row">{method.tags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}</div></div><strong className="method-row-fit">{method.fit}<small>%</small></strong></button><div className="method-row-actions"><button className={compare.includes(method.id) ? "is-active" : ""} onClick={() => toggleCompare(method.id)}>{compare.includes(method.id) ? "已加入比较" : "加入比较"}</button><button onClick={() => onOpenMethod(method.id)}>完整方法卡 →</button></div></article>)}{filteredMethods.length === 0 && <div className="empty-state">没有匹配的方法，请调整关键词或方法家族。</div>}</section><aside className="method-detail method-studio-detail"><p className="eyebrow">Selected method</p><div className="selected-method-title"><div><span>{activeMethod.id}</span><h2>{activeMethod.name}</h2></div><strong>{activeMethod.fit}%</strong></div><pre>{activeMethod.formula}</pre><dl><div><dt>目标</dt><dd>{activeMethod.estimand}</dd></div><div><dt>数据</dt><dd>{activeMethod.dataShape}</dd></div><div><dt>实现</dt><dd>{activeMethod.engine}</dd></div></dl><h3>关键假设</h3><ul>{activeMethod.assumptions.map((item) => <li key={item}><span>!</span>{item}</li>)}</ul><div className="method-warning"><strong>失败规则</strong><p>{activeMethod.failureRule}</p></div><div className="method-detail-actions"><button onClick={() => onOpenMethod(activeMethod.id)}>审阅完整方法卡</button><button className="primary-action" onClick={() => onAdd(activeMethod.id)}>加入研究设计</button></div></aside></div>}
+
+    {tab === "formulas" && <section className="formula-library-grid">{filteredFormulas.map((formula) => <article className="formula-library-card" key={formula.id}><header><span>{formula.id}</span><b>{formula.family}</b></header><h2>{formula.title}</h2><p>{formula.purpose}</p><pre>{formula.formula}</pre><div className="formula-card-meta"><span>{formula.symbols.length} 个符号</span><span>{formula.assumptions.length} 项假设</span><span>{formula.diagnostics.length} 项诊断</span></div><footer><button onClick={() => { void navigator.clipboard?.writeText(formula.formula); onToast(`${formula.id} 公式已复制`); }}>复制公式</button><button className="primary-action" onClick={() => onOpenFormula(formula.id)}>打开公式卡 →</button></footer></article>)}<article className="formula-library-card formula-coming-card"><span>+35</span><h2>已策划扩展模板</h2><p>时间序列、离散选择、生存分析、多层模型、多目标优化、排队与博弈模型将在后端注册表中版本化上线。</p><button onClick={() => onToast("扩展公式目录已加入产品 Roadmap")}>查看上线规则</button></article></section>}
+
+    {tab === "diagnostics" && <section className="diagnostic-library"><header><div><p className="eyebrow">Diagnostic policy registry</p><h2>诊断不是附录，是方法的退出条件</h2></div><button onClick={() => onToast("36 条诊断规则已加入 S5 分析计划检查清单")}>全部加入分析计划</button></header>{[{ family: "因果识别", trigger: "DID / IV / RDD / 加权", rules: ["平行趋势与提前反应", "弱工具与排除限制", "重叠、操纵与安慰剂"], action: "失败时降级或停止因果表述" }, { family: "面板与统计", trigger: "FE / GMM / SEM", rules: ["聚类与序列相关", "工具膨胀与 AR(2)", "测量信效度与替代顺序"], action: "保留失败项并由方法审核者解释" }, { family: "优化与运营", trigger: "LP / 鲁棒 / 随机 / 路由", rules: ["可行性与冲突约束", "最优性 gap 与运行时", "参数、场景和压力敏感性"], action: "不可行或缺约束时禁止称为最优方案" }, { family: "因果机器学习", trigger: "DML / CATE", rules: ["交叉拟合稳定性", "重叠与校准", "样本外策略价值"], action: "探索性异质性不得自动转为分群政策" }].map((group, index) => <article key={group.family}><span>0{index + 1}</span><div><b>{group.family}</b><h3>{group.trigger}</h3><ul>{group.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul></div><aside><small>触发动作</small><strong>{group.action}</strong><button onClick={() => onToast(`${group.family}诊断规则已加入当前设计`)}>加入当前设计</button></aside></article>)}</section>}
+
+    {tab === "design" && <section className="current-design-board"><header><div><p className="eyebrow">Research design bundle</p><h2>当前候选方法比较</h2><p>最多同时比较 3 个候选；确定主模型前必须记录未采用理由。</p></div><button className="primary-action" disabled={!compare.length} onClick={() => { if (compare[0]) onAdd(compare[0]); }}>将首项设为主方案草稿</button></header><div className="design-compare-grid">{compare.map((methodId, index) => { const method = methods.find((item) => item.id === methodId); if (!method) return null; return <article key={method.id}><div><span>{index === 0 ? "PRIMARY CANDIDATE" : `ALTERNATIVE ${index}`}</span><button onClick={() => toggleCompare(method.id)}>移除</button></div><h2>{method.name}</h2><pre>{method.formula}</pre><dl><div><dt>估计 / 决策目标</dt><dd>{method.estimand}</dd></div><div><dt>数据结构</dt><dd>{method.dataShape}</dd></div><div><dt>失败规则</dt><dd>{method.failureRule}</dd></div></dl><button onClick={() => onOpenMethod(method.id)}>打开方法卡核对</button></article>; })}{!compare.length && <div className="empty-state">从“方法库”加入 1–3 个候选方法进行比较。</div>}</div></section>}
+  </div>;
 }
 
 function RunsView({ project, onOpenDetail, onOpenGate, onToast }: { project: ResearchProject; onOpenDetail: (detail: DetailPanel) => void; onOpenGate: (gateId: string) => void; onToast: (message: string) => void }) {
@@ -942,6 +994,17 @@ export default function Home() {
       setChatBusy(false);
     }, 520);
   }
+  function syncAgentOutput(text: string, target: ChatSyncTarget, mode: ChatSyncMode) {
+    const stageIndex = chatAgent;
+    const draft = getDraft(stageIndex);
+    const stage = stages[stageIndex];
+    const targetLabels: Record<ChatSyncTarget, string> = { content: "交付正文", summary: "阶段摘要", evidenceNote: "证据说明", decision: "决定记录草稿" };
+    const stamp = new Date().toLocaleString("zh-CN", { hour12: false });
+    const block = `【${stage.agent} 协作建议 · ${stamp} · 待人工审阅】\n${text}`;
+    const currentValue = draft[target];
+    const nextValue = mode === "replace" ? block : `${currentValue.trim()}\n\n${block}`.trim();
+    saveDraft(stageIndex, { ...draft, [target]: nextValue, savedAt: "刚刚由研究者确认同步", syncHistory: [`${stamp} · ${stage.agent} → ${targetLabels[target]}（${mode === "replace" ? "替换" : "追加"}）`, ...draft.syncHistory] }, `已同步到 ${stage.id} ${targetLabels[target]}，可继续人工修改`);
+  }
   function addMethodToDesign(methodId: string) {
     setSelectedDesign(methodId === "M02" ? "did" : methodId === "M01" ? "fe" : methodId);
     setActiveStage(3);
@@ -1019,7 +1082,8 @@ export default function Home() {
     if (!deepRoute) return null;
     if (deepRoute.kind === "stage-draft") {
       const stage = stages[deepRoute.stageIndex];
-      return <StageDraftWorkspace stage={stage} project={activeProject} draft={getDraft(deepRoute.stageIndex)} onBack={backDeep} onSave={(draft, message) => saveDraft(deepRoute.stageIndex, draft, message)} onOpenCheck={() => openDeep({ kind: "stage-check", stageIndex: deepRoute.stageIndex })} onOpenDecisions={() => openDeep({ kind: "stage-decisions", stageIndex: deepRoute.stageIndex })} onOpenChat={() => openAgentChat(deepRoute.stageIndex)} onOpenEvidence={() => navigateView("evidence")} />;
+      const draft = getDraft(deepRoute.stageIndex);
+      return <StageDraftWorkspace key={`${draft.version}:${draft.savedAt}:${draft.syncHistory.length}`} stage={stage} project={activeProject} draft={draft} onBack={backDeep} onSave={(nextDraft, message) => saveDraft(deepRoute.stageIndex, nextDraft, message)} onOpenCheck={() => openDeep({ kind: "stage-check", stageIndex: deepRoute.stageIndex })} onOpenDecisions={() => openDeep({ kind: "stage-decisions", stageIndex: deepRoute.stageIndex })} onOpenChat={() => openAgentChat(deepRoute.stageIndex)} onOpenEvidence={() => navigateView("evidence")} />;
     }
     if (deepRoute.kind === "stage-check") {
       const stage = stages[deepRoute.stageIndex];
@@ -1052,7 +1116,11 @@ export default function Home() {
     }
     if (deepRoute.kind === "method-record") {
       const method = methods.find((item) => item.id === deepRoute.methodId) ?? methods[0];
-      return <MethodRecordPage method={method} onBack={backDeep} onAdd={() => addMethodToDesign(method.id)} onSave={showToast} />;
+      return <MethodRecordWorkspace method={method} onBack={backDeep} onAdd={() => addMethodToDesign(method.id)} onSave={showToast} />;
+    }
+    if (deepRoute.kind === "formula-record") {
+      const formula = formulas.find((item) => item.id === deepRoute.formulaId) ?? formulas[0];
+      return <FormulaRecordPage formula={formula} onBack={backDeep} onAdd={() => addMethodToDesign(formula.methodId)} onSave={showToast} />;
     }
     if (deepRoute.kind === "approval-gate") {
       const cards = projectGateCards(activeProject, submittedGates);
@@ -1122,7 +1190,7 @@ export default function Home() {
             </>
           )}
           {view === "evidence" && <EvidenceLibrary onOpenRecord={(title) => openDeep({ kind: "evidence-record", title })} onToast={showToast} />}
-          {view === "methods" && <MethodsView onOpenDetail={setDetail} onOpenMethod={(methodId) => openDeep({ kind: "method-record", methodId })} onAdd={addMethodToDesign} />}
+          {view === "methods" && <MethodsView onOpenMethod={(methodId) => openDeep({ kind: "method-record", methodId })} onOpenFormula={(formulaId) => openDeep({ kind: "formula-record", formulaId })} onAdd={addMethodToDesign} onToast={showToast} />}
           {view === "runs" && <RunsView project={activeProject} onOpenDetail={setDetail} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onToast={showToast} />}
           {view === "approvals" && <ApprovalsView project={activeProject} submittedGates={submittedGates} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onOpenDetail={setDetail} />}
           </>}
@@ -1131,7 +1199,7 @@ export default function Home() {
 
       <ApprovalModal key={`${activeProject.id}:${activeStageData.gate}:${approvalOpen}`} open={approvalOpen} stageIndex={activeStage} onClose={() => setApprovalOpen(false)} onConfirm={confirmApproval} />
       <DetailModal detail={detail} onClose={() => setDetail(null)} />
-      <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[chatAgent] ?? []} busy={chatBusy} onClose={() => setChatOpen(false)} onSelectAgent={setChatAgent} onSend={sendAgentMessage} onCapture={() => showToast("智能体回答已加入当前阶段记录草稿")} />
+      <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[chatAgent] ?? []} busy={chatBusy} onClose={() => setChatOpen(false)} onSelectAgent={setChatAgent} onSend={sendAgentMessage} onCapture={syncAgentOutput} />
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
       <div className="screen-reader-status" aria-live="polite">当前页面：{pageTitle}</div>
     </div>
