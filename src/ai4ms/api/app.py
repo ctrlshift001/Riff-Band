@@ -9,33 +9,33 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
-from db import ProjectStore
-from domains import MANAGEMENT_SCIENCE_PROFILE
-from inference import InferenceUnavailableError, inference_status
-from knowledge import KnowledgeRegistry
-from literature.service import LiteratureSearchInputError, LiteratureSearchService
-from services.models import (
+from ai4ms.db import ProjectStore
+from ai4ms.domains import MANAGEMENT_SCIENCE_PROFILE
+from ai4ms.inference import InferenceUnavailableError, inference_status
+from ai4ms.knowledge import KnowledgeRegistry
+from ai4ms.literature.service import LiteratureSearchInputError, LiteratureSearchService
+from ai4ms.services.models import (
     CreateProjectRequest,
     DraftRequest,
     LiteratureSearchRequest,
     StageDecisionRequest,
     StageUpdateRequest,
 )
-from services.project_service import (
+from ai4ms.services.project_service import (
     ProjectNotFoundError,
     ProjectService,
     StageLockedError,
     StageNotFoundError,
 )
-from services.stage_generation import (
+from ai4ms.services.stage_generation import (
     StageGenerationNotSupportedError,
     StageGenerationOutputError,
     StageGenerationService,
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-WEB_ROOT = Path(__file__).resolve().parents[1] / "web" / "static"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+WEB_ROOT = REPO_ROOT / "src" / "web" / "static"
 load_dotenv(REPO_ROOT / ".env", override=False)
 
 
@@ -196,7 +196,7 @@ def _entry() -> None:
 
     host = os.environ.get("AI4MS_HOST", "0.0.0.0")
     port = int(os.environ.get("AI4MS_PORT", "8000"))
-    uvicorn.run("api.app:app", host=host, port=port, reload=False)
+    uvicorn.run("ai4ms.api.app:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

@@ -5,10 +5,10 @@ import json
 
 import pytest
 
-from inference.gateway import InferenceResponse
-from inference.structured import extract_json_object
-from prompts.catalog import PromptCatalog
-from services.stage_generation import (
+from ai4ms.inference.gateway import InferenceResponse
+from ai4ms.inference.structured import extract_json_object
+from ai4ms.prompts.catalog import PromptCatalog
+from ai4ms.services.stage_generation import (
     StageGenerationNotSupportedError,
     StageGenerationService,
 )

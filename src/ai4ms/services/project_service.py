@@ -4,9 +4,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from db.store import ProjectStore
-from literature.service import LiteratureSearchService
-from services.models import (
+from ai4ms.db.store import ProjectStore
+from ai4ms.literature.service import LiteratureSearchService
+from ai4ms.services.models import (
     STAGE_DEFINITIONS,
     STAGES_BY_KEY,
     ApprovalDecision,
@@ -17,7 +17,7 @@ from services.models import (
     StageStatus,
     StageUpdateRequest,
 )
-from services.stage_generation import StageGenerationService
+from ai4ms.services.stage_generation import StageGenerationService
 
 
 class ProjectNotFoundError(LookupError):

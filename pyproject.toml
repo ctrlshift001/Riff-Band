@@ -25,11 +25,11 @@ dependencies = [
 [project.scripts]
 riffband = "ui.shell:_entry"
 riffband-mcp = "mcp_server:_entry"
-ai4ms-web = "api.app:_entry"
+ai4ms-web = "ai4ms.api.app:_entry"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 web = ["static/*"]
-knowledge = ["data/*.json"]
+"ai4ms.knowledge" = ["data/*.json"]

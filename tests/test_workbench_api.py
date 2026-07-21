@@ -4,7 +4,7 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
-from api.app import create_app
+from ai4ms.api.app import create_app
 
 
 class _FakeStageGeneration:

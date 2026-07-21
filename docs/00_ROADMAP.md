@@ -72,8 +72,8 @@
 
 | 负责人 | 产品角色 | 主责 | 主要代码边界 |
 |---|---|---|---|
-| 工程负责人 | Tech Lead / Integrator | 架构、API、SQLite、十阶段状态机、检索、Runner、测试、发布 | `src/api/`、`src/services/`、`src/db/`、`src/research/`、核心测试和工程配置 |
-| 产品设计负责人 | Product & Research Lead | 十阶段交互、MS 规则、Prompt、方法数据内容、报告与演示 | `src/web/`、`src/research/skills/`、`src/domains/`、templates、fixtures 和产品文档 |
+| 工程负责人 | Tech Lead / Integrator | 架构、API、SQLite、十阶段状态机、检索、Runner、测试、发布 | `src/ai4ms/`、`src/research/`、核心测试和工程配置 |
+| 产品设计负责人 | Product & Research Lead | 十阶段交互、MS 规则、Prompt、方法数据内容、报告与演示 | `src/web/`、`src/research/skills/`、`src/ai4ms/domains/`、`src/ai4ms/prompts/`、fixtures 和产品文档 |
 
 产品设计负责人可以 Vibecoding，但公共 Schema、状态迁移、Runner、权限和持久化由工程负责人审核。两人不得同时修改同一个核心文件；接口和示例先冻结，再并行实现。
 

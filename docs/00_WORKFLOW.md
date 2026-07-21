@@ -38,17 +38,19 @@
 
 - `src/base`、`src/core`、`src/agents`：通用 Agent Runtime；
 - `src/orchestration_tools`：委派、权限、任务和并发；
-- `src/domains`：DomainProfile 与学科规则；
+- `src/ai4ms`：比赛产品后端的统一 Python 命名空间；
+- `src/ai4ms/domains`：DomainProfile 与学科规则；
 - `src/protocols`：ResearchProtocol 和 legacy adapter；
 - `src/artifacts_v2`：manifest、hash 和 lineage；
 - `src/research`：阶段流水线与兼容入口；
-- `src/api`：FastAPI 路由、请求响应模型和静态工作台入口；
-- `src/services`：十阶段用例、检索、审批、Runner 和导出服务；
-- `src/db`：SQLite repository 与迁移；
+- `src/ai4ms/api`：FastAPI 路由、请求响应模型和静态工作台入口；
+- `src/ai4ms/services`：十阶段用例、检索、审批、Runner 和导出服务；
+- `src/ai4ms/db`：SQLite repository 与迁移；
+- `src/ai4ms/inference`、`knowledge`、`literature`、`prompts`：模型网关、知识库、文献能力和阶段提示词；
 - `src/web`：Next.js 十阶段工作台，不承载科研事实计算；
 - `docs/refer/AI4MS-DevPack_v0.3`：只作为调研和规格参考，不由运行时写入。
 
-新增代码应先匹配现有目录边界。只有职责已经稳定时才创建新顶层包。
+新增产品后端代码应先归入 `src/ai4ms` 的现有边界；通用 Runtime 与兼容研究引擎仍留在原目录。只有职责已经稳定时才创建新顶层包。
 
 ## 4. 提交规范
 

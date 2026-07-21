@@ -152,6 +152,7 @@ SQLite、项目资产和 HTML 报告通过 Docker volume 持久化。模型与�
 - [协作与提交规范](docs/00_WORKFLOW.md)
 - [AI4MS DevPack v0.3](docs/refer/AI4MS-DevPack_v0.3/README.md)
 - [当前工程基线](docs/ai4ms/BASELINE.md)
+- [AI4MS 产品后端目录说明](src/ai4ms/README.md)
 - [前端交接说明](src/web/README.md)
 
 ## 产品边界

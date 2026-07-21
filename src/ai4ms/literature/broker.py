@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Callable
 from uuid import uuid4
 
-from literature.normalize import deduplicate_papers
+from ai4ms.literature.normalize import deduplicate_papers
 from project.tools.literature_tools import (
     ArxivSearchTool,
     CrossrefLookupTool,

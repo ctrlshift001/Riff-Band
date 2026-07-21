@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from literature.broker import LiteratureBroker, SUPPORTED_BACKENDS
-from services.models import LiteratureSearchRequest
+from ai4ms.literature.broker import LiteratureBroker, SUPPORTED_BACKENDS
+from ai4ms.services.models import LiteratureSearchRequest
 
 
 class LiteratureSearchInputError(ValueError):

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from services.models import STAGE_DEFINITIONS, ApprovalDecision, ProjectStatus, StageStatus
+from ai4ms.services.models import STAGE_DEFINITIONS, ApprovalDecision, ProjectStatus, StageStatus
 
 
 LEGACY_STAGE_RENAMES: tuple[tuple[str, str], ...] = (

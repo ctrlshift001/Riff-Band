@@ -4,10 +4,10 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from inference.gateway import InferenceGateway, InferenceResponse, OpenAICompatibleGateway
-from inference.structured import StructuredOutputError, validate_structured_output
-from knowledge import KnowledgeRegistry
-from prompts.catalog import PromptCatalog
+from ai4ms.inference.gateway import InferenceGateway, InferenceResponse, OpenAICompatibleGateway
+from ai4ms.inference.structured import StructuredOutputError, validate_structured_output
+from ai4ms.knowledge import KnowledgeRegistry
+from ai4ms.prompts.catalog import PromptCatalog
 
 
 class StageGenerationNotSupportedError(LookupError):

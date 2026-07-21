@@ -1,4 +1,4 @@
-from inference.gateway import (
+from ai4ms.inference.gateway import (
     InferenceResponse,
     InferenceUnavailableError,
     OpenAICompatibleGateway,

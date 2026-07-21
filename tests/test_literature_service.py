@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 
-from literature.broker import LiteratureBroker, LiteratureSearchResult
-from literature.normalize import deduplicate_papers
-from literature.service import LiteratureSearchService
-from services.models import LiteratureSearchRequest
+from ai4ms.literature.broker import LiteratureBroker, LiteratureSearchResult
+from ai4ms.literature.normalize import deduplicate_papers
+from ai4ms.literature.service import LiteratureSearchService
+from ai4ms.services.models import LiteratureSearchRequest
 
 
 class _Tool:

@@ -1,4 +1,4 @@
-from services.models import (
+from ai4ms.services.models import (
     ApprovalDecision,
     CreateProjectRequest,
     StageDecisionRequest,

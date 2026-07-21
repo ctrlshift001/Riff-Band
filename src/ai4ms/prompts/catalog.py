@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from prompts.contracts import (
+from ai4ms.prompts.contracts import (
     DataDraft,
     DesignDraft,
     LiteraturePlanDraft,

@@ -2,12 +2,12 @@
 
 ## 1. 当前范围
 
-产品阶段提示词位于 `src/prompts/`，与 `src/project/prompts.py`、`src/research/prompts.py` 的旧 Agent Runtime 编排提示词分开管理：
+产品阶段提示词位于 `src/ai4ms/prompts/`，与 `src/project/prompts.py`、`src/research/prompts.py` 的旧 Agent Runtime 编排提示词分开管理：
 
-- `src/prompts/catalog.py`：S0-S4 阶段任务、提示词 ID 和版本；
-- `src/prompts/contracts.py`：模型输出必须通过的 Pydantic 契约；
-- `src/inference/`：模型调用、超时、重试、JSON 提取和错误分类；
-- `src/services/stage_generation.py`：向提示词注入最小项目上下文，并把合格结果交给 revision 服务。
+- `src/ai4ms/prompts/catalog.py`：S0-S4 阶段任务、提示词 ID 和版本；
+- `src/ai4ms/prompts/contracts.py`：模型输出必须通过的 Pydantic 契约；
+- `src/ai4ms/inference/`：模型调用、超时、重试、JSON 提取和错误分类；
+- `src/ai4ms/services/stage_generation.py`：向提示词注入最小项目上下文，并把合格结果交给 revision 服务。
 
 当前真实模型生成覆盖：
 
