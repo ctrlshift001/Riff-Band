@@ -1,5 +1,6 @@
-from services.models import (
+from ai4ms.services.models import (
     ApprovalDecision,
+    AnalysisRunRequest,
     CreateProjectRequest,
     StageDecisionRequest,
     StageStatus,
@@ -7,6 +8,7 @@ from services.models import (
 )
 __all__ = [
     "ApprovalDecision",
+    "AnalysisRunRequest",
     "CreateProjectRequest",
     "StageDecisionRequest",
     "StageStatus",

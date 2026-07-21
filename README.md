@@ -2,7 +2,7 @@
 
 面向管理科学（MS）的垂直 AI 科研工作台：从研究想法、文献和设计，到分析、证据、HTML 可视化报告与成果交付。
 
-> 当前 `ai4s` 分支已经提供可运行的九步浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像和 Docker 打包文件。现有 CLI、MCP、Agent Runtime、研究流水线和 HTML 报告继续作为工程基础；分阶段 AI、方法数据、Stata、证据和成果交付服务仍在六天冲刺中实现，本文档不把规划能力写成已上线能力。
+> 当前工程已经提供可运行的 S0-S9 十阶段浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像、Stata BYOL Runner、Claim-Evidence 审核、HTML/ZIP 交付和 Docker 基础文件。现有 CLI、MCP、Agent Runtime 与研究流水线继续作为工程基础。
 
 [文档索引](docs/README.md) | [产品定义](docs/00_PRODUCT.md) | [开发路线](docs/00_ROADMAP.md) | [开发指南](docs/00_GUIDELINE.md)
 
@@ -16,33 +16,34 @@ AI4MS 不是自动论文生成器。它更像一名严谨的科研项目经理�
 
 ```text
 研究想法
-  -> 1. 说出想法
-  -> 2. 查看已有研究
-  -> 3. 选择值得做的课题
-  -> 4. 确认理论与研究设计
-  -> 5. 确认数据与合规
-  -> 6. 制定分析计划和 Stata 代码
-  -> 7. 运行、稳健性检查和复现
-  -> 8. 审核证据和结果解释
-  -> 9. 写作、发布和交付
+  -> S0. 问题识别
+  -> S1. 文献综述
+  -> S2. 理论构建
+  -> S3. 研究设计
+  -> S4. 数据与变量
+  -> S5. 识别与检验
+  -> S6. 结果分析
+  -> S7. 稳健性检验
+  -> S8. 机制与异质性
+  -> S9. 结论与政策含义
 ```
 
 ## 当前实现
 
-九步已经进入同一个项目工作台，当前基础能力包括：
+S0-S9 十阶段已经进入同一个项目工作台，当前基础能力包括：
 
 - 创建、读取和切换科研项目；
-- 查看九步状态并逐步解锁；
+- 查看十阶段状态并逐步解锁；
 - 编辑和保存结构化阶段资产；
 - 为每次修改生成不可变 revision 和 SHA-256 hash；
 - 人工执行批准、退回修改和阻塞决定；
 - 上游修改后自动使下游状态失效，同时保留历史审批；
 - 通过 SQLite 在重启后恢复项目；
-- 通过浏览器 GUI、远程 API 和 OpenAPI 使用同一服务层。
+- 通过浏览器 GUI 使用完整产品；FastAPI 作为前后端内部服务层。
 
-当前“生成草稿”只生成明确标记为 `structure_template` 的结构模板，不伪装成模型研究结果。后续 Agent 服务继续复用同一 revision 和审批接口。
+当前 S0-S9 均支持真实模型生成：S1 可执行多源检索、去重与快照，S2 构建理论，S3-S5 从方法、数据源和公式库形成研究设计、数据合同与分析计划；S6 绑定已批准 S5 代码并提供 Stata BYOL Runner 预检、阻塞记录、运行 manifest 和输出哈希；S7 生成受 Run 证据约束的稳健性矩阵；S8 形成主张、证据、假设、机制、异质性和反证图谱；S9 只从 G4 已批准主张生成结论，并确定性导出 HTML 报告、manifest 和 ZIP 研究包。输出必须经过版本化提示词、严格结构契约和 ID 白名单后才能保存为 agent revision。
 
-保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。课题侦察、研究设计、数据方法、Stata Runner、Claim-Evidence 审核和成果导出将在现有九步结构上继续接入。
+保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。Stata Runner 已接入本地/机构 BYOL 批处理边界；Claim-Evidence 审核和成果导出已进入同一项目、revision 与 Gate 状态机。
 
 ## 人机协作
 
@@ -93,18 +94,28 @@ Copy-Item .env.example .env
 Copy-Item aorchestra.yaml.example aorchestra.yaml
 ```
 
-启动九步浏览器工作台：
+终端 1 启动 FastAPI：
 
 ```powershell
 ai4ms-web
 ```
 
+终端 2 启动 Next.js 十阶段工作台：
+
+```powershell
+cd src/web
+npm ci
+npm run dev
+```
+
 打开以下地址：
 
-- 工作台：`http://localhost:8000/`
-- 远程 API：`http://localhost:8000/api/v1`
-- OpenAPI：`http://localhost:8000/docs`
+- Next.js 工作台：`http://localhost:3000/`
+- 后端接口（仅开发调试）：`http://localhost:8000/api/v1`
+- OpenAPI（仅开发调试）：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/healthz`
+
+Next.js 默认把同源 `/api/v1` 和 `/healthz` 代理到 `http://127.0.0.1:8000`。需要连接其他 FastAPI 地址时，在 `src/web/.env.local` 设置 `AI4MS_API_INTERNAL_URL`。
 
 兼容 CLI 和 MCP 入口：
 
@@ -130,7 +141,7 @@ docker compose up --build
 
 SQLite、项目资产和 HTML 报告通过 Docker volume 持久化。模型与检索 Key 在运行时注入；Stata 使用外部自有许可 Runner，不进入镜像。
 
-详细说明见 [Docker 部署说明](docs/DEPLOYMENT.md) 和 [远程 API 调用说明](docs/API_USAGE.md)。
+项目没有公网网站。比赛只提交带 GUI 的 Docker 部署包，评委在本机启动后访问 `http://localhost:8000/`。详细说明见 [Docker 部署说明](docs/DEPLOYMENT.md)。
 
 ## 文档
 
@@ -141,6 +152,7 @@ SQLite、项目资产和 HTML 报告通过 Docker volume 持久化。模型与�
 - [协作与提交规范](docs/00_WORKFLOW.md)
 - [AI4MS DevPack v0.3](docs/refer/AI4MS-DevPack_v0.3/README.md)
 - [当前工程基线](docs/ai4ms/BASELINE.md)
+- [AI4MS 产品后端目录说明](src/ai4ms/README.md)
 - [前端交接说明](src/web/README.md)
 
 ## 产品边界

@@ -441,6 +441,8 @@ def export_visual_html(
     html_path: Path,
     title: str,
     artifacts: "ResearchArtifacts" | None = None,
+    mode_label: str | None = None,
+    product_label: str = "RiffBand Research Mode",
 ) -> None:
     """Generate a styled visual HTML report from markdown.
 
@@ -457,12 +459,19 @@ def export_visual_html(
     body_html = _add_anchor_ids(body_html)
     body_html = _postprocess_visual_html(body_html)
     toc_html = _extract_toc_items(body_html)
+    echarts_script = (
+        '<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>'
+        if 'class="chart-data"' in body_html
+        else ""
+    )
 
     css = CSS_PATH.read_text(encoding="utf-8") if CSS_PATH.exists() else ""
     js = JS_PATH.read_text(encoding="utf-8") if JS_PATH.exists() else ""
 
     run_dir = str(artifacts.run_dir) if artifacts else ""
-    mode_label = "Visual" if (artifacts and hasattr(artifacts, "run_dir")) else "Research"
+    resolved_mode_label = mode_label or (
+        "Visual" if (artifacts and hasattr(artifacts, "run_dir")) else "Research"
+    )
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     html = f"""<!doctype html>
@@ -471,14 +480,14 @@ def export_visual_html(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape(title)}</title>
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  {echarts_script}
   <style>{css}</style>
 </head>
 <body>
   <div class="navbar">
     <div class="navbar-inner">
       <span class="navbar-title">{escape(title)}</span>
-      <span class="navbar-badge">{mode_label}</span>
+      <span class="navbar-badge">{escape(resolved_mode_label)}</span>
       <button class="navbar-btn" onclick="toggleTheme()">🌓</button>
     </div>
   </div>
@@ -494,7 +503,7 @@ def export_visual_html(
         <h1>{escape(title)}</h1>
         <div class="cover-meta">
           <span>{now_str}</span>
-          <span>RiffBand Research Mode</span>
+          <span>{escape(product_label)}</span>
         </div>
       </div>
       <div class="prose">

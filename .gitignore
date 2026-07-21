@@ -1,5 +1,6 @@
 ﻿# Environment & secrets
 .env
+.env*.local
 
 # Personal config
 aorchestra.yaml
@@ -9,6 +10,8 @@ workspace/
 
 # Python
 __pycache__/
+.pytest_cache/
+.pytest-*/
 *.pyc
 *.pyo
 *.egg-info/

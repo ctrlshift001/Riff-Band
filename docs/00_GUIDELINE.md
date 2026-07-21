@@ -2,7 +2,7 @@
 
 ## 1. 当前状态
 
-`ai4s` 分支处于 AI4MS 工作台改造期。当前代码可以运行九步浏览器工作台、FastAPI、SQLite revision/审批状态机，以及 RiffBand CLI/MCP、既有研究流水线和 HTML 报告。分阶段 Agent、Runner、证据与导出服务尚未完成，不能当作已经上线。
+`ai4ms` 分支处于 AI4MS 工作台改造期。当前代码可以运行 Next.js S0-S9 十阶段浏览器工作台、FastAPI、SQLite revision/审批状态机、S0-S9 阶段模型能力、Stata BYOL Runner、Claim-Evidence 审核和 HTML/ZIP 交付，以及 RiffBand CLI/MCP 与既有研究流水线。
 
 工程基线见 [ai4ms/BASELINE.md](ai4ms/BASELINE.md)。
 
@@ -10,10 +10,11 @@
 
 - Python 3.10+
 - pip
+- Node.js 20.9+
 - 可用的 OpenAI-compatible 或 Gemini 模型接口
 - 可选的联网检索 key
 - SQLite 使用 Python 标准库，作为六天产品的本地事实存储
-- FastAPI/Uvicorn 已写入 `pyproject.toml`，用于 Web 工作台与远程 API
+- FastAPI/Uvicorn 已写入 `pyproject.toml`，作为 Web 工作台的内部后端服务
 - Stata 采用用户自有许可的可选 Runner；未发现可执行文件时必须显示 blocked
 - PostgreSQL、Redis 和 MinIO 不属于六天单用户产品的依赖
 
@@ -34,13 +35,21 @@ Copy-Item aorchestra.yaml.example aorchestra.yaml
 
 ## 3. 当前兼容入口
 
-启动九步 Web 工作台：
+终端 1 启动 FastAPI：
 
 ```powershell
 ai4ms-web
 ```
 
-打开 `http://localhost:8000/`；OpenAPI 位于 `/docs`，健康检查位于 `/healthz`。
+终端 2 启动 Next.js 十阶段工作台：
+
+```powershell
+cd src/web
+npm ci
+npm run dev
+```
+
+打开 `http://localhost:3000/`；OpenAPI 位于 `http://localhost:8000/docs`，健康检查既可访问 FastAPI 的 `http://localhost:8000/healthz`，也可通过 Next.js 代理访问 `http://localhost:3000/healthz`。
 
 启动 CLI：
 
@@ -63,7 +72,7 @@ riffband-mcp --config aorchestra.yaml
 
 当前命令和参数在迁移期保持兼容。新的产品对象和 API 必须通过 legacy adapter 接入，不能直接破坏现有 `/research` 和 MCP 调用。
 
-目标产品入口是九步 Web 工作台。首屏直接进入项目，不建设营销页面；新的阶段能力必须接入 `ProjectService` 和 revision 状态机。CLI/MCP 的研究能力将在后续 adapter 中复用该项目上下文，不能长期维护平行状态。
+目标产品入口是十阶段 Web 工作台。首屏直接进入项目，不建设营销页面；新的阶段能力必须接入 `ProjectService` 和 revision 状态机。CLI/MCP 的研究能力将在后续 adapter 中复用该项目上下文，不能长期维护平行状态。
 
 ## 4. AI4MS 实现原则
 
@@ -99,13 +108,13 @@ Run 必须记录 protocol version、代码 commit、环境、参数、seed、输
 
 HTML 报告只能渲染结构化、版本化对象。图表和表格不得重新计算或覆盖底层数值，关键元素必须能回到 evidence、artifact、revision 和 approval。
 
-### 九步完整性
+### 十阶段完整性
 
-步骤 1-9 共享同一个 `ProjectState`。每一步都必须实现读取当前资产、生成 AI 草稿、人工编辑、批准/退回、保存状态和进入下一步；不能用九张互不相连的静态页面冒充工作台。
+S0-S9 共享同一个 `ProjectState`。每个阶段都必须实现读取当前资产、生成 AI 草稿、人工编辑、批准/退回、保存状态和进入下一步；不能用十张互不相连的静态页面冒充工作台。
 
 ### 本地优先产品
 
-六天版本使用 FastAPI、SQLite 和本地 artifact 目录交付完整单用户产品。服务接口必须保留迁移到 PostgreSQL、对象存储和队列的边界，但不得为未来基础设施推迟当前九步闭环。
+六天版本使用 FastAPI、SQLite 和本地 artifact 目录交付完整单用户产品。服务接口必须保留迁移到 PostgreSQL、对象存储和队列的边界，但不得为未来基础设施推迟当前十阶段闭环。
 
 ## 5. Schema 与数据契约
 
@@ -137,7 +146,7 @@ pytest -q -p no:cacheprovider
 
 AI4MS 新增测试至少覆盖：
 
-- 项目重启后九步状态、资产和审批能够恢复；
+- 项目重启后十阶段状态、资产和审批能够恢复；
 - 未批准关键上游步骤时不能进入下一正式状态；
 - 三个跨题型 benchmark 无领域串扰；
 - 任一检索后端失败时其他后端仍返回并保存 provenance；
@@ -170,16 +179,15 @@ AI4MS 新增测试至少覆盖：
 - `.dockerignore`：排除 `.env`、`.git`、缓存、`workspace` 和本地受限文件；
 - `docker-compose.yml`：声明端口、健康检查、环境变量和持久化卷；
 - `docs/DEPLOYMENT.md`：镜像构建、启动、升级、数据目录和故障排查；
-- `docs/API_USAGE.md`：curl/Python 调用、异步任务轮询和导出示例；
-- 容器 smoke test：检查 `/healthz`、`/`、`/docs` 和最小项目 API。
+- 容器 smoke test：检查 `/healthz`、`/` 和 GUI 最小项目流程。
 
 目标调用方式：
 
 ```powershell
 docker build -t ai4ms-workbench:competition .
-docker run --rm -p 8000:8000 --env-file .env -v ai4ms-data:/app/data ai4ms-workbench:competition
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -v ai4ms-data:/app/data ai4ms-workbench:competition
 ```
 
-浏览器访问 `http://localhost:8000` 使用 GUI；远程系统通过 `http://localhost:8000/api/v1` 调用。容器必须绑定 `0.0.0.0`，不能只监听 `127.0.0.1`。
+浏览器访问 `http://localhost:8000` 使用 GUI。`/api/v1` 只服务同一产品的前端和开发调试。容器进程内部监听 `0.0.0.0` 以适配 Docker 网络，宿主机端口只绑定 `127.0.0.1`，项目不提供公网网站。
 
 API Key、Stata 许可证和受限数据不得写入 Docker layer、Compose 文件、示例或镜像内置数据库。Stata Runner 地址与认证只能在运行时配置。

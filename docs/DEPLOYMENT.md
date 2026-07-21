@@ -1,17 +1,15 @@
 # AI4MS Docker 部署契约
 
-> 状态：已提供 Dockerfile、Compose、浏览器 GUI 与 API 基础实现；提交前仍须在装有 Docker 的全新机器完成镜像 smoke test。
+> 状态：已提供 Dockerfile、Compose、浏览器 GUI 与内部后端服务；提交前仍须在装有 Docker 的全新机器完成镜像 smoke test。
 
 ## 1. 交付形态
 
 最终部署包包含一个主镜像 `ai4ms-workbench:competition`：
 
 - 浏览器 GUI：`http://localhost:8000/`
-- 远程 API：`http://localhost:8000/api/v1`
-- OpenAPI：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/healthz`
 
-容器内运行 FastAPI、九步 Web 工作台、SQLite 和本地任务执行器。Stata 不进入镜像，而是由可选外部 BYOL Runner 提供。
+项目没有公网网站。比赛只提交 Docker 部署包，评委在本机启动容器后访问 `http://localhost:8000/`。容器内仍运行 FastAPI，供 GUI 完成项目、阶段、模型、审批和导出操作；它属于产品内部实现，不是第二种交付方式。当前 Dockerfile 仍服务兼容静态入口，Next.js 单入口打包尚待发布阶段完成；Stata 不进入镜像，而是由可选外部 BYOL Runner 提供。
 
 ## 2. 部署包文件
 
@@ -22,7 +20,6 @@ Dockerfile
 .dockerignore
 docker-compose.yml
 docs/DEPLOYMENT.md
-docs/API_USAGE.md
 .env.example
 ```
 
@@ -33,7 +30,7 @@ docs/API_USAGE.md
 ```powershell
 docker build -t ai4ms-workbench:competition .
 docker run --rm `
-  -p 8000:8000 `
+  -p 127.0.0.1:8000:8000 `
   --env-file .env `
   -v ai4ms-data:/app/data `
   ai4ms-workbench:competition
@@ -45,7 +42,7 @@ Compose 启动方式：
 docker compose up --build
 ```
 
-服务必须监听 `0.0.0.0:8000`。启动完成后先检查 `/healthz`，再打开根路径使用 GUI。
+容器进程必须监听 `0.0.0.0:8000`，宿主机只把它映射到 `127.0.0.1:8000`。启动完成后先检查 `/healthz`，再打开根路径使用 GUI。
 
 ## 4. 配置与密钥
 
@@ -56,7 +53,7 @@ docker compose up --build
 - 一个可用的 OpenAI-compatible 或 Gemini 模型配置；
 - 至少一个开放学术检索后端可联网访问；
 - 可选的 Serper 配置；
-- 可选的外部 Stata Runner 地址与认证。
+- 可选的 Stata BYOL 批处理可执行文件、版本、许可确认和并发配置。
 
 未提供模型或检索配置时，服务可以启动并查看已保存项目，但执行相关阶段必须返回明确的 `blocked`，不能生成伪造结果。
 
@@ -74,7 +71,7 @@ docker compose up --build
 
 ## 6. Stata 运行器
 
-镜像不得包含 Stata 安装文件、许可证、序列号或破解组件。`RunnerService` 通过运行时配置连接用户或机构已有授权环境。
+镜像不得包含 Stata 安装文件、许可证、序列号或破解组件。当前 `RunnerService` 发现后端运行环境中由用户或机构合法安装的 Stata 批处理可执行文件；Docker 镜像默认没有 Stata，因此会准确返回 `blocked:no_runner`。需要真实运行时，应在合法授权的本机/机构执行环境启动后端并通过运行时环境变量配置，不能把 Stata 复制进比赛镜像。
 
 没有 Runner 时：
 
@@ -85,8 +82,8 @@ docker compose up --build
 ## 7. 提交前验证
 
 - 在无 Python 环境的新机器上仅使用 Docker 启动；
-- `/healthz`、`/`、`/docs` 和最小项目 API 正常；
-- 完成一个九步示例项目并重启容器；
+- `/healthz`、`/` 和 GUI 最小项目流程正常；
+- 完成一个十阶段示例项目并重启容器；
 - 重启后项目和报告仍存在；
 - 检查镜像历史、日志和导出包中没有密钥或许可证；
 - 保存一个不依赖现场联网的只读演示项目和 HTML 报告。
