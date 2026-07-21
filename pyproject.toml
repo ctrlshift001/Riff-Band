@@ -32,3 +32,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 web = ["static/*"]
+knowledge = ["data/*.json"]

@@ -23,6 +23,7 @@
 | [00_WORKFLOW.md](00_WORKFLOW.md) | 分支、提交、评审和仓库卫生规则 |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker GUI/API 部署契约、持久化、配置与验收 |
 | [API_USAGE.md](API_USAGE.md) | 远程 API 调用流程和最小接口覆盖 |
+| [PROMPT_ENGINEERING.md](PROMPT_ENGINEERING.md) | 阶段提示词、结构化输出契约、失败语义和版本规则 |
 | [ai4ms/BASELINE.md](ai4ms/BASELINE.md) | AI4MS 改造前工程基线 |
 
 ## AI4MS DevPack v0.3

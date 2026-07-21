@@ -7,6 +7,38 @@ from fastapi.testclient import TestClient
 from api.app import create_app
 
 
+class _FakeStageGeneration:
+    async def generate(self, project: dict, stage_key: str, instruction: str = "") -> dict:
+        return {
+            "initial_idea": project["initial_idea"],
+            "research_object": "platform firms",
+            "generation": {
+                "mode": "model",
+                "prompt_id": f"test.{stage_key}",
+                "prompt_version": "test",
+                "model": "fake-model",
+                "instruction": instruction,
+            },
+        }
+
+
+class _FakeLiteratureSearch:
+    async def search(self, project_id: str, stage_content: dict, request) -> dict:
+        assert project_id
+        assert stage_content["query_blocks"]
+        return {
+            "search_id": "search_api_test",
+            "searched_at": "2026-07-21T00:00:00+00:00",
+            "status": "complete",
+            "queries": ["AI adoption"],
+            "backends": list(request.backends),
+            "counts": {"identified": 2, "deduplicated": 1},
+            "papers": [{"paper_id": "paper_a", "title": "Paper A"}],
+            "source_runs": [{"backend": "openalex", "success": True, "record_count": 1}],
+            "snapshot_path": "artifacts/literature/search_api_test.json",
+        }
+
+
 def _create_project(client: TestClient) -> dict:
     response = client.post(
         "/api/v1/projects",
@@ -39,6 +71,10 @@ def test_health_meta_and_web_assets(tmp_path):
     profile = client.get("/api/v1/meta/domain-profile").json()
     assert profile["key"] == "management_science"
     assert profile["name"] == "管理科学"
+    inference = client.get("/api/v1/meta/inference")
+    assert inference.status_code == 200
+    assert set(inference.json()) == {"configured", "model", "reason"}
+    assert "api_key" not in inference.text.lower()
     assert client.get("/openapi.json").json()["info"]["title"] == "AI4MS 科研工作台 API"
 
     page = client.get("/")
@@ -84,6 +120,60 @@ def test_project_stage_gate_and_revision_flow(tmp_path):
         json={"decision": "approve", "actor_type": "agent"},
     )
     assert invalid_actor.status_code == 422
+
+
+def test_model_draft_is_saved_as_an_agent_revision(tmp_path):
+    client = TestClient(create_app(tmp_path, stage_generation=_FakeStageGeneration()))
+    project = _create_project(client)
+
+    response = client.post(
+        f"/api/v1/projects/{project['project_id']}/stages/problem/draft",
+        json={"instruction": "clarify the unit", "generation_mode": "model"},
+    )
+
+    assert response.status_code == 200
+    stage = response.json()["stages"][0]
+    assert stage["revision"] == 2
+    assert stage["author_type"] == "agent"
+    assert stage["content"]["generation"]["model"] == "fake-model"
+    assert stage["content"]["generation"]["instruction"] == "clarify the unit"
+
+
+def test_literature_search_endpoint_saves_papers_and_run_metadata(tmp_path):
+    client = TestClient(create_app(tmp_path, literature_search=_FakeLiteratureSearch()))
+    project = _create_project(client)
+    project_id = project["project_id"]
+    _approve(client, project_id, "problem")
+    client.put(
+        f"/api/v1/projects/{project_id}/stages/literature",
+        json={
+            "content": {"query_blocks": [{"query_en": "AI adoption"}]},
+            "change_reason": "search plan",
+        },
+    )
+
+    response = client.post(
+        f"/api/v1/projects/{project_id}/stages/literature/search",
+        json={"backends": ["openalex"]},
+    )
+
+    assert response.status_code == 200
+    stage = response.json()["stages"][1]
+    assert stage["author_type"] == "agent"
+    assert stage["content"]["papers"][0]["paper_id"] == "paper_a"
+    assert stage["content"]["search_runs"][0]["snapshot_path"].endswith("search_api_test.json")
+
+
+def test_knowledge_registry_endpoints_expose_compact_candidates(tmp_path):
+    client = TestClient(create_app(tmp_path))
+
+    methods = client.get("/api/v1/knowledge/methods?goal=causal&limit=4").json()["items"]
+    sources = client.get("/api/v1/knowledge/data-sources?q=企业专利&limit=5").json()["items"]
+
+    assert len(methods) == 4
+    assert all(item["method_id"].startswith("M") for item in methods)
+    assert len(sources) == 5
+    assert all(item["source_id"].startswith("D") for item in sources)
 
 
 def test_upstream_change_invalidates_downstream_and_persists(tmp_path):

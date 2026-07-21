@@ -45,6 +45,7 @@ npm run start
 
 - 项目创建、列表和切换已连接 SQLite；
 - S0-S9 状态、结构草稿、JSON 阶段资产和不可变 revision 已连接 FastAPI；
+- S0-S4 模型草稿已连接；S1 支持从界面执行多源检索，并在检索后再次生成证据综述；
 - `approve/request_changes/reject` 人工决定已连接，批准后自动解锁下一阶段；
 - 证据库、方法库和 Stata Runs 的领域服务仍为演示数据，不能视为已完成后端能力。
 

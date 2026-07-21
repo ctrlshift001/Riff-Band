@@ -10,6 +10,7 @@ import {
   getProject,
   listProjects,
   saveStage,
+  searchLiterature,
   type ApprovalDecision,
   type Project,
   type ProjectStage,
@@ -318,12 +319,14 @@ function StageAssetEditor({
   busy,
   onSave,
   onDraft,
+  onSearchLiterature,
   onDecision,
 }: {
   stage?: ProjectStage;
   busy: boolean;
   onSave: (content: Record<string, unknown>, reason: string) => Promise<void>;
   onDraft: (instruction: string) => Promise<void>;
+  onSearchLiterature: () => Promise<void>;
   onDecision: (decision: ApprovalDecision, reason: string) => Promise<void>;
 }) {
   const [contentText, setContentText] = useState(() => JSON.stringify(stage?.content ?? {}, null, 2));
@@ -378,6 +381,7 @@ function StageAssetEditor({
           <div className="asset-control-row">
             <label><span>草稿生成要求</span><input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：补齐研究对象、边界和反向检索字段" /></label>
             <button className="outline-compact" onClick={() => onDraft(instruction)} disabled={busy}>生成结构草稿</button>
+            {stage.key === "literature" && <button className="outline-compact" onClick={onSearchLiterature} disabled={busy}>执行多源检索</button>}
           </div>
           <div className="asset-control-row">
             <label><span>版本变更说明</span><input value={changeReason} onChange={(event) => setChangeReason(event.target.value)} /></label>
@@ -723,9 +727,27 @@ export default function Home() {
     setBusy(true);
     setApiError("");
     try {
-      const updated = await createStageDraft(project.project_id, activeStageData.key, instruction);
+      const generationMode = activeStage <= 4 ? "model" : "template";
+      const updated = await createStageDraft(project.project_id, activeStageData.key, instruction, generationMode);
       applyProject(updated);
-      showToast(`${activeStageData.id} 结构草稿已写入 FastAPI`);
+      showToast(`${activeStageData.id} ${generationMode === "model" ? "模型草稿" : "结构模板"}已写入 FastAPI`);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSearchLiterature() {
+    if (!project) return;
+    setBusy(true);
+    setApiError("");
+    try {
+      const updated = await searchLiterature(project.project_id);
+      applyProject(updated);
+      const literature = updated.stages.find((stage) => stage.key === "literature");
+      const paperCount = Array.isArray(literature?.content.papers) ? literature.content.papers.length : 0;
+      showToast(`S1 多源检索完成，已保存 ${paperCount} 篇去重论文`);
     } catch (error) {
       handleError(error);
     } finally {
@@ -808,7 +830,7 @@ export default function Home() {
               <div className="journey-grid">
                 <section className="stage-content stage-content-stack">
                   {activeStage === 3 ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} /> : <GenericStage stageIndex={activeStage} />}
-                  <StageAssetEditor key={`${activeStageState?.key ?? "empty"}-${activeStageState?.revision ?? 0}`} stage={activeStageState} busy={busy} onSave={handleSaveStage} onDraft={handleCreateDraft} onDecision={handleStageDecision} />
+                  <StageAssetEditor key={`${activeStageState?.key ?? "empty"}-${activeStageState?.revision ?? 0}`} stage={activeStageState} busy={busy} onSave={handleSaveStage} onDraft={handleCreateDraft} onSearchLiterature={handleSearchLiterature} onDecision={handleStageDecision} />
                 </section>
                 <AgentPanel stageIndex={activeStage} suggestionStates={suggestionStates} onDecision={decideSuggestion} onSubmit={() => openApproval()} canSubmit={Boolean(activeStageState && activeStageState.status !== "not_started" && activeStageState.status !== "approved" && activeStageState.revision > 0)} busy={busy} />
               </div>

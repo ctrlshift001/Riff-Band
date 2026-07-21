@@ -2,7 +2,7 @@
 
 面向管理科学（MS）的垂直 AI 科研工作台：从研究想法、文献和设计，到分析、证据、HTML 可视化报告与成果交付。
 
-> 当前 `ai4ms` 分支已经提供可运行的 S0-S9 十阶段浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像和 Docker 基础文件。现有 CLI、MCP、Agent Runtime、研究流水线和 HTML 报告继续作为工程基础；分阶段 AI、方法数据、Stata、证据和成果交付服务仍在六天冲刺中实现，本文档不把规划能力写成已上线能力。
+> 当前工程已经提供可运行的 S0-S9 十阶段浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像和 Docker 基础文件。现有 CLI、MCP、Agent Runtime、研究流水线和 HTML 报告继续作为工程基础；Stata、证据和成果交付服务仍在六天冲刺中实现，本文档不把规划能力写成已上线能力。
 
 [文档索引](docs/README.md) | [产品定义](docs/00_PRODUCT.md) | [开发路线](docs/00_ROADMAP.md) | [开发指南](docs/00_GUIDELINE.md)
 
@@ -41,9 +41,9 @@ S0-S9 十阶段已经进入同一个项目工作台，当前基础能力包括�
 - 通过 SQLite 在重启后恢复项目；
 - 通过浏览器 GUI、远程 API 和 OpenAPI 使用同一服务层。
 
-当前“生成草稿”只生成明确标记为 `structure_template` 的结构模板，不伪装成模型研究结果。后续 Agent 服务继续复用同一 revision 和审批接口。
+当前 S0-S4 已支持真实模型生成：S1 可执行 OpenAlex、Crossref、Semantic Scholar 和 arXiv 多源检索、去重与快照，并在已有论文上生成可追溯综述；S2 构建理论，S3 从方法库选择研究设计，S4 从数据源库形成数据合同与变量草稿。输出必须经过版本化提示词、严格结构契约和 ID 白名单后才能保存为 agent revision。S5-S9 暂时只生成明确标记为 `structure_template` 的结构模板。
 
-保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。课题侦察、研究设计、数据方法、Stata Runner、Claim-Evidence 审核和成果导出将在现有十阶段结构上继续接入。
+保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。Stata Runner、Claim-Evidence 审核和成果导出将在现有十阶段结构上继续接入。
 
 ## 人机协作
 

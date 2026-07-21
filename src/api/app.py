@@ -7,20 +7,36 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 
 from db import ProjectStore
 from domains import MANAGEMENT_SCIENCE_PROFILE
-from services.models import CreateProjectRequest, DraftRequest, StageDecisionRequest, StageUpdateRequest
+from inference import InferenceUnavailableError, inference_status
+from knowledge import KnowledgeRegistry
+from literature.service import LiteratureSearchInputError, LiteratureSearchService
+from services.models import (
+    CreateProjectRequest,
+    DraftRequest,
+    LiteratureSearchRequest,
+    StageDecisionRequest,
+    StageUpdateRequest,
+)
 from services.project_service import (
     ProjectNotFoundError,
     ProjectService,
     StageLockedError,
     StageNotFoundError,
 )
+from services.stage_generation import (
+    StageGenerationNotSupportedError,
+    StageGenerationOutputError,
+    StageGenerationService,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web" / "static"
+load_dotenv(REPO_ROOT / ".env", override=False)
 
 
 def _default_data_dir() -> Path:
@@ -28,9 +44,18 @@ def _default_data_dir() -> Path:
     return Path(configured) if configured else REPO_ROOT / "workspace" / "ai4ms"
 
 
-def create_app(data_dir: str | Path | None = None) -> FastAPI:
+def create_app(
+    data_dir: str | Path | None = None,
+    stage_generation: StageGenerationService | None = None,
+    literature_search: LiteratureSearchService | None = None,
+) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
-    service = ProjectService(ProjectStore(resolved_data_dir / "ai4ms.db"), resolved_data_dir)
+    service = ProjectService(
+        ProjectStore(resolved_data_dir / "ai4ms.db"),
+        resolved_data_dir,
+        stage_generation=stage_generation,
+        literature_search=literature_search,
+    )
 
     app = FastAPI(
         title="AI4MS 科研工作台 API",
@@ -66,6 +91,22 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     async def stage_locked(_request: Request, exc: StageLockedError):
         return _json_error(status.HTTP_409_CONFLICT, "stage_locked", str(exc))
 
+    @app.exception_handler(StageGenerationNotSupportedError)
+    async def generation_not_supported(_request: Request, exc: StageGenerationNotSupportedError):
+        return _json_error(status.HTTP_409_CONFLICT, "model_generation_not_supported", str(exc))
+
+    @app.exception_handler(InferenceUnavailableError)
+    async def inference_unavailable(_request: Request, exc: InferenceUnavailableError):
+        return _json_error(status.HTTP_503_SERVICE_UNAVAILABLE, "inference_unavailable", str(exc))
+
+    @app.exception_handler(StageGenerationOutputError)
+    async def invalid_model_output(_request: Request, exc: StageGenerationOutputError):
+        return _json_error(status.HTTP_502_BAD_GATEWAY, "invalid_model_output", str(exc))
+
+    @app.exception_handler(LiteratureSearchInputError)
+    async def invalid_literature_search(_request: Request, exc: LiteratureSearchInputError):
+        return _json_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_literature_search", str(exc))
+
     @app.get("/", include_in_schema=False)
     async def web_workbench():
         index = WEB_ROOT / "index.html"
@@ -84,6 +125,18 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.get("/api/v1/meta/domain-profile", tags=["meta"])
     async def domain_profile():
         return MANAGEMENT_SCIENCE_PROFILE.model_dump()
+
+    @app.get("/api/v1/meta/inference", tags=["meta"])
+    async def model_inference_status():
+        return inference_status()
+
+    @app.get("/api/v1/knowledge/methods", tags=["knowledge"])
+    async def method_registry(goal: str = "", q: str = "", limit: int = 10):
+        return {"items": KnowledgeRegistry.method_candidates(goal, q, limit)}
+
+    @app.get("/api/v1/knowledge/data-sources", tags=["knowledge"])
+    async def data_source_registry(q: str = "", limit: int = 12):
+        return {"items": KnowledgeRegistry.data_source_candidates(q, limit)}
 
     @app.get("/api/v1/projects", tags=["projects"])
     async def list_projects(request: Request):
@@ -113,7 +166,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/v1/projects/{project_id}/stages/{stage_key}/draft", tags=["stages"])
     async def create_stage_draft(project_id: str, stage_key: str, payload: DraftRequest, request: Request):
-        return get_service(request).create_draft(project_id, stage_key, payload)
+        return await get_service(request).create_draft(project_id, stage_key, payload)
+
+    @app.post("/api/v1/projects/{project_id}/stages/literature/search", tags=["literature"])
+    async def search_literature(project_id: str, payload: LiteratureSearchRequest, request: Request):
+        return await get_service(request).search_literature(project_id, payload)
 
     @app.post("/api/v1/projects/{project_id}/stages/{stage_key}/decisions", tags=["approvals"])
     async def decide_stage(project_id: str, stage_key: str, payload: StageDecisionRequest, request: Request):

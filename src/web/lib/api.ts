@@ -124,10 +124,22 @@ export function saveStage(
   });
 }
 
-export function createStageDraft(projectId: string, stageKey: string, instruction: string): Promise<Project> {
+export function createStageDraft(
+  projectId: string,
+  stageKey: string,
+  instruction: string,
+  generationMode: "template" | "model" = "model",
+): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/draft`, {
     method: "POST",
-    body: JSON.stringify({ instruction }),
+    body: JSON.stringify({ instruction, generation_mode: generationMode }),
+  });
+}
+
+export function searchLiterature(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/stages/literature/search`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -79,3 +79,22 @@ class StageDecisionRequest(BaseModel):
 
 class DraftRequest(BaseModel):
     instruction: str = Field(default="", max_length=2000)
+    generation_mode: Literal["template", "model"] = "template"
+
+
+class LiteratureSearchRequest(BaseModel):
+    queries: list[str] = Field(default_factory=list, max_length=12)
+    backends: list[Literal["openalex", "crossref", "semantic_scholar", "arxiv"]] = Field(
+        default_factory=lambda: ["openalex", "crossref", "semantic_scholar", "arxiv"],
+        min_length=1,
+        max_length=4,
+    )
+    limit_per_backend: int = Field(default=10, ge=1, le=20)
+    max_queries: int = Field(default=4, ge=1, le=8)
+    year_from: int | None = Field(default=None, ge=1800, le=2100)
+    year_to: int | None = Field(default=None, ge=1800, le=2100)
+
+    @field_validator("queries")
+    @classmethod
+    def clean_queries(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
