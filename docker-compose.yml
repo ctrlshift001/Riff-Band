@@ -4,7 +4,7 @@ services:
       context: .
     image: ai4ms-workbench:competition
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       AI4MS_DATA_DIR: /app/data
     volumes:

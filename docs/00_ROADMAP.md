@@ -56,13 +56,13 @@
 
 ### Docker 交付边界
 
-- 最终交付单镜像 `ai4ms-workbench:<version>`，同一容器提供 Web GUI 和 HTTP API；
-- 容器监听 `0.0.0.0:8000`，`/` 为十阶段工作台，`/api/v1` 为远程调用接口，`/docs` 为 OpenAPI 文档，`/healthz` 为健康检查；
+- 最终交付单镜像 `ai4ms-workbench:<version>`，用户通过 Web GUI 使用产品；
+- 容器进程监听 `0.0.0.0:8000`，宿主机只映射 `127.0.0.1:8000`；`/` 为十阶段工作台，`/api/v1` 为 GUI 内部应用接口，`/docs` 仅供开发调试，`/healthz` 为健康检查；
 - SQLite、项目资产和导出报告写入 `/app/data`，通过 Docker volume 持久化；
 - 模型和检索 Key 通过 `--env-file` 或运行时环境变量注入，禁止写入镜像；
 - 容器允许访问已配置的模型和开放检索服务；断网时仍能打开已保存项目和静态报告；
 - Stata 安装、许可证和受限数据不进入镜像，容器通过 `RunnerService` 连接用户或机构提供的外部 Runner；
-- 同时提供 `Dockerfile`、`.dockerignore`、`docker-compose.yml`、部署说明、API 调用示例和 smoke test。
+- 同时提供 `Dockerfile`、`.dockerignore`、`docker-compose.yml`、部署说明和 GUI smoke test。
 
 ### Stata 外部依赖
 
@@ -85,8 +85,8 @@
 | 7 月 22 日 D2 | 打通 S0-S1：TopicBrief、多源并集检索、去重、PaperCard、Gap 和最小 G0 | 完成问题识别、检索、论文和流派界面及 Prompt，人工核查种子论文 | 从一句想法生成真实来源报告，并完成问题边界审批 |
 | 7 月 23 日 D3 | 打通 S2-S4：理论、Protocol、设计方案、方法/公式/数据 Registry、G1/G2 | 完成理论、设计、数据、方法、许可和风险编辑界面 | 课题形成可编辑、可审批的理论、数据方法与研究设计 |
 | 7 月 24 日 D4 | 打通 S5-S7：AnalysisPlan、do-file revision、Stata preflight/Runner、结果、稳健性和复现元数据 | 完成代码 diff、运行状态、结果表图和稳健性工作区 | 有 Runner 时真实运行；无 Runner 时准确阻塞且完整展示准备结果 |
-| 7 月 25 日 D5 | 打通 S8-S9；完成 Dockerfile/Compose、健康检查、volume、API 示例和容器端到端 smoke | 完成机制与异质性、证据中心、HTML 报告、演示稿和容器内置示例项目 | Docker 启动后十阶段 GUI/API 完整走通两次，功能冻结 |
-| 7 月 26 日 D6 | 构建固定 tag 镜像，复核部署说明、调用示例、数据迁移、测试和提交包，禁止临时开发 | 复核视频、截图、介绍、答辩和提交表单 | 中午前形成镜像与部署包，至少预留 4 小时上传和纠错 |
+| 7 月 25 日 D5 | 打通 S8-S9；完成 Dockerfile/Compose、健康检查、volume 和容器端到端 smoke | 完成机制与异质性、证据中心、HTML 报告、演示稿和容器内置示例项目 | Docker 启动后十阶段 GUI 完整走通两次，功能冻结 |
+| 7 月 26 日 D6 | 构建固定 tag 镜像，复核部署说明、数据迁移、测试和提交包，禁止临时开发 | 复核视频、截图、介绍、答辩和提交表单 | 中午前形成镜像与部署包，至少预留 4 小时上传和纠错 |
 
 ## 6. 产品验收
 
@@ -113,12 +113,11 @@
 - HTML 报告包含目录、真实来源、论文表、至少一个图表和决策摘要；
 - 断网、模型失败或无 Stata Runner 时仍可打开已保存项目和报告。
 
-### Docker 与远程调用
+### Docker 交付
 
 - `docker compose up` 或一条 `docker run` 命令可以启动产品；
 - 浏览器访问 `/` 能使用完整 GUI，不依赖宿主机 Python 环境；
-- `/healthz` 返回健康状态，`/docs` 能查看并试调 API；
-- API 至少支持创建项目、读取项目、执行阶段、保存编辑、审批、查询任务和导出报告；
+- `/healthz` 返回健康状态，GUI 可以完成创建项目、执行阶段、保存编辑、审批和导出报告；
 - 重启容器后，挂载卷中的项目、审批和报告仍然存在；
 - 镜像历史和日志不包含 API Key、Stata 许可证或用户受限数据。
 

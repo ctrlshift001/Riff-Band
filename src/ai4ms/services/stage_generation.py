@@ -4,10 +4,13 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Callable
 
+from pydantic import ValidationError
+
 from ai4ms.inference.gateway import InferenceGateway, InferenceResponse, OpenAICompatibleGateway
 from ai4ms.inference.structured import StructuredOutputError, validate_structured_output
 from ai4ms.knowledge import KnowledgeRegistry
 from ai4ms.prompts.catalog import PromptCatalog
+from ai4ms.runners.stata import StataPolicyScanner
 
 
 class StageGenerationNotSupportedError(LookupError):
@@ -15,6 +18,10 @@ class StageGenerationNotSupportedError(LookupError):
 
 
 class StageGenerationOutputError(RuntimeError):
+    pass
+
+
+class StageContentValidationError(ValueError):
     pass
 
 
@@ -69,6 +76,66 @@ class StageGenerationService:
         content = draft.model_dump(mode="json")
         if stage_key == "problem":
             content["initial_idea"] = project["initial_idea"]
+        if stage_key == "analysis":
+            plan_stage = next(
+                (stage for stage in project.get("stages", []) if stage.get("key") == "identification"),
+                {},
+            )
+            analysis_stage = next(
+                (stage for stage in project.get("stages", []) if stage.get("key") == "analysis"),
+                {},
+            )
+            plan = plan_stage.get("content", {})
+            current_analysis = analysis_stage.get("content", {})
+            content.update(
+                {
+                    "approved_analysis_plan_revision": plan_stage.get("revision", 0),
+                    "approved_analysis_plan_hash": plan_stage.get("content_hash", ""),
+                    "do_file": plan.get("stata_do_file", ""),
+                    "runner_status": "not_checked",
+                    "runs": current_analysis.get("runs", []),
+                    "results": current_analysis.get("results", []),
+                }
+            )
+        if stage_key == "delivery":
+            evidence_stage = next(
+                (stage for stage in project.get("stages", []) if stage.get("key") == "evidence"),
+                {},
+            )
+            literature_stage = next(
+                (stage for stage in project.get("stages", []) if stage.get("key") == "literature"),
+                {},
+            )
+            papers = {
+                str(item.get("paper_id")): item
+                for item in literature_stage.get("content", {}).get("papers", [])
+                if isinstance(item, dict) and item.get("paper_id")
+            }
+            selected_paper_ids = set(content.get("reference_paper_ids", []))
+            content.update(
+                {
+                    "approved_claims": [
+                        claim.get("claim_id")
+                        for claim in evidence_stage.get("content", {}).get("claims", [])
+                        if isinstance(claim, dict)
+                        and claim.get("status") not in {"refuted", "withdrawn"}
+                    ],
+                    "references": [
+                        {
+                            key: paper.get(key)
+                            for key in ("paper_id", "title", "authors", "year", "doi", "url")
+                            if paper.get(key) not in (None, "", [])
+                        }
+                        for paper_id, paper in papers.items()
+                        if paper_id in selected_paper_ids
+                    ],
+                    "source_evidence_revision": evidence_stage.get("revision", 0),
+                    "source_evidence_hash": evidence_stage.get("content_hash", ""),
+                    "exports": [],
+                    "visual_report_path": "",
+                    "research_package_path": "",
+                }
+            )
         content["generation"] = {
             "mode": "model",
             "prompt_id": prompt.prompt_id,
@@ -104,7 +171,7 @@ class StageGenerationService:
                     "screening_questions": current.get("screening_questions", []),
                     **StageGenerationService._compact_literature(current),
                 }
-        if stage_key in {"theory", "design", "data"}:
+        if stage_key in {"theory", "design", "data", "identification"}:
             problem = stages.get("problem", {})
             literature = stages.get("literature", {})
             context["problem_content"] = problem.get("content", {})
@@ -122,6 +189,63 @@ class StageGenerationService:
             context["design_content"] = design_content
             query = f"{project['title']} {json_text(design_content)}"
             context["data_source_candidates"] = KnowledgeRegistry.data_source_candidates(query, 12)
+        if stage_key == "identification":
+            design_content = stages.get("design", {}).get("content", {})
+            data_content = stages.get("data", {}).get("content", {})
+            context["design_content"] = design_content
+            context["data_content"] = StageGenerationService._compact_data(data_content)
+            method_ids = [
+                str(item.get("method_id"))
+                for item in design_content.get("method_options", [])
+                if isinstance(item, dict) and item.get("method_id")
+            ]
+            query = f"{project['title']} {json_text(design_content)} {json_text(data_content)}"
+            context["formula_candidates"] = KnowledgeRegistry.formula_candidates(query, method_ids, 14)
+        if stage_key in {"analysis", "robustness"}:
+            plan_stage = stages.get("identification", {})
+            context["analysis_plan_revision"] = plan_stage.get("revision", 0)
+            context["analysis_plan_hash"] = plan_stage.get("content_hash", "")
+            context["analysis_plan_content"] = StageGenerationService._compact_analysis_plan(
+                plan_stage.get("content", {})
+            )
+            context["data_content"] = StageGenerationService._compact_data(
+                stages.get("data", {}).get("content", {})
+            )
+        if stage_key == "analysis":
+            current = stages.get("analysis", {}).get("content", {})
+            context["current_stage_content"] = {
+                "readiness_summary": current.get("readiness_summary", ""),
+                "preflight_checks": current.get("preflight_checks", []),
+                "result_review_checks": current.get("result_review_checks", []),
+                "blocking_issues": current.get("blocking_issues", []),
+                "runs": StageGenerationService._compact_runs(current.get("runs", [])),
+            }
+        if stage_key == "robustness":
+            context["analysis_runs"] = StageGenerationService._compact_runs(
+                stages.get("analysis", {}).get("content", {}).get("runs", [])
+            )
+        if stage_key in {"evidence", "delivery"}:
+            literature = stages.get("literature", {})
+            context["literature_content"] = StageGenerationService._compact_literature(
+                literature.get("content", {})
+            )
+            context["analysis_runs"] = StageGenerationService._compact_runs(
+                stages.get("analysis", {}).get("content", {}).get("runs", [])
+            )
+            context["robustness_content"] = stages.get("robustness", {}).get("content", {})
+        if stage_key == "evidence":
+            context["theory_content"] = stages.get("theory", {}).get("content", {})
+            context["design_content"] = stages.get("design", {}).get("content", {})
+            context["data_content"] = StageGenerationService._compact_data(
+                stages.get("data", {}).get("content", {})
+            )
+            context["evidence_artifacts"] = StageGenerationService._evidence_artifacts(stages)
+        if stage_key == "delivery":
+            evidence = stages.get("evidence", {})
+            context["evidence_status"] = evidence.get("status", "")
+            context["evidence_revision"] = evidence.get("revision", 0)
+            context["evidence_hash"] = evidence.get("content_hash", "")
+            context["evidence_content"] = evidence.get("content", {})
         return context
 
     @staticmethod
@@ -137,6 +261,7 @@ class StageGenerationService:
                     "authors": item.get("authors", [])[:5],
                     "year": item.get("year", ""),
                     "doi": item.get("doi", ""),
+                    "url": item.get("url", ""),
                     "abstract": str(item.get("abstract", ""))[:800],
                 }
             )
@@ -147,6 +272,139 @@ class StageGenerationService:
             "gap_candidates": content.get("gap_candidates", []),
             "coverage_limits": content.get("coverage_limits", []),
         }
+
+    @staticmethod
+    def _compact_data(content: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "data_sources": content.get("data_sources", []),
+            "variables": content.get("variables", []),
+            "sample_definition": content.get("sample_definition", ""),
+            "time_coverage": content.get("time_coverage", ""),
+            "join_keys": content.get("join_keys", []),
+            "quality_checks": content.get("quality_checks", []),
+            "blocking_issues": content.get("blocking_issues", []),
+            "unknowns": content.get("unknowns", []),
+        }
+
+    @staticmethod
+    def _compact_analysis_plan(content: dict[str, Any]) -> dict[str, Any]:
+        keys = (
+            "design_lane",
+            "estimand_or_objective",
+            "analysis_sample",
+            "unit_of_analysis",
+            "variable_roles",
+            "model_specifications",
+            "diagnostics",
+            "analysis_steps",
+            "robustness_plan",
+            "stopping_conditions",
+            "execution_engine",
+            "code_language",
+            "seed",
+            "expected_outputs",
+            "unknowns",
+        )
+        return {key: content.get(key) for key in keys}
+
+    @staticmethod
+    def _compact_runs(runs: Any) -> list[dict[str, Any]]:
+        compact = []
+        for run in runs[:20] if isinstance(runs, list) else []:
+            if not isinstance(run, dict):
+                continue
+            compact.append(
+                {
+                    "run_id": run.get("run_id", ""),
+                    "status": run.get("status", ""),
+                    "reason_code": run.get("reason_code", ""),
+                    "exit_code": run.get("exit_code"),
+                    "do_file_sha256": run.get("do_file_sha256", ""),
+                    "structured_results": run.get("structured_results", []),
+                    "output_artifacts": run.get("output_artifacts", []),
+                }
+            )
+        return compact
+
+    @staticmethod
+    def _evidence_artifacts(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        artifacts: list[dict[str, Any]] = []
+        literature = stages.get("literature", {}).get("content", {})
+        for paper in literature.get("papers", [])[:50]:
+            if isinstance(paper, dict) and paper.get("paper_id"):
+                artifacts.append(
+                    {
+                        "artifact_id": str(paper["paper_id"]),
+                        "kind": "paper",
+                        "allowed_evidence_types": ["paper"],
+                        "supports_allowed": True,
+                        "title": str(paper.get("title", ""))[:300],
+                    }
+                )
+        data = stages.get("data", {}).get("content", {})
+        for source in data.get("data_sources", [])[:20]:
+            if isinstance(source, dict) and source.get("source_id"):
+                artifacts.append(
+                    {
+                        "artifact_id": str(source["source_id"]),
+                        "kind": "data",
+                        "allowed_evidence_types": ["data"],
+                        "supports_allowed": False,
+                        "access_status": source.get("access_status", "unknown"),
+                    }
+                )
+        analysis = stages.get("analysis", {}).get("content", {})
+        for run in StageGenerationService._compact_runs(analysis.get("runs", [])):
+            run_id = str(run.get("run_id", ""))
+            if not run_id:
+                continue
+            has_results = bool(run.get("structured_results")) and run.get("status") == "succeeded"
+            artifacts.append(
+                {
+                    "artifact_id": run_id,
+                    "kind": "run",
+                    "run_id": run_id,
+                    "status": run.get("status", ""),
+                    "allowed_evidence_types": (
+                        ["estimate", "proof", "simulation", "experiment", "qualitative_excerpt"]
+                        if has_results
+                        else ["reviewer_note"]
+                    ),
+                    "supports_allowed": has_results,
+                }
+            )
+            if has_results:
+                for output in run.get("output_artifacts", [])[:30]:
+                    path = output.get("path") if isinstance(output, dict) else output
+                    if path:
+                        artifacts.append(
+                            {
+                                "artifact_id": str(path),
+                                "kind": "run_output",
+                                "run_id": run_id,
+                                "allowed_evidence_types": ["estimate", "proof", "simulation", "experiment"],
+                                "supports_allowed": True,
+                            }
+                        )
+        return artifacts
+
+    @classmethod
+    def validate_stage_content(
+        cls,
+        project: dict[str, Any],
+        stage_key: str,
+        content: dict[str, Any],
+    ) -> None:
+        context = cls._build_context(project, stage_key)
+        prompt = PromptCatalog.get(stage_key, context)
+        if prompt is None:
+            raise StageContentValidationError(f"stage '{stage_key}' has no validation contract")
+        payload = {key: content[key] for key in prompt.contract.model_fields if key in content}
+        try:
+            validated = prompt.contract.model_validate(payload).model_dump(mode="json")
+            cls._validate_domain_references(validated, prompt.prompt_id, context)
+        except (ValidationError, StructuredOutputError) as exc:
+            raise StageContentValidationError(str(exc)) from exc
 
     @staticmethod
     def _validate_domain_references(
@@ -178,6 +436,251 @@ class StageGenerationService:
             invalid = sorted(item for item in referenced - allowed if item)
             if invalid:
                 raise StructuredOutputError(f"output references data sources outside the registry shortlist: {invalid[:8]}")
+        if prompt_id == "ai4ms.stage.identification":
+            design = context.get("design_content", {})
+            allowed_methods = {
+                str(item.get("method_id"))
+                for item in design.get("method_options", [])
+                if isinstance(item, dict) and item.get("method_id")
+            }
+            allowed_formulas = {
+                str(item.get("formula_id"))
+                for item in context.get("formula_candidates", [])
+                if isinstance(item, dict) and item.get("formula_id")
+            }
+            methods = set(StageGenerationService._collect_values(content, "method_id"))
+            formulas = set(StageGenerationService._collect_values(content, "formula_id"))
+            invalid_methods = sorted(item for item in methods - allowed_methods if item)
+            invalid_formulas = sorted(item for item in formulas - allowed_formulas if item)
+            if invalid_methods:
+                raise StructuredOutputError(f"output references methods outside the approved design: {invalid_methods[:8]}")
+            if invalid_formulas:
+                raise StructuredOutputError(f"output references formulas outside the registry shortlist: {invalid_formulas[:8]}")
+            allowed_specs = {
+                str(item.get("specification_id"))
+                for item in content.get("model_specifications", [])
+                if isinstance(item, dict) and item.get("specification_id")
+            }
+            linked_specs = set(StageGenerationService._collect_values(content, "specification_ids"))
+            invalid_specs = sorted(item for item in linked_specs - allowed_specs if item)
+            if invalid_specs:
+                raise StructuredOutputError(f"analysis steps reference unknown specification_ids: {invalid_specs[:8]}")
+            engine = content.get("execution_engine")
+            do_file = str(content.get("stata_do_file") or "")
+            if engine == "stata" and not do_file.strip():
+                raise StructuredOutputError("execution_engine=stata requires a reviewable stata_do_file")
+            if engine != "stata" and do_file.strip():
+                raise StructuredOutputError("stata_do_file must be empty when execution_engine is not stata")
+            policy_issues = StataPolicyScanner.scan(do_file) if do_file else []
+            if policy_issues:
+                codes = sorted({str(item.get("code")) for item in policy_issues})
+                raise StructuredOutputError(f"stata_do_file violates deterministic policy: {codes}")
+        if prompt_id == "ai4ms.stage.analysis":
+            expected_engine = context.get("analysis_plan_content", {}).get("execution_engine")
+            if content.get("execution_engine") != expected_engine:
+                raise StructuredOutputError(
+                    f"run preparation engine must match approved analysis plan: {expected_engine}"
+                )
+        if prompt_id == "ai4ms.stage.robustness":
+            plan_specs = {
+                str(item.get("specification_id"))
+                for item in context.get("analysis_plan_content", {}).get("model_specifications", [])
+                if isinstance(item, dict) and item.get("specification_id")
+            }
+            runs = {
+                str(item.get("run_id")): item
+                for item in context.get("analysis_runs", [])
+                if isinstance(item, dict) and item.get("run_id")
+            }
+            linked_specs = set(StageGenerationService._collect_values(content, "specification_ids"))
+            linked_runs = set(StageGenerationService._collect_values(content, "run_ids"))
+            invalid_specs = sorted(item for item in linked_specs - plan_specs if item)
+            invalid_runs = sorted(item for item in linked_runs - set(runs) if item)
+            if invalid_specs:
+                raise StructuredOutputError(f"robustness checks reference unknown specification_ids: {invalid_specs[:8]}")
+            if invalid_runs:
+                raise StructuredOutputError(f"robustness checks reference unknown run_ids: {invalid_runs[:8]}")
+            evidence_statuses = {"passed", "failed", "inconclusive"}
+            for check in content.get("robustness_matrix", []):
+                if not isinstance(check, dict) or check.get("status") not in evidence_statuses:
+                    continue
+                referenced = [runs.get(str(run_id), {}) for run_id in check.get("required_run_ids", [])]
+                if not referenced or not all(run.get("structured_results") for run in referenced):
+                    raise StructuredOutputError(
+                        f"robustness check {check.get('check_id', '')} claims a result without structured run evidence"
+                    )
+        if prompt_id == "ai4ms.stage.evidence":
+            StageGenerationService._validate_claim_evidence(content, context)
+        if prompt_id == "ai4ms.stage.delivery":
+            StageGenerationService._validate_delivery(content, context)
+
+    @staticmethod
+    def _validate_claim_evidence(content: dict[str, Any], context: dict[str, Any]) -> None:
+        artifact_registry = {
+            str(item.get("artifact_id")): item
+            for item in context.get("evidence_artifacts", [])
+            if isinstance(item, dict) and item.get("artifact_id")
+        }
+        method_ids = {
+            str(item.get("method_id"))
+            for item in context.get("design_content", {}).get("method_options", [])
+            if isinstance(item, dict) and item.get("method_id")
+        }
+        robustness = {
+            str(item.get("check_id")): item
+            for item in context.get("robustness_content", {}).get("robustness_matrix", [])
+            if isinstance(item, dict) and item.get("check_id")
+        }
+        adverse_robustness = {
+            check_id
+            for check_id, item in robustness.items()
+            if item.get("status") in {"failed", "blocked", "inconclusive", "not_run"}
+        }
+        claim_ids: set[str] = set()
+        evidence_registry: dict[str, dict[str, Any]] = {}
+        for claim in content.get("claims", []):
+            claim_id = str(claim.get("claim_id", ""))
+            if claim_id in claim_ids:
+                raise StructuredOutputError(f"duplicate claim_id: {claim_id}")
+            claim_ids.add(claim_id)
+            evidence = claim.get("evidence", [])
+            support_items = []
+            for item in evidence:
+                evidence_id = str(item.get("evidence_id", ""))
+                previous = evidence_registry.get(evidence_id)
+                if previous is not None and previous != item:
+                    raise StructuredOutputError(f"evidence_id {evidence_id} has conflicting records")
+                evidence_registry[evidence_id] = item
+                artifact_id = str(item.get("artifact_id", ""))
+                artifact = artifact_registry.get(artifact_id)
+                if artifact is None:
+                    raise StructuredOutputError(f"claim {claim_id} references unknown artifact_id: {artifact_id}")
+                if item.get("evidence_type") not in artifact.get("allowed_evidence_types", []):
+                    raise StructuredOutputError(
+                        f"artifact {artifact_id} cannot be used as {item.get('evidence_type')} evidence"
+                    )
+                if item.get("direction") == "supports":
+                    if not artifact.get("supports_allowed"):
+                        raise StructuredOutputError(f"artifact {artifact_id} cannot support a scientific claim")
+                    support_items.append(item)
+                run_id = str(item.get("run_id") or "")
+                if run_id and run_id not in {
+                    str(run.get("run_id")) for run in context.get("analysis_runs", [])
+                }:
+                    raise StructuredOutputError(f"evidence {evidence_id} references unknown run_id: {run_id}")
+                method_id = str(item.get("method_id") or "")
+                if method_id and method_id not in method_ids:
+                    raise StructuredOutputError(f"evidence {evidence_id} references unknown method_id: {method_id}")
+            local_evidence = {str(item.get("evidence_id")): item for item in evidence}
+            for evidence_id in claim.get("counterevidence", []):
+                if evidence_id not in local_evidence:
+                    raise StructuredOutputError(f"claim {claim_id} references unknown counterevidence: {evidence_id}")
+                if local_evidence[evidence_id].get("direction") not in {"contradicts", "qualifies"}:
+                    raise StructuredOutputError(f"counterevidence {evidence_id} must contradict or qualify")
+            unknown_checks = set(claim.get("robustness_check_ids", [])) - set(robustness)
+            if unknown_checks:
+                raise StructuredOutputError(f"claim {claim_id} references unknown robustness checks: {sorted(unknown_checks)}")
+            if claim.get("status") == "supported" and not support_items:
+                raise StructuredOutputError(f"supported claim {claim_id} has no supporting evidence")
+            if claim.get("confidence") == "high":
+                if (
+                    not support_items
+                    or adverse_robustness
+                    or any(item.get("strength") != "strong" for item in support_items)
+                ):
+                    raise StructuredOutputError(
+                        f"claim {claim_id} cannot be high confidence with adverse robustness or non-strong evidence"
+                    )
+            if claim.get("claim_type") != "literature_synthesis" and adverse_robustness:
+                missing = adverse_robustness - set(claim.get("robustness_check_ids", []))
+                if missing:
+                    raise StructuredOutputError(
+                        f"claim {claim_id} omits adverse robustness checks: {sorted(missing)}"
+                    )
+
+        mechanism_ids = {
+            str(item.get("mechanism_id"))
+            for item in content.get("mechanisms", [])
+            if isinstance(item, dict) and item.get("mechanism_id")
+        }
+        all_evidence_ids = set(evidence_registry)
+        for claim in content.get("claims", []):
+            unknown = set(claim.get("mechanism_ids", [])) - mechanism_ids
+            if unknown:
+                raise StructuredOutputError(f"claim {claim.get('claim_id')} references unknown mechanisms: {sorted(unknown)}")
+        for section_name in ("mechanisms", "heterogeneity"):
+            for item in content.get(section_name, []):
+                unknown_claims = set(item.get("claim_ids", [])) - claim_ids
+                unknown_evidence = set(item.get("evidence_ids", [])) - all_evidence_ids
+                if unknown_claims:
+                    raise StructuredOutputError(f"{section_name} references unknown claims: {sorted(unknown_claims)}")
+                if unknown_evidence:
+                    raise StructuredOutputError(f"{section_name} references unknown evidence: {sorted(unknown_evidence)}")
+
+    @staticmethod
+    def _validate_delivery(content: dict[str, Any], context: dict[str, Any]) -> None:
+        if context.get("evidence_status") != "approved":
+            raise StructuredOutputError("delivery requires a G4-approved evidence stage")
+        claims = {
+            str(item.get("claim_id")): item
+            for item in context.get("evidence_content", {}).get("claims", [])
+            if isinstance(item, dict) and item.get("claim_id")
+        }
+        usable_claims = {
+            claim_id: claim
+            for claim_id, claim in claims.items()
+            if claim.get("status") not in {"refuted", "withdrawn"}
+        }
+        paper_ids = {
+            str(item.get("paper_id"))
+            for item in context.get("literature_content", {}).get("papers", [])
+            if isinstance(item, dict) and item.get("paper_id")
+        }
+        for conclusion in content.get("conclusions", []):
+            conclusion_id = conclusion.get("conclusion_id", "")
+            referenced_claims = set(conclusion.get("claim_ids", []))
+            unknown_claims = referenced_claims - set(usable_claims)
+            if unknown_claims:
+                raise StructuredOutputError(
+                    f"conclusion {conclusion_id} references unavailable claims: {sorted(unknown_claims)}"
+                )
+            allowed_evidence = {
+                str(evidence.get("evidence_id"))
+                for claim_id in referenced_claims
+                for evidence in usable_claims[claim_id].get("evidence", [])
+                if isinstance(evidence, dict) and evidence.get("evidence_id")
+            }
+            unknown_evidence = set(conclusion.get("evidence_ids", [])) - allowed_evidence
+            if unknown_evidence:
+                raise StructuredOutputError(
+                    f"conclusion {conclusion_id} references evidence outside its claims: {sorted(unknown_evidence)}"
+                )
+            if conclusion.get("status") == "supported" and any(
+                usable_claims[claim_id].get("status") != "supported" for claim_id in referenced_claims
+            ):
+                raise StructuredOutputError(
+                    f"conclusion {conclusion_id} cannot be supported by candidate or mixed claims"
+                )
+        for item in content.get("policy_implications", []):
+            unknown = set(item.get("claim_ids", [])) - set(usable_claims)
+            if unknown:
+                raise StructuredOutputError(f"policy implication references unavailable claims: {sorted(unknown)}")
+        all_evidence_ids = {
+            str(evidence.get("evidence_id"))
+            for claim in usable_claims.values()
+            for evidence in claim.get("evidence", [])
+            if isinstance(evidence, dict) and evidence.get("evidence_id")
+        }
+        for section in content.get("outline", []):
+            unknown_claims = set(section.get("claim_ids", [])) - set(usable_claims)
+            unknown_evidence = set(section.get("evidence_ids", [])) - all_evidence_ids
+            if unknown_claims or unknown_evidence:
+                raise StructuredOutputError(
+                    f"outline section {section.get('section_id')} contains unknown claim/evidence IDs"
+                )
+        unknown_papers = set(content.get("reference_paper_ids", [])) - paper_ids
+        if unknown_papers:
+            raise StructuredOutputError(f"delivery references unknown paper_ids: {sorted(unknown_papers)}")
 
     @staticmethod
     def _collect_values(value: Any, key_suffix: str) -> list[str]:

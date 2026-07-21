@@ -56,6 +56,15 @@ export interface Project extends ProjectSummary {
   progress: { approved: number; total: number };
 }
 
+export interface AnalysisPreflight {
+  status: "ready" | "blocked";
+  reason_code: string;
+  analysis_plan_revision: number;
+  do_file_sha256?: string;
+  checks: Record<string, boolean>;
+  issues: Array<{ code: string; line?: number; message: string }>;
+}
+
 interface ApiErrorPayload {
   error?: { code?: string; message?: string };
   detail?: string | Array<{ msg?: string }>;
@@ -141,6 +150,35 @@ export function searchLiterature(projectId: string): Promise<Project> {
     method: "POST",
     body: JSON.stringify({}),
   });
+}
+
+export function preflightAnalysisRun(projectId: string, inputArtifactPath: string): Promise<AnalysisPreflight> {
+  return request<AnalysisPreflight>(`/projects/${encodeURIComponent(projectId)}/stages/analysis/preflight`, {
+    method: "POST",
+    body: JSON.stringify({ input_artifact_path: inputArtifactPath }),
+  });
+}
+
+export function submitAnalysisRun(projectId: string, inputArtifactPath: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/stages/analysis/runs`, {
+    method: "POST",
+    body: JSON.stringify({ input_artifact_path: inputArtifactPath }),
+  });
+}
+
+export function exportDelivery(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/stages/delivery/export`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function deliveryArtifactUrl(
+  projectId: string,
+  exportId: string,
+  kind: "report" | "package" | "manifest",
+): string {
+  return `${API_ROOT}/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(exportId)}/${kind}`;
 }
 
 export function decideStage(

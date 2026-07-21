@@ -7,11 +7,16 @@ from typing import Any
 from pydantic import BaseModel
 
 from ai4ms.prompts.contracts import (
+    AnalysisPlanDraft,
+    ClaimEvidenceDraft,
     DataDraft,
+    DeliveryDraft,
     DesignDraft,
     LiteraturePlanDraft,
     LiteratureSynthesisDraft,
     ProblemDraft,
+    RobustnessDraft,
+    RunPreparationDraft,
     TheoryDraft,
 )
 
@@ -99,6 +104,41 @@ class PromptCatalog:
             stage_key="data",
             contract=DataDraft,
             task_instruction="""基于已保存的研究设计，并仅从输入 data_source_candidates 选择候选数据源，生成 S4 数据合同和变量草稿。区分构念与操作化，列明样本、时间、连接键、缺失处理、质量检查、隐私、伦理和许可。除非输入明确证明，否则 access_status/license_status 必须是 unknown 或 pending；不可把候选数据源写成已获授权。""",
+        ),
+        "identification": StagePrompt(
+            prompt_id="ai4ms.stage.identification",
+            version="1.0.0",
+            stage_key="identification",
+            contract=AnalysisPlanDraft,
+            task_instruction="""基于已保存的 S3 研究设计和 S4 数据合同生成 S5 分析计划。冻结 estimand/求解目标、样本、变量角色、主次模型、诊断、缺失与多重性处理、分析步骤、稳健性和停止条件。method_id 只能来自已选设计方法，formula_id 只能来自 formula_candidates。按研究泳道选择执行引擎；只有适合 Stata 的计划才生成可审阅 do-file，并固定 version、seed、只读输入和独立输出，不得包含 shell、网络、动态安装、绝对路径或父目录穿越。不得声称数据检查或模型运行已经完成。""",
+        ),
+        "analysis": StagePrompt(
+            prompt_id="ai4ms.stage.analysis",
+            version="1.0.0",
+            stage_key="analysis",
+            contract=RunPreparationDraft,
+            task_instruction="""基于已获 G3 人工批准的 S5 分析计划生成 S6 运行准备与结果审阅清单。只描述预期产物、预检、结果审阅、阻塞项和未知，不生成或改写 do-file，不虚构 Runner、日志、退出码、统计量、表图或运行成功状态。实际代码、计划 revision 和 hash 由服务端从已批准 S5 强制绑定。""",
+        ),
+        "robustness": StagePrompt(
+            prompt_id="ai4ms.stage.robustness",
+            version="1.0.0",
+            stage_key="robustness",
+            contract=RobustnessDraft,
+            task_instruction="""基于 S5 分析计划与 S6 不可变 Run 记录生成 S7 稳健性矩阵，覆盖替代口径、模型、样本、安慰剂、敏感性或该研究泳道适用的反证检查。specification_id 和 run_id 只能引用输入。没有结构化运行结果时，status 只能是 planned、not_run 或 blocked，不得根据预期、退出码或语言描述臆造 passed/failed；失败项及其对解释的影响必须保留。""",
+        ),
+        "evidence": StagePrompt(
+            prompt_id="ai4ms.stage.evidence",
+            version="1.0.0",
+            stage_key="evidence",
+            contract=ClaimEvidenceDraft,
+            task_instruction="""基于 S1 论文、S6 不可变 Run 记录和 S7 稳健性矩阵生成 S8 Claim-Evidence 草稿。每条主张必须包含至少一个输入 evidence_artifacts 中的 artifact_id，并明确方向、强度、作用域、假设和不确定性。论文、run_id、method_id、机制和稳健性检查只能引用输入中的 ID。没有结构化结果的 blocked/failed Run 只能作为 reviewer_note 且只能限定主张，不得支持实证结论。稳健性失败、阻塞或不确定必须降低置信度并进入限制；不得输出审批状态。""",
+        ),
+        "delivery": StagePrompt(
+            prompt_id="ai4ms.stage.delivery",
+            version="1.0.0",
+            stage_key="delivery",
+            contract=DeliveryDraft,
+            task_instruction="""只基于 G4 已批准的 S8 主张与证据生成 S9 写作和交付草稿。每条核心结论必须引用输入中的 claim_id 和这些主张实际包含的 evidence_id；不得使用 refuted/withdrawn 主张，不得新增数值、论文或证据。政策含义必须写清适用对象、条件和风险。reference_paper_ids 只能来自输入论文。HTML 报告、manifest、引用元数据和研究 ZIP 包由服务端确定性生成，不得编造路径或发布状态。""",
         ),
     }
 

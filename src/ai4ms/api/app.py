@@ -10,11 +10,14 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 from ai4ms.db import ProjectStore
+from ai4ms.delivery import DeliveryExportError
 from ai4ms.domains import MANAGEMENT_SCIENCE_PROFILE
 from ai4ms.inference import InferenceUnavailableError, inference_status
 from ai4ms.knowledge import KnowledgeRegistry
 from ai4ms.literature.service import LiteratureSearchInputError, LiteratureSearchService
+from ai4ms.runners import AnalysisRunnerService
 from ai4ms.services.models import (
+    AnalysisRunRequest,
     CreateProjectRequest,
     DraftRequest,
     LiteratureSearchRequest,
@@ -28,6 +31,7 @@ from ai4ms.services.project_service import (
     StageNotFoundError,
 )
 from ai4ms.services.stage_generation import (
+    StageContentValidationError,
     StageGenerationNotSupportedError,
     StageGenerationOutputError,
     StageGenerationService,
@@ -48,6 +52,7 @@ def create_app(
     data_dir: str | Path | None = None,
     stage_generation: StageGenerationService | None = None,
     literature_search: LiteratureSearchService | None = None,
+    analysis_runner: AnalysisRunnerService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
     service = ProjectService(
@@ -55,6 +60,7 @@ def create_app(
         resolved_data_dir,
         stage_generation=stage_generation,
         literature_search=literature_search,
+        analysis_runner=analysis_runner,
     )
 
     app = FastAPI(
@@ -107,6 +113,14 @@ def create_app(
     async def invalid_literature_search(_request: Request, exc: LiteratureSearchInputError):
         return _json_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_literature_search", str(exc))
 
+    @app.exception_handler(StageContentValidationError)
+    async def invalid_stage_content(_request: Request, exc: StageContentValidationError):
+        return _json_error(status.HTTP_409_CONFLICT, "invalid_stage_content", str(exc))
+
+    @app.exception_handler(DeliveryExportError)
+    async def invalid_delivery_export(_request: Request, exc: DeliveryExportError):
+        return _json_error(status.HTTP_409_CONFLICT, "delivery_export_failed", str(exc))
+
     @app.get("/", include_in_schema=False)
     async def web_workbench():
         index = WEB_ROOT / "index.html"
@@ -137,6 +151,14 @@ def create_app(
     @app.get("/api/v1/knowledge/data-sources", tags=["knowledge"])
     async def data_source_registry(q: str = "", limit: int = 12):
         return {"items": KnowledgeRegistry.data_source_candidates(q, limit)}
+
+    @app.get("/api/v1/knowledge/formulas", tags=["knowledge"])
+    async def formula_registry(q: str = "", method_id: list[str] | None = None, limit: int = 12):
+        return {"items": KnowledgeRegistry.formula_candidates(q, method_id or [], limit)}
+
+    @app.get("/api/v1/runners/stata", tags=["runners"])
+    async def stata_runner_status(request: Request):
+        return get_service(request).analysis_runner.status()
 
     @app.get("/api/v1/projects", tags=["projects"])
     async def list_projects(request: Request):
@@ -171,6 +193,38 @@ def create_app(
     @app.post("/api/v1/projects/{project_id}/stages/literature/search", tags=["literature"])
     async def search_literature(project_id: str, payload: LiteratureSearchRequest, request: Request):
         return await get_service(request).search_literature(project_id, payload)
+
+    @app.post("/api/v1/projects/{project_id}/stages/analysis/preflight", tags=["runners"])
+    async def preflight_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):
+        return get_service(request).preflight_analysis_run(project_id, payload)
+
+    @app.post("/api/v1/projects/{project_id}/stages/analysis/runs", tags=["runners"])
+    async def submit_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):
+        return await get_service(request).submit_analysis_run(project_id, payload)
+
+    @app.post("/api/v1/projects/{project_id}/stages/delivery/export", tags=["delivery"])
+    async def export_delivery(project_id: str, request: Request):
+        return get_service(request).export_delivery(project_id)
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/report", tags=["delivery"])
+    async def get_visual_report(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "report")
+        return FileResponse(
+            path,
+            media_type="text/html; charset=utf-8",
+            filename=path.name,
+            content_disposition_type="inline",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/package", tags=["delivery"])
+    async def download_research_package(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "package")
+        return FileResponse(path, media_type="application/zip", filename=f"{project_id}-{export_id}.zip")
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/manifest", tags=["delivery"])
+    async def get_delivery_manifest(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "manifest")
+        return FileResponse(path, media_type="application/json; charset=utf-8", filename=path.name)
 
     @app.post("/api/v1/projects/{project_id}/stages/{stage_key}/decisions", tags=["approvals"])
     async def decide_stage(project_id: str, stage_key: str, payload: StageDecisionRequest, request: Request):

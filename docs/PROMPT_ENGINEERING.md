@@ -4,7 +4,7 @@
 
 产品阶段提示词位于 `src/ai4ms/prompts/`，与 `src/project/prompts.py`、`src/research/prompts.py` 的旧 Agent Runtime 编排提示词分开管理：
 
-- `src/ai4ms/prompts/catalog.py`：S0-S4 阶段任务、提示词 ID 和版本；
+- `src/ai4ms/prompts/catalog.py`：S0-S9 阶段任务、提示词 ID 和版本；
 - `src/ai4ms/prompts/contracts.py`：模型输出必须通过的 Pydantic 契约；
 - `src/ai4ms/inference/`：模型调用、超时、重试、JSON 提取和错误分类；
 - `src/ai4ms/services/stage_generation.py`：向提示词注入最小项目上下文，并把合格结果交给 revision 服务。
@@ -19,8 +19,11 @@
 | S2 理论构建 | `ai4ms.stage.theory@1.0.0` | 理论视角、构念、机制、竞争解释和可证伪命题 | 论文引用只能使用 S1 的 `paper_id`；证据不足必须降级 |
 | S3 研究设计 | `ai4ms.stage.design@1.0.0` | 主备方法、假设、证伪、有效性威胁和停止条件 | 方法只能从运行时方法库候选列表中选择 |
 | S4 数据与变量 | `ai4ms.stage.data@1.0.0` | 数据源、变量、样本、连接键、质量、隐私和伦理检查 | 数据源只能从运行时数据源库候选列表中选择；权限默认未知 |
-
-S5-S9 目前仍使用结构模板。未实现阶段不得返回伪造的“模型研究结果”。
+| S5 识别与检验 | `ai4ms.stage.identification@1.0.0` | estimand、变量角色、主次规格、诊断、分析步骤、代码和复现要求 | 方法来自已选设计，公式来自 47 项公式库；Stata 代码经过确定性策略扫描 |
+| S6 结果分析 | `ai4ms.stage.analysis@1.0.0` | 运行准备、预检和结果审阅清单 | do-file、S5 revision/hash 由服务端强制绑定；模型不能生成运行结果 |
+| S7 稳健性检验 | `ai4ms.stage.robustness@1.0.0` | 稳健性矩阵、失败项、解释限制和后续运行 | 只能引用现有规格和 Run；无结构化结果时不能标记 passed/failed |
+| S8 机制与异质性 | `ai4ms.stage.evidence@1.0.0` | Claim-Evidence-Assumption、机制、异质性、反证和限制 | artifact、run、method 和稳健性 ID 必须来自输入；阻塞运行不能支持结论；不利稳健性必须降低置信度 |
+| S9 结论与政策含义 | `ai4ms.stage.delivery@1.0.0` | 结论、政策含义、写作大纲、引用选择、披露和复现说明 | 只能使用 G4 已批准且未撤回的主张及其 evidence_id；报告路径和发布状态由服务端生成 |
 
 ## 2. 提示词原则
 
@@ -43,7 +46,7 @@ S5-S9 目前仍使用结构模板。未实现阶段不得返回伪造的“模�
 }
 ```
 
-S0-S4 可以请求真实模型：
+S0-S9 可以请求真实模型：
 
 ```json
 {
@@ -52,7 +55,7 @@ S0-S4 可以请求真实模型：
 }
 ```
 
-S1 第一次生成得到检索计划；调用文献检索端点保存论文后，再次生成会自动切换为证据综述。模型未配置返回 HTTP 503 `inference_unavailable`；阶段尚未实现返回 HTTP 409 `model_generation_not_supported`；两次结构或引用校验失败返回 HTTP 502 `invalid_model_output`。
+S1 第一次生成得到检索计划；调用文献检索端点保存论文后，再次生成会自动切换为证据综述。S8 没有可用论文、数据或 Run 证据时不会伪造主张；S9 只有在 S8/G4 批准后解锁。模型未配置返回 HTTP 503 `inference_unavailable`；阶段尚未实现返回 HTTP 409 `model_generation_not_supported`；两次结构或引用校验失败返回 HTTP 502 `invalid_model_output`。
 
 服务层会再次校验论文、方法和数据源 ID。提示词中的约束不是唯一防线。
 

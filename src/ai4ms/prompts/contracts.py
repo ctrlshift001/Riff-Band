@@ -201,3 +201,224 @@ class DataDraft(StrictContract):
     quality_checks: list[str] = Field(min_length=1, max_length=20)
     blocking_issues: list[str] = Field(default_factory=list, max_length=15)
     unknowns: list[str] = Field(default_factory=list, max_length=20)
+
+
+ExecutionEngine = Literal["stata", "python", "r", "julia", "matlab", "manual", "other", "unknown"]
+
+
+class AnalysisVariableDraft(StrictContract):
+    name: str = Field(min_length=1, max_length=160)
+    role: Literal["outcome", "treatment", "exposure", "predictor", "control", "mediator", "moderator", "parameter", "index", "identifier", "time"]
+    source_variable: str = Field(min_length=1, max_length=160)
+    transformation: str = Field(default="none", max_length=500)
+    rationale: str = Field(min_length=3, max_length=600)
+
+
+class ModelSpecificationDraft(StrictContract):
+    specification_id: str = Field(pattern=r"^SPEC[0-9_-]+$")
+    label: str = Field(min_length=2, max_length=160)
+    role: Literal["primary", "secondary", "diagnostic", "exploratory"]
+    method_id: str | None = Field(default=None, pattern=r"^M[0-9]{2}$")
+    formula_id: str | None = Field(default=None, pattern=r"^[A-Z]+-[0-9]{2}$")
+    equation_or_objective: str = Field(min_length=3, max_length=1200)
+    outcome_or_target: list[str] = Field(min_length=1, max_length=10)
+    predictors_or_decisions: list[str] = Field(default_factory=list, max_length=30)
+    fixed_effects: list[str] = Field(default_factory=list, max_length=15)
+    uncertainty_or_standard_errors: str = Field(min_length=2, max_length=500)
+    weights: str = Field(default="none", max_length=300)
+    sample_restrictions: list[str] = Field(default_factory=list, max_length=15)
+
+
+class DiagnosticPlanDraft(StrictContract):
+    diagnostic_id: str = Field(pattern=r"^DIAG[0-9_-]+$")
+    target: str = Field(min_length=2, max_length=200)
+    procedure: str = Field(min_length=3, max_length=800)
+    pass_condition: str = Field(min_length=3, max_length=600)
+    failure_action: str = Field(min_length=3, max_length=600)
+
+
+class AnalysisStepDraft(StrictContract):
+    step_id: str = Field(pattern=r"^STEP[0-9_-]+$")
+    purpose: str = Field(min_length=3, max_length=500)
+    inputs: list[str] = Field(default_factory=list, max_length=20)
+    operation: str = Field(min_length=3, max_length=1000)
+    outputs: list[str] = Field(min_length=1, max_length=20)
+    linked_specification_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
+class AnalysisPlanDraft(StrictContract):
+    design_lane: Literal["empirical_causal", "analytical_optimization", "predictive_computational", "behavioral_qualitative", "synthesis_design_science"]
+    estimand_or_objective: str = Field(min_length=5, max_length=1000)
+    analysis_sample: str = Field(min_length=5, max_length=800)
+    unit_of_analysis: str = Field(min_length=1, max_length=300)
+    variable_roles: list[AnalysisVariableDraft] = Field(min_length=2, max_length=35)
+    model_specifications: list[ModelSpecificationDraft] = Field(min_length=1, max_length=12)
+    diagnostics: list[DiagnosticPlanDraft] = Field(min_length=1, max_length=20)
+    analysis_steps: list[AnalysisStepDraft] = Field(min_length=2, max_length=30)
+    missing_data_plan: str = Field(min_length=3, max_length=800)
+    multiplicity_plan: str = Field(min_length=3, max_length=800)
+    robustness_plan: list[str] = Field(min_length=1, max_length=20)
+    stopping_conditions: list[str] = Field(min_length=1, max_length=12)
+    execution_engine: ExecutionEngine
+    code_language: str = Field(min_length=1, max_length=80)
+    stata_do_file: str = Field(default="", max_length=16000)
+    seed: int | None = Field(default=None, ge=0)
+    expected_outputs: list[str] = Field(min_length=1, max_length=20)
+    reproducibility_requirements: list[str] = Field(min_length=1, max_length=20)
+    unknowns: list[str] = Field(default_factory=list, max_length=25)
+
+
+class RunPreparationDraft(StrictContract):
+    execution_engine: ExecutionEngine
+    readiness_summary: str = Field(min_length=5, max_length=800)
+    expected_outputs: list[str] = Field(min_length=1, max_length=20)
+    preflight_checks: list[str] = Field(min_length=1, max_length=20)
+    result_review_checks: list[str] = Field(min_length=1, max_length=20)
+    blocking_issues: list[str] = Field(default_factory=list, max_length=20)
+    unknowns: list[str] = Field(default_factory=list, max_length=20)
+
+
+class RobustnessCheckDraft(StrictContract):
+    check_id: str = Field(pattern=r"^ROB[0-9_-]+$")
+    category: Literal["alternative_measure", "alternative_model", "alternative_sample", "placebo", "sensitivity", "falsification", "benchmark", "reproduction"]
+    rationale: str = Field(min_length=3, max_length=600)
+    specification: str = Field(min_length=3, max_length=1000)
+    linked_specification_ids: list[str] = Field(default_factory=list, max_length=12)
+    required_run_ids: list[str] = Field(default_factory=list, max_length=12)
+    status: Literal["planned", "not_run", "blocked", "passed", "failed", "inconclusive"]
+    result_summary: str = Field(default="", max_length=1000)
+    implication: str = Field(min_length=3, max_length=800)
+
+
+class RobustnessDraft(StrictContract):
+    robustness_matrix: list[RobustnessCheckDraft] = Field(min_length=2, max_length=30)
+    failed_checks: list[str] = Field(default_factory=list, max_length=20)
+    interpretation_limits: list[str] = Field(min_length=1, max_length=20)
+    next_runs: list[str] = Field(default_factory=list, max_length=20)
+    reproducibility_report: str = Field(min_length=5, max_length=1200)
+    unknowns: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ClaimScopeDraft(StrictContract):
+    population_or_system: str = Field(min_length=1, max_length=500)
+    time: str = Field(min_length=1, max_length=300)
+    geography: str = Field(min_length=1, max_length=300)
+    boundary_conditions: list[str] = Field(default_factory=list, max_length=15)
+
+
+class ClaimEvidenceItemDraft(StrictContract):
+    evidence_id: str = Field(pattern=r"^EV[0-9_-]+$")
+    evidence_type: Literal[
+        "paper",
+        "data",
+        "estimate",
+        "proof",
+        "simulation",
+        "experiment",
+        "qualitative_excerpt",
+        "reviewer_note",
+    ]
+    artifact_id: str = Field(min_length=1, max_length=500)
+    locator: str = Field(min_length=1, max_length=500)
+    direction: Literal["supports", "contradicts", "qualifies"]
+    strength: Literal["weak", "moderate", "strong"]
+    method_id: str | None = Field(default=None, max_length=80)
+    run_id: str | None = Field(default=None, max_length=120)
+    source_url: str | None = Field(default=None, max_length=1000)
+
+
+class ClaimAssumptionLinkDraft(StrictContract):
+    assumption_id: str = Field(min_length=1, max_length=120)
+    impact_if_violated: str = Field(min_length=3, max_length=800)
+
+
+class ClaimRecordDraft(StrictContract):
+    claim_id: str = Field(pattern=r"^C[0-9_-]+$")
+    claim_text: str = Field(min_length=10, max_length=1200)
+    claim_type: Literal[
+        "descriptive",
+        "associational",
+        "causal",
+        "predictive",
+        "optimality",
+        "mechanism",
+        "design_principle",
+        "literature_synthesis",
+    ]
+    status: Literal["candidate", "supported", "mixed", "refuted", "withdrawn"]
+    confidence: Literal["low", "medium", "high"]
+    scope: ClaimScopeDraft
+    evidence: list[ClaimEvidenceItemDraft] = Field(min_length=1, max_length=30)
+    assumptions: list[ClaimAssumptionLinkDraft] = Field(default_factory=list, max_length=20)
+    counterevidence: list[str] = Field(default_factory=list, max_length=20)
+    uncertainty_note: str = Field(min_length=3, max_length=1000)
+    robustness_check_ids: list[str] = Field(default_factory=list, max_length=30)
+    mechanism_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
+class MechanismAssessmentDraft(StrictContract):
+    mechanism_id: str = Field(pattern=r"^MECH[0-9_-]+$")
+    statement: str = Field(min_length=5, max_length=1000)
+    claim_ids: list[str] = Field(min_length=1, max_length=15)
+    evidence_ids: list[str] = Field(min_length=1, max_length=30)
+    status: Literal["candidate", "supported", "mixed", "refuted"]
+    competing_explanation: str = Field(min_length=3, max_length=800)
+
+
+class HeterogeneityAssessmentDraft(StrictContract):
+    heterogeneity_id: str = Field(pattern=r"^HET[0-9_-]+$")
+    dimension: str = Field(min_length=1, max_length=200)
+    finding: str = Field(min_length=5, max_length=1000)
+    claim_ids: list[str] = Field(min_length=1, max_length=15)
+    evidence_ids: list[str] = Field(min_length=1, max_length=30)
+    status: Literal["candidate", "supported", "mixed", "refuted", "not_tested"]
+    interpretation_limit: str = Field(min_length=3, max_length=800)
+
+
+class ClaimEvidenceDraft(StrictContract):
+    claims: list[ClaimRecordDraft] = Field(min_length=1, max_length=30)
+    mechanisms: list[MechanismAssessmentDraft] = Field(default_factory=list, max_length=12)
+    heterogeneity: list[HeterogeneityAssessmentDraft] = Field(default_factory=list, max_length=15)
+    limitations: list[str] = Field(min_length=1, max_length=25)
+    interpretation: str = Field(min_length=5, max_length=2000)
+    unknowns: list[str] = Field(default_factory=list, max_length=25)
+
+
+class DeliveryConclusionDraft(StrictContract):
+    conclusion_id: str = Field(pattern=r"^CON[0-9_-]+$")
+    statement: str = Field(min_length=10, max_length=1200)
+    claim_ids: list[str] = Field(min_length=1, max_length=12)
+    evidence_ids: list[str] = Field(min_length=1, max_length=30)
+    status: Literal["supported", "mixed", "limited"]
+    scope_note: str = Field(min_length=3, max_length=800)
+
+
+class PolicyImplicationDraft(StrictContract):
+    implication_id: str = Field(pattern=r"^POL[0-9_-]+$")
+    statement: str = Field(min_length=10, max_length=1200)
+    audience: str = Field(min_length=1, max_length=300)
+    claim_ids: list[str] = Field(min_length=1, max_length=12)
+    conditions: list[str] = Field(min_length=1, max_length=12)
+    risk_note: str = Field(min_length=3, max_length=800)
+
+
+class DeliveryOutlineSectionDraft(StrictContract):
+    section_id: str = Field(pattern=r"^SEC[0-9_-]+$")
+    title: str = Field(min_length=1, max_length=200)
+    purpose: str = Field(min_length=3, max_length=600)
+    claim_ids: list[str] = Field(default_factory=list, max_length=20)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=30)
+
+
+class DeliveryDraft(StrictContract):
+    title: str = Field(min_length=3, max_length=240)
+    executive_summary: str = Field(min_length=20, max_length=3000)
+    conclusions: list[DeliveryConclusionDraft] = Field(min_length=1, max_length=20)
+    policy_implications: list[PolicyImplicationDraft] = Field(default_factory=list, max_length=15)
+    outline: list[DeliveryOutlineSectionDraft] = Field(min_length=3, max_length=20)
+    reference_paper_ids: list[str] = Field(default_factory=list, max_length=80)
+    limitations: list[str] = Field(min_length=1, max_length=25)
+    reproducibility_notes: list[str] = Field(min_length=1, max_length=20)
+    disclosure: str = Field(min_length=5, max_length=1600)
+    release_notes: str = Field(min_length=3, max_length=1200)
+    unknowns: list[str] = Field(default_factory=list, max_length=25)

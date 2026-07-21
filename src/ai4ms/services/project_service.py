@@ -5,11 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from ai4ms.db.store import ProjectStore
+from ai4ms.delivery import DeliveryExportError, DeliveryExportService
 from ai4ms.literature.service import LiteratureSearchService
+from ai4ms.runners import AnalysisRunnerService
 from ai4ms.services.models import (
     STAGE_DEFINITIONS,
     STAGES_BY_KEY,
     ApprovalDecision,
+    AnalysisRunRequest,
     CreateProjectRequest,
     DraftRequest,
     LiteratureSearchRequest,
@@ -17,7 +20,10 @@ from ai4ms.services.models import (
     StageStatus,
     StageUpdateRequest,
 )
-from ai4ms.services.stage_generation import StageGenerationService
+from ai4ms.services.stage_generation import (
+    StageContentValidationError,
+    StageGenerationService,
+)
 
 
 class ProjectNotFoundError(LookupError):
@@ -38,11 +44,11 @@ STAGE_TEMPLATES: dict[str, dict[str, Any]] = {
     "theory": {"theoretical_lenses": [], "constructs": [], "mechanisms": [], "research_questions": [], "competing_explanations": [], "falsifiable_propositions": [], "contribution_boundary": "", "unknowns": []},
     "design": {"research_question": "", "unit_of_analysis": "", "design_lane": "", "estimand_or_objective": "", "method_options": [], "primary_method_id": "", "assumptions": [], "falsification": [], "threats_to_validity": [], "stopping_conditions": [], "unknowns": []},
     "data": {"data_sources": [], "variables": [], "sample_definition": "", "time_coverage": "", "join_keys": [], "pii_class": "unknown", "privacy_risks": [], "ethics_checks": [], "quality_checks": [], "blocking_issues": [], "unknowns": []},
-    "identification": {"estimand": "", "analysis_steps": [], "variable_table": [], "model_specifications": [], "diagnostics": [], "code_plan": [], "assumptions": []},
-    "analysis": {"runner_status": "not_checked", "approved_code_revision": "", "do_file": "", "runs": [], "results": [], "reproducibility": {}, "blocking_issues": []},
-    "robustness": {"robustness_matrix": [], "alternative_measures": [], "alternative_samples": [], "placebo_tests": [], "failed_checks": [], "reproducibility_report": ""},
-    "evidence": {"claims": [], "mechanisms": [], "heterogeneity": [], "evidence_links": [], "counter_evidence": [], "limitations": [], "interpretation": ""},
-    "delivery": {"conclusions": [], "policy_implications": [], "outline": [], "approved_claims": [], "references": [], "visual_report_path": "", "research_package_path": "", "release_notes": ""},
+    "identification": {"design_lane": "", "estimand_or_objective": "", "analysis_sample": "", "unit_of_analysis": "", "variable_roles": [], "model_specifications": [], "diagnostics": [], "analysis_steps": [], "missing_data_plan": "", "multiplicity_plan": "", "robustness_plan": [], "stopping_conditions": [], "execution_engine": "unknown", "code_language": "", "stata_do_file": "", "seed": None, "expected_outputs": [], "reproducibility_requirements": [], "unknowns": []},
+    "analysis": {"execution_engine": "unknown", "readiness_summary": "", "expected_outputs": [], "preflight_checks": [], "result_review_checks": [], "runner_status": "not_checked", "approved_analysis_plan_revision": 0, "approved_analysis_plan_hash": "", "do_file": "", "runs": [], "results": [], "blocking_issues": [], "unknowns": []},
+    "robustness": {"robustness_matrix": [], "failed_checks": [], "interpretation_limits": [], "next_runs": [], "reproducibility_report": "", "unknowns": []},
+    "evidence": {"claims": [], "mechanisms": [], "heterogeneity": [], "limitations": [], "interpretation": "", "unknowns": []},
+    "delivery": {"title": "", "executive_summary": "", "conclusions": [], "policy_implications": [], "outline": [], "reference_paper_ids": [], "approved_claims": [], "references": [], "limitations": [], "reproducibility_notes": [], "disclosure": "", "release_notes": "", "unknowns": [], "exports": [], "visual_report_path": "", "research_package_path": ""},
 }
 
 
@@ -53,12 +59,16 @@ class ProjectService:
         data_dir: str | Path,
         stage_generation: StageGenerationService | None = None,
         literature_search: LiteratureSearchService | None = None,
+        analysis_runner: AnalysisRunnerService | None = None,
+        delivery_export: DeliveryExportService | None = None,
     ):
         self.store = store
         self.data_dir = Path(data_dir)
         self.projects_dir = self.data_dir / "projects"
         self.stage_generation = stage_generation or StageGenerationService()
         self.literature_search = literature_search or LiteratureSearchService(self.projects_dir)
+        self.analysis_runner = analysis_runner or AnalysisRunnerService()
+        self.delivery_export = delivery_export or DeliveryExportService(self.projects_dir)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
 
@@ -105,6 +115,18 @@ class ProjectService:
             if request.instruction:
                 content["draft_instruction"] = request.instruction
             change_reason = "Created structured stage draft"
+        if stage_key == "analysis":
+            plan_stage = next(item for item in project["stages"] if item["key"] == "identification")
+            plan = plan_stage.get("content") or {}
+            content.update(
+                {
+                    "execution_engine": plan.get("execution_engine", "unknown"),
+                    "approved_analysis_plan_revision": plan_stage.get("revision", 0),
+                    "approved_analysis_plan_hash": plan_stage.get("content_hash", ""),
+                    "do_file": plan.get("stata_do_file", ""),
+                    "runner_status": "available" if self.analysis_runner.status()["available"] else "unavailable",
+                }
+            )
         update = StageUpdateRequest(
             content=content,
             change_reason=change_reason,
@@ -129,6 +151,72 @@ class ProjectService:
         )
         return self.update_stage(project_id, "literature", update)
 
+    def preflight_analysis_run(self, project_id: str, request: AnalysisRunRequest) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        self._ensure_unlocked(project, "analysis")
+        return self.analysis_runner.preflight(
+            project,
+            self.projects_dir / project_id,
+            request,
+        )
+
+    async def submit_analysis_run(self, project_id: str, request: AnalysisRunRequest) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        self._ensure_unlocked(project, "analysis")
+        stage = next(item for item in project["stages"] if item["key"] == "analysis")
+        content = deepcopy(STAGE_TEMPLATES["analysis"])
+        content.update(stage.get("content") or {})
+        run = await self.analysis_runner.submit(
+            project,
+            self.projects_dir / project_id,
+            request,
+        )
+        content.setdefault("runs", []).append(run)
+        content["runner_status"] = (
+            "available" if run.get("runner_profile", {}).get("available") else "unavailable"
+        )
+        content["last_preflight"] = run.get("preflight", {})
+        if run.get("status") in {"succeeded", "failed"}:
+            content.setdefault("results", []).append(
+                {
+                    "run_id": run["run_id"],
+                    "status": run["status"],
+                    "exit_code": run.get("exit_code"),
+                    "output_artifacts": run.get("output_artifacts", []),
+                }
+            )
+        update = StageUpdateRequest(
+            content=content,
+            change_reason=f"Recorded analysis run {run['run_id']} ({run['status']}:{run['reason_code']})",
+            author_type="agent",
+        )
+        return self.update_stage(project_id, "analysis", update)
+
+    def export_delivery(self, project_id: str) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        self._ensure_unlocked(project, "delivery")
+        stage = next(item for item in project["stages"] if item["key"] == "delivery")
+        export_record = self.delivery_export.export(project)
+        content = deepcopy(STAGE_TEMPLATES["delivery"])
+        content.update(stage.get("content") or {})
+        content.setdefault("exports", []).append(export_record)
+        content["visual_report_path"] = export_record["visual_report_path"]
+        content["research_package_path"] = export_record["research_package_path"]
+        content["manifest_path"] = export_record["manifest_path"]
+        return self.update_stage(
+            project_id,
+            "delivery",
+            StageUpdateRequest(
+                content=content,
+                change_reason=f"Generated delivery export {export_record['export_id']}",
+                author_type="agent",
+            ),
+        )
+
+    def delivery_artifact(self, project_id: str, export_id: str, kind: str) -> Path:
+        project = self.get_project(project_id)
+        return self.delivery_export.artifact_path(project, export_id, kind)
+
     def update_stage(self, project_id: str, stage_key: str, request: StageUpdateRequest) -> dict[str, Any]:
         project = self.get_project(project_id)
         self._ensure_unlocked(project, stage_key)
@@ -148,6 +236,19 @@ class ProjectService:
         self._require_stage(stage_key)
         project = self.get_project(project_id)
         self._ensure_unlocked(project, stage_key)
+        if request.decision is ApprovalDecision.APPROVE and stage_key in {"evidence", "delivery"}:
+            stage = next(item for item in project["stages"] if item["key"] == stage_key)
+            StageGenerationService.validate_stage_content(project, stage_key, stage.get("content", {}))
+            if stage_key == "delivery":
+                exports = stage.get("content", {}).get("exports", [])
+                if not exports:
+                    raise StageContentValidationError("G5 批准前必须生成 HTML 报告与研究包")
+                latest = exports[-1]
+                fingerprint = self.delivery_export.delivery_fingerprint(stage.get("content", {}))
+                if latest.get("source_content_fingerprint") != fingerprint:
+                    raise StageContentValidationError("S9 内容在最近一次导出后已变化，请重新生成交付包")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "report")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "package")
         try:
             result = self.store.decide_stage(
                 project_id=project_id,

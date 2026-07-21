@@ -389,6 +389,12 @@ h1, .journey-header h1, .view-header h1 { font-family: var(--font-serif); letter
 .asset-control-row label, .decision-row label, .modal-field { min-width: 0; display: grid; gap: 6px; color: var(--muted); font-size: 10px; }
 .asset-control-row input, .decision-row input, .modal-field input, .modal-field textarea { width: 100%; min-height: 39px; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: #fff; color: var(--ink); }
 .asset-control-row button { min-height: 39px; }
+.delivery-control-row { grid-template-columns: minmax(240px,1fr) auto auto; }
+.delivery-control-row > div:first-child { display: grid; gap: 4px; }
+.delivery-control-row > div:first-child > span { font-size: 13px; font-weight: 700; color: var(--ink); }
+.delivery-control-row > div:first-child > small { color: var(--muted); line-height: 1.45; }
+.delivery-links { display: flex; gap: 8px; align-items: center; }
+.delivery-links a { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; text-decoration: none; }
 .decision-row { grid-template-columns: minmax(0,1fr) auto auto; padding-bottom: 18px; }
 .decision-row > button { min-height: 36px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 5px; background: #fff; color: #536775; cursor: pointer; }
 .decision-row .danger-button { border-color: #e1b3b3; color: var(--danger); }

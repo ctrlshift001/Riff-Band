@@ -13,7 +13,9 @@
 | `inference/` | 模型配置、调用、重试和结构化输出校验 |
 | `literature/` | 多源检索、规范化、去重和检索快照 |
 | `knowledge/` | 方法库、数据源库及候选项检索 |
-| `prompts/` | S0-S4 版本化提示词和 Pydantic 输出契约 |
+| `prompts/` | S0-S9 版本化提示词和 Pydantic 输出契约 |
+| `runners/` | Stata BYOL 发现、安全预检、批处理执行和产物 manifest |
+| `delivery/` | S9 HTML 可视化报告、manifest、研究 ZIP 包和数据排除策略 |
 
 ## 边界规则
 

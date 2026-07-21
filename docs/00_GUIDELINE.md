@@ -2,7 +2,7 @@
 
 ## 1. 当前状态
 
-`ai4ms` 分支处于 AI4MS 工作台改造期。当前代码可以运行 Next.js S0-S9 十阶段浏览器工作台、FastAPI、SQLite revision/审批状态机，以及 RiffBand CLI/MCP、既有研究流水线和 HTML 报告。分阶段 Agent、Runner、证据与导出服务尚未完成，不能当作已经上线。
+`ai4ms` 分支处于 AI4MS 工作台改造期。当前代码可以运行 Next.js S0-S9 十阶段浏览器工作台、FastAPI、SQLite revision/审批状态机、S0-S9 阶段模型能力、Stata BYOL Runner、Claim-Evidence 审核和 HTML/ZIP 交付，以及 RiffBand CLI/MCP 与既有研究流水线。
 
 工程基线见 [ai4ms/BASELINE.md](ai4ms/BASELINE.md)。
 
@@ -14,7 +14,7 @@
 - 可用的 OpenAI-compatible 或 Gemini 模型接口
 - 可选的联网检索 key
 - SQLite 使用 Python 标准库，作为六天产品的本地事实存储
-- FastAPI/Uvicorn 已写入 `pyproject.toml`，用于 Web 工作台与远程 API
+- FastAPI/Uvicorn 已写入 `pyproject.toml`，作为 Web 工作台的内部后端服务
 - Stata 采用用户自有许可的可选 Runner；未发现可执行文件时必须显示 blocked
 - PostgreSQL、Redis 和 MinIO 不属于六天单用户产品的依赖
 
@@ -179,16 +179,15 @@ AI4MS 新增测试至少覆盖：
 - `.dockerignore`：排除 `.env`、`.git`、缓存、`workspace` 和本地受限文件；
 - `docker-compose.yml`：声明端口、健康检查、环境变量和持久化卷；
 - `docs/DEPLOYMENT.md`：镜像构建、启动、升级、数据目录和故障排查；
-- `docs/API_USAGE.md`：curl/Python 调用、异步任务轮询和导出示例；
-- 容器 smoke test：检查 `/healthz`、`/`、`/docs` 和最小项目 API。
+- 容器 smoke test：检查 `/healthz`、`/` 和 GUI 最小项目流程。
 
 目标调用方式：
 
 ```powershell
 docker build -t ai4ms-workbench:competition .
-docker run --rm -p 8000:8000 --env-file .env -v ai4ms-data:/app/data ai4ms-workbench:competition
+docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -v ai4ms-data:/app/data ai4ms-workbench:competition
 ```
 
-浏览器访问 `http://localhost:8000` 使用 GUI；远程系统通过 `http://localhost:8000/api/v1` 调用。容器必须绑定 `0.0.0.0`，不能只监听 `127.0.0.1`。
+浏览器访问 `http://localhost:8000` 使用 GUI。`/api/v1` 只服务同一产品的前端和开发调试。容器进程内部监听 `0.0.0.0` 以适配 Docker 网络，宿主机端口只绑定 `127.0.0.1`，项目不提供公网网站。
 
 API Key、Stata 许可证和受限数据不得写入 Docker layer、Compose 文件、示例或镜像内置数据库。Stata Runner 地址与认证只能在运行时配置。

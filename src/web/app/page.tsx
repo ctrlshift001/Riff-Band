@@ -6,11 +6,15 @@ import {
   ApiError,
   createProject,
   createStageDraft,
+  deliveryArtifactUrl,
   decideStage,
+  exportDelivery,
   getProject,
   listProjects,
+  preflightAnalysisRun,
   saveStage,
   searchLiterature,
+  submitAnalysisRun,
   type ApprovalDecision,
   type Project,
   type ProjectStage,
@@ -320,6 +324,9 @@ function StageAssetEditor({
   onSave,
   onDraft,
   onSearchLiterature,
+  onPreflightAnalysis,
+  onSubmitAnalysis,
+  onExportDelivery,
   onDecision,
 }: {
   stage?: ProjectStage;
@@ -327,15 +334,21 @@ function StageAssetEditor({
   onSave: (content: Record<string, unknown>, reason: string) => Promise<void>;
   onDraft: (instruction: string) => Promise<void>;
   onSearchLiterature: () => Promise<void>;
+  onPreflightAnalysis: (inputArtifactPath: string) => Promise<void>;
+  onSubmitAnalysis: (inputArtifactPath: string) => Promise<void>;
+  onExportDelivery: () => Promise<void>;
   onDecision: (decision: ApprovalDecision, reason: string) => Promise<void>;
 }) {
   const [contentText, setContentText] = useState(() => JSON.stringify(stage?.content ?? {}, null, 2));
   const [changeReason, setChangeReason] = useState("人工更新阶段资产");
   const [instruction, setInstruction] = useState("");
   const [decisionReason, setDecisionReason] = useState("");
+  const [inputArtifactPath, setInputArtifactPath] = useState("");
   const [editorError, setEditorError] = useState("");
 
   const locked = !stage || stage.status === "not_started";
+  const deliveryExports = Array.isArray(stage?.content.exports) ? stage.content.exports : [];
+  const latestExport = deliveryExports.at(-1) as { export_id?: string } | undefined;
 
   async function submitSave() {
     try {
@@ -380,9 +393,28 @@ function StageAssetEditor({
         <>
           <div className="asset-control-row">
             <label><span>草稿生成要求</span><input value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：补齐研究对象、边界和反向检索字段" /></label>
-            <button className="outline-compact" onClick={() => onDraft(instruction)} disabled={busy}>生成结构草稿</button>
+            <button className="outline-compact" onClick={() => onDraft(instruction)} disabled={busy}>生成 AI 草稿</button>
             {stage.key === "literature" && <button className="outline-compact" onClick={onSearchLiterature} disabled={busy}>执行多源检索</button>}
           </div>
+          {stage.key === "analysis" && (
+            <div className="asset-control-row">
+              <label><span>项目内 .dta 相对路径</span><input value={inputArtifactPath} onChange={(event) => setInputArtifactPath(event.target.value)} placeholder="例如：artifacts/input/panel.dta" /></label>
+              <button className="outline-compact" onClick={() => onPreflightAnalysis(inputArtifactPath)} disabled={busy}>Runner 预检</button>
+              <button className="primary-action" onClick={() => onSubmitAnalysis(inputArtifactPath)} disabled={busy}>提交运行</button>
+            </div>
+          )}
+          {stage.key === "delivery" && (
+            <div className="asset-control-row delivery-control-row">
+              <div><span>可复现交付</span><small>生成绑定当前 S8/S9 revision 的 HTML 报告、manifest 与 ZIP 研究包</small></div>
+              <button className="primary-action" onClick={onExportDelivery} disabled={busy || !stage.revision}>生成交付包</button>
+              {latestExport?.export_id && (
+                <div className="delivery-links">
+                  <a className="outline-compact" href={deliveryArtifactUrl(stage.project_id, latestExport.export_id, "report")} target="_blank" rel="noreferrer">查看 HTML</a>
+                  <a className="outline-compact" href={deliveryArtifactUrl(stage.project_id, latestExport.export_id, "package")}>下载 ZIP</a>
+                </div>
+              )}
+            </div>
+          )}
           <div className="asset-control-row">
             <label><span>版本变更说明</span><input value={changeReason} onChange={(event) => setChangeReason(event.target.value)} /></label>
             <button className="primary-action" onClick={submitSave} disabled={busy}>保存新 revision</button>
@@ -727,7 +759,7 @@ export default function Home() {
     setBusy(true);
     setApiError("");
     try {
-      const generationMode = activeStage <= 4 ? "model" : "template";
+      const generationMode = "model";
       const updated = await createStageDraft(project.project_id, activeStageData.key, instruction, generationMode);
       applyProject(updated);
       showToast(`${activeStageData.id} ${generationMode === "model" ? "模型草稿" : "结构模板"}已写入 FastAPI`);
@@ -748,6 +780,59 @@ export default function Home() {
       const literature = updated.stages.find((stage) => stage.key === "literature");
       const paperCount = Array.isArray(literature?.content.papers) ? literature.content.papers.length : 0;
       showToast(`S1 多源检索完成，已保存 ${paperCount} 篇去重论文`);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePreflightAnalysis(inputArtifactPath: string) {
+    if (!project) return;
+    setBusy(true);
+    setApiError("");
+    try {
+      const result = await preflightAnalysisRun(project.project_id, inputArtifactPath);
+      const message = result.status === "ready"
+        ? `Runner 预检通过，绑定 S5 revision ${result.analysis_plan_revision}`
+        : `Runner 预检阻塞：${result.reason_code}`;
+      showToast(message);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSubmitAnalysis(inputArtifactPath: string) {
+    if (!project) return;
+    setBusy(true);
+    setApiError("");
+    try {
+      const updated = await submitAnalysisRun(project.project_id, inputArtifactPath);
+      applyProject(updated);
+      const analysis = updated.stages.find((stage) => stage.key === "analysis");
+      const runs = Array.isArray(analysis?.content.runs) ? analysis.content.runs : [];
+      const latest = runs.at(-1) as { status?: string; reason_code?: string } | undefined;
+      showToast(`S6 Run ${latest?.status ?? "unknown"}：${latest?.reason_code ?? "无状态"}`);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleExportDelivery() {
+    if (!project) return;
+    setBusy(true);
+    setApiError("");
+    try {
+      const updated = await exportDelivery(project.project_id);
+      applyProject(updated);
+      const delivery = updated.stages.find((stage) => stage.key === "delivery");
+      const exports = Array.isArray(delivery?.content.exports) ? delivery.content.exports : [];
+      const latest = exports.at(-1) as { export_id?: string; file_count?: number } | undefined;
+      showToast(`S9 交付包已生成：${latest?.export_id ?? "未知导出"} · ${latest?.file_count ?? 0} 个文件`);
     } catch (error) {
       handleError(error);
     } finally {
@@ -830,7 +915,7 @@ export default function Home() {
               <div className="journey-grid">
                 <section className="stage-content stage-content-stack">
                   {activeStage === 3 ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} /> : <GenericStage stageIndex={activeStage} />}
-                  <StageAssetEditor key={`${activeStageState?.key ?? "empty"}-${activeStageState?.revision ?? 0}`} stage={activeStageState} busy={busy} onSave={handleSaveStage} onDraft={handleCreateDraft} onSearchLiterature={handleSearchLiterature} onDecision={handleStageDecision} />
+                  <StageAssetEditor key={`${activeStageState?.key ?? "empty"}-${activeStageState?.revision ?? 0}`} stage={activeStageState} busy={busy} onSave={handleSaveStage} onDraft={handleCreateDraft} onSearchLiterature={handleSearchLiterature} onPreflightAnalysis={handlePreflightAnalysis} onSubmitAnalysis={handleSubmitAnalysis} onExportDelivery={handleExportDelivery} onDecision={handleStageDecision} />
                 </section>
                 <AgentPanel stageIndex={activeStage} suggestionStates={suggestionStates} onDecision={decideSuggestion} onSubmit={() => openApproval()} canSubmit={Boolean(activeStageState && activeStageState.status !== "not_started" && activeStageState.status !== "approved" && activeStageState.revision > 0)} busy={busy} />
               </div>

@@ -161,7 +161,7 @@ Stata 能力采用用户或机构自带许可的 local/institution Runner：
 AI4MS 最终以带浏览器 GUI 的 Docker 化 Web 产品交付，而不是只能在终端运行的脚本：
 
 - 启动容器后，用户访问根地址进入十阶段 MS 科研工作台；
-- 同一服务提供 `/api/v1` 远程调用和 `/docs` OpenAPI 调试；
+- 同一容器内的 FastAPI 为 GUI 提供 `/api/v1`，`/docs` 仅用于开发调试；
 - Web、CLI、MCP 和 API 复用同一 service 层与项目状态；
 - SQLite 和项目资产通过 volume 持久化，容器重启不丢项目；
 - 模型与检索凭据只在运行时注入；
@@ -199,7 +199,7 @@ AI4MS 最终以带浏览器 GUI 的 Docker 化 Web 产品交付，而不是只�
 - Topic Scout、Evidence 层和方法/数据/公式 Registry；
 - FastAPI、本地 SQLite、文件资产和 Web 工作区；
 - Stata BYOL Runner、稳健性、Claim-Evidence 和研究包导出。
-- Docker 镜像、Web GUI、远程 API、健康检查、volume 和部署/调用说明。
+- Docker 镜像、Web GUI、内部应用 API、健康检查、volume 和部署说明。
 
 组织级 PostgreSQL、对象存储、任务队列、OIDC/RBAC、多用户协作和生产级 Runner 隔离属于部署增强，不应阻塞十阶段单用户产品闭环。
 

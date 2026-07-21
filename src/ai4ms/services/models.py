@@ -98,3 +98,23 @@ class LiteratureSearchRequest(BaseModel):
     @classmethod
     def clean_queries(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+
+class AnalysisRunRequest(BaseModel):
+    input_artifact_path: str = Field(default="", max_length=500)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    seed: int | None = Field(default=None, ge=0)
+    timeout_seconds: int = Field(default=3600, ge=1, le=7200)
+    requested_by: str = Field(default="human", pattern="^human$")
+
+    @field_validator("input_artifact_path")
+    @classmethod
+    def clean_input_path(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("parameters")
+    @classmethod
+    def limit_parameters(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(value) > 50:
+            raise ValueError("parameters may contain at most 50 entries")
+        return value

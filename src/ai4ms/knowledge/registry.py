@@ -20,7 +20,7 @@ def _search_terms(text: str) -> set[str]:
 
 class KnowledgeRegistry:
     @staticmethod
-    @lru_cache(maxsize=2)
+    @lru_cache(maxsize=3)
     def _load(filename: str) -> tuple[dict[str, Any], ...]:
         path = DATA_ROOT / filename
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -35,6 +35,10 @@ class KnowledgeRegistry:
     @classmethod
     def data_sources(cls) -> list[dict[str, Any]]:
         return [dict(item) for item in cls._load("data_sources_library.json")]
+
+    @classmethod
+    def formulas(cls) -> list[dict[str, Any]]:
+        return [dict(item) for item in cls._load("formula_library.json")]
 
     @classmethod
     def method_candidates(cls, goal: str = "", query: str = "", limit: int = 10) -> list[dict[str, Any]]:
@@ -71,6 +75,34 @@ class KnowledgeRegistry:
         scored.sort(reverse=True, key=lambda row: (row[0], row[1]))
         return [cls._compact_source(item) for _score, _index, item in scored[: max(1, min(limit, 40))]]
 
+    @classmethod
+    def formula_candidates(
+        cls,
+        query: str = "",
+        method_ids: list[str] | None = None,
+        limit: int = 12,
+    ) -> list[dict[str, Any]]:
+        terms = _search_terms(query)
+        linked_formula_ids: set[str] = set()
+        selected_methods = set(method_ids or [])
+        for method in cls.methods():
+            if method.get("method_id") not in selected_methods:
+                continue
+            linked_formula_ids.update(
+                part.strip()
+                for part in re.split(r"[,;\s]+", str(method.get("formula_ids") or ""))
+                if part.strip()
+            )
+        scored = []
+        for index, item in enumerate(cls.formulas()):
+            haystack = " ".join(str(value) for value in item.values()).lower()
+            score = sum(1 for term in terms if term in haystack)
+            if item.get("formula_id") in linked_formula_ids:
+                score += 8
+            scored.append((score, -index, item))
+        scored.sort(reverse=True, key=lambda row: (row[0], row[1]))
+        return [cls._compact_formula(item) for _score, _index, item in scored[: max(1, min(limit, 47))]]
+
     @staticmethod
     def _compact_method(item: dict[str, Any]) -> dict[str, Any]:
         keys = ("method_id", "family", "name", "lane", "goal", "data", "assumptions", "diagnostics", "failure")
@@ -79,4 +111,9 @@ class KnowledgeRegistry:
     @staticmethod
     def _compact_source(item: dict[str, Any]) -> dict[str, Any]:
         keys = ("source_id", "domain", "name", "geography", "access", "cost", "typical_data", "common_use", "compliance", "url")
+        return {key: item.get(key, "") for key in keys}
+
+    @staticmethod
+    def _compact_formula(item: dict[str, Any]) -> dict[str, Any]:
+        keys = ("formula_id", "category", "name", "latex", "use_when", "assumptions", "diagnostics", "warning")
         return {key: item.get(key, "") for key in keys}

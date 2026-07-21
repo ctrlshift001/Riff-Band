@@ -109,12 +109,12 @@ def test_invalid_model_json_gets_one_repair_attempt():
     assert "未通过结构或引用约束" in gateway.calls[1][1]
 
 
-def test_model_generation_rejects_unimplemented_stage_before_calling_gateway():
+def test_model_generation_rejects_unknown_stage_before_calling_gateway():
     gateway = _FakeGateway([])
     service = StageGenerationService(gateway_factory=lambda: gateway)
 
     with pytest.raises(StageGenerationNotSupportedError):
-        asyncio.run(service.generate(_project(), "identification"))
+        asyncio.run(service.generate(_project(), "unknown"))
 
     assert gateway.calls == []
 
@@ -128,13 +128,18 @@ def test_literature_prompt_contract_has_no_paper_or_approval_fields():
     assert "approval" not in properties
 
 
-def test_prompt_catalog_supports_s0_through_s4():
+def test_prompt_catalog_supports_s0_through_s9():
     assert PromptCatalog.supported_stage_keys() == (
         "problem",
         "literature",
         "theory",
         "design",
         "data",
+        "identification",
+        "analysis",
+        "robustness",
+        "evidence",
+        "delivery",
     )
 
 
@@ -282,3 +287,329 @@ def test_data_generation_uses_registry_source_ids():
 
     assert content["data_sources"][0]["source_id"] == source_id
     assert content["generation"]["prompt_id"] == "ai4ms.stage.data"
+
+
+def _s5_s7_project() -> dict:
+    project = _s1_s4_project()
+    project["stages"][3]["content"] = {
+        "design_lane": "empirical_causal",
+        "research_question": "AI 采用如何影响企业创新？",
+        "unit_of_analysis": "企业-年",
+        "estimand_or_objective": "估计 AI 采用对企业创新的平均影响。",
+        "method_options": [
+            {"method_id": "M06", "role": "primary"},
+            {"method_id": "M02", "role": "alternative"},
+        ],
+        "primary_method_id": "M06",
+    }
+    project["stages"][4]["content"] = {
+        "variables": [
+            {"name": "创新结果", "role": "outcome", "operationalization": "innovation"},
+            {"name": "AI 采用", "role": "treatment", "operationalization": "ai_adoption"},
+        ],
+        "sample_definition": "企业年度面板",
+        "join_keys": ["firm_id", "year"],
+        "blocking_issues": ["数据权限待确认"],
+    }
+    project["stages"].extend(
+        [
+            {"key": "identification", "revision": 0, "content_hash": None, "content": {}},
+            {"key": "analysis", "revision": 0, "content_hash": None, "content": {}},
+            {"key": "robustness", "revision": 0, "content_hash": None, "content": {}},
+        ]
+    )
+    return project
+
+
+def _analysis_plan_payload(formula_id: str) -> dict:
+    return {
+        "design_lane": "empirical_causal",
+        "estimand_or_objective": "估计 AI 采用对企业创新结果的平均处理效应。",
+        "analysis_sample": "满足企业标识、年份及主变量完整要求的企业年度样本。",
+        "unit_of_analysis": "企业-年",
+        "variable_roles": [
+            {"name": "创新结果", "role": "outcome", "source_variable": "innovation", "transformation": "none", "rationale": "对应研究结果构念。"},
+            {"name": "AI 采用", "role": "treatment", "source_variable": "ai_adoption", "transformation": "none", "rationale": "对应核心处理变量。"},
+        ],
+        "model_specifications": [
+            {
+                "specification_id": "SPEC1",
+                "label": "主模型",
+                "role": "primary",
+                "method_id": "M06",
+                "formula_id": formula_id,
+                "equation_or_objective": "innovation_it = beta * ai_adoption_it + firm_fe + year_fe + error_it",
+                "outcome_or_target": ["innovation"],
+                "predictors_or_decisions": ["ai_adoption"],
+                "fixed_effects": ["firm", "year"],
+                "uncertainty_or_standard_errors": "按企业聚类稳健标准误",
+                "weights": "none",
+                "sample_restrictions": ["主变量非缺失"],
+            }
+        ],
+        "diagnostics": [
+            {"diagnostic_id": "DIAG1", "target": "处理前趋势", "procedure": "估计事件研究的处理前系数。", "pass_condition": "处理前系数整体不能拒绝为零。", "failure_action": "停止因果解释并考虑替代设计。"}
+        ],
+        "analysis_steps": [
+            {"step_id": "STEP1", "purpose": "检查数据结构", "inputs": ["input.dta"], "operation": "检查变量、缺失和主键。", "outputs": ["data_audit"], "linked_specification_ids": []},
+            {"step_id": "STEP2", "purpose": "估计主模型", "inputs": ["analysis_sample"], "operation": "执行已冻结主规格。", "outputs": ["main_results"], "linked_specification_ids": ["SPEC1"]},
+        ],
+        "missing_data_plan": "先报告缺失机制，主分析使用完整样本并进行敏感性检查。",
+        "multiplicity_plan": "预先区分主要与次要结果，不根据显著性选择报告。",
+        "robustness_plan": ["替代创新指标", "替代样本窗口", "安慰剂处理时间"],
+        "stopping_conditions": ["关键变量不存在", "处理前趋势明显不成立"],
+        "execution_engine": "stata",
+        "code_language": "Stata do-file",
+        "stata_do_file": "version 18.0\nset more off\nset varabbrev off\nargs project_dir run_id input_dta output_dir\nuse `\"`input_dta'\"', clear\nset seed 20260721\nxtset firm_id year\nxtreg innovation ai_adoption i.year, fe vce(cluster firm_id)\n",
+        "seed": 20260721,
+        "expected_outputs": ["数据审计日志", "主模型结果表"],
+        "reproducibility_requirements": ["固定 Stata version", "保存 do-file 与输入输出 hash"],
+        "unknowns": ["实际数据是否满足面板唯一键"],
+    }
+
+
+def test_identification_generation_uses_approved_methods_and_formula_registry():
+    project = _s5_s7_project()
+    context = StageGenerationService._build_context(project, "identification")
+    formula_id = context["formula_candidates"][0]["formula_id"]
+    gateway = _FakeGateway([InferenceResponse(text=json.dumps(_analysis_plan_payload(formula_id), ensure_ascii=False), model="test", usage={})])
+
+    content = asyncio.run(StageGenerationService(lambda: gateway).generate(project, "identification"))
+
+    assert content["model_specifications"][0]["method_id"] == "M06"
+    assert content["model_specifications"][0]["formula_id"] == formula_id
+    assert content["generation"]["prompt_id"] == "ai4ms.stage.identification"
+
+
+def test_analysis_generation_cannot_modify_approved_do_file_binding():
+    project = _s5_s7_project()
+    context = StageGenerationService._build_context(project, "identification")
+    plan = _analysis_plan_payload(context["formula_candidates"][0]["formula_id"])
+    project["stages"][5].update({"revision": 2, "content_hash": "plan_hash", "content": plan})
+    preserved_run = {
+        "run_id": "run_preserved",
+        "status": "blocked",
+        "reason_code": "no_runner",
+        "preflight": {"issues": [{"code": "no_runner", "message": "not available"}]},
+        "manifest_path": "artifacts/runs/run_preserved/manifest.json",
+    }
+    project["stages"][6]["content"] = {"runs": [preserved_run]}
+    payload = {
+        "execution_engine": "stata",
+        "readiness_summary": "分析计划已冻结，但仍需执行确定性预检。",
+        "expected_outputs": ["日志", "主结果表"],
+        "preflight_checks": ["检查 G3 与代码 hash", "检查输入文件与变量"],
+        "result_review_checks": ["检查退出码", "检查失败诊断和样本量"],
+        "blocking_issues": ["Runner 与输入文件状态尚未检查"],
+        "unknowns": ["Stata 许可状态"],
+    }
+    gateway = _FakeGateway([InferenceResponse(text=json.dumps(payload, ensure_ascii=False), model="test", usage={})])
+
+    content = asyncio.run(StageGenerationService(lambda: gateway).generate(project, "analysis"))
+
+    assert content["do_file"] == plan["stata_do_file"]
+    assert content["approved_analysis_plan_revision"] == 2
+    assert content["approved_analysis_plan_hash"] == "plan_hash"
+    assert content["runs"] == [preserved_run]
+
+
+def _robustness_payload(status: str = "blocked") -> dict:
+    return {
+        "robustness_matrix": [
+            {"check_id": "ROB1", "category": "alternative_measure", "rationale": "检查指标口径依赖。", "specification": "使用替代创新指标重估主规格。", "linked_specification_ids": ["SPEC1"], "required_run_ids": ["run_blocked"], "status": status, "result_summary": "" if status == "blocked" else "声称稳健", "implication": "完成运行前不得提升结论强度。"},
+            {"check_id": "ROB2", "category": "placebo", "rationale": "检查虚假处理时间。", "specification": "把处理时间提前并重估。", "linked_specification_ids": ["SPEC1"], "required_run_ids": [], "status": "planned", "result_summary": "", "implication": "显著安慰剂结果将削弱识别可信度。"},
+        ],
+        "failed_checks": [],
+        "interpretation_limits": ["当前没有成功且结构化的稳健性运行结果"],
+        "next_runs": ["创建替代指标和安慰剂运行分支"],
+        "reproducibility_report": "现有 blocked Run 可追溯，但尚不能形成数值复现结论。",
+        "unknowns": ["Runner 可用性"],
+    }
+
+
+def test_robustness_generation_rejects_claims_without_structured_run_evidence():
+    project = _s5_s7_project()
+    context = StageGenerationService._build_context(project, "identification")
+    plan = _analysis_plan_payload(context["formula_candidates"][0]["formula_id"])
+    project["stages"][5].update({"revision": 2, "content_hash": "plan_hash", "content": plan})
+    project["stages"][6]["content"] = {"runs": [{"run_id": "run_blocked", "status": "blocked", "structured_results": []}]}
+    gateway = _FakeGateway(
+        [
+            InferenceResponse(text=json.dumps(_robustness_payload("passed"), ensure_ascii=False), model="test", usage={}),
+            InferenceResponse(text=json.dumps(_robustness_payload("blocked"), ensure_ascii=False), model="test", usage={}),
+        ]
+    )
+
+    content = asyncio.run(StageGenerationService(lambda: gateway).generate(project, "robustness"))
+
+    assert content["robustness_matrix"][0]["status"] == "blocked"
+    assert content["generation"]["attempts"] == 2
+
+
+def _claim_evidence_payload(confidence: str = "low") -> dict:
+    return {
+        "claims": [
+            {
+                "claim_id": "C1",
+                "claim_text": "现有文献提示 AI 采用与企业创新存在关系，但当前运行阻塞，不能据此作因果判断。",
+                "claim_type": "causal",
+                "status": "mixed",
+                "confidence": confidence,
+                "scope": {
+                    "population_or_system": "采用 AI 的企业",
+                    "time": "现有论文覆盖期，具体年份待核验",
+                    "geography": "论文样本所覆盖地区",
+                    "boundary_conditions": ["当前没有成功的本地模型运行"],
+                },
+                "evidence": [
+                    {
+                        "evidence_id": "EV1",
+                        "evidence_type": "paper",
+                        "artifact_id": "paper_a",
+                        "locator": "title and abstract metadata",
+                        "direction": "supports",
+                        "strength": "moderate",
+                    },
+                    {
+                        "evidence_id": "EV2",
+                        "evidence_type": "reviewer_note",
+                        "artifact_id": "run_blocked",
+                        "locator": "run status and reason_code",
+                        "direction": "qualifies",
+                        "strength": "weak",
+                        "run_id": "run_blocked",
+                    },
+                ],
+                "assumptions": [
+                    {"assumption_id": "A1", "impact_if_violated": "因果解释需要撤回并降级为相关性描述。"}
+                ],
+                "counterevidence": ["EV2"],
+                "uncertainty_note": "当前只能形成有边界的候选解释。",
+                "robustness_check_ids": ["ROB1"],
+                "mechanism_ids": ["MECH1"],
+            }
+        ],
+        "mechanisms": [
+            {
+                "mechanism_id": "MECH1",
+                "statement": "信息处理能力可能连接 AI 采用与创新结果。",
+                "claim_ids": ["C1"],
+                "evidence_ids": ["EV1", "EV2"],
+                "status": "candidate",
+                "competing_explanation": "创新能力更强的企业可能更早采用 AI。",
+            }
+        ],
+        "heterogeneity": [],
+        "limitations": ["Runner 不可用，尚无结构化模型结果。"],
+        "interpretation": "文献证据仅支持候选关系，运行阻塞要求保留低置信和因果解释限制。",
+        "unknowns": ["本地数据估计结果"],
+    }
+
+
+def _s8_project() -> dict:
+    project = _s5_s7_project()
+    project["stages"][6]["content"] = {
+        "runs": [
+            {
+                "run_id": "run_blocked",
+                "status": "blocked",
+                "reason_code": "no_runner",
+                "structured_results": [],
+                "output_artifacts": [],
+            }
+        ]
+    }
+    project["stages"][7]["content"] = {
+        "robustness_matrix": [
+            {
+                "check_id": "ROB1",
+                "status": "blocked",
+                "result_summary": "",
+                "implication": "完成运行前不得形成因果结论。",
+            }
+        ],
+        "interpretation_limits": ["当前无可验证的模型结果"],
+    }
+    project["stages"].extend(
+        [
+            {"key": "evidence", "status": "in_progress", "revision": 0, "content_hash": None, "content": {}},
+            {"key": "delivery", "status": "not_started", "revision": 0, "content_hash": None, "content": {}},
+        ]
+    )
+    return project
+
+
+def test_evidence_generation_downgrades_claim_when_run_and_robustness_are_blocked():
+    project = _s8_project()
+    gateway = _FakeGateway(
+        [
+            InferenceResponse(text=json.dumps(_claim_evidence_payload("high"), ensure_ascii=False), model="test", usage={}),
+            InferenceResponse(text=json.dumps(_claim_evidence_payload("low"), ensure_ascii=False), model="test", usage={}),
+        ]
+    )
+
+    content = asyncio.run(StageGenerationService(lambda: gateway).generate(project, "evidence"))
+
+    assert content["claims"][0]["confidence"] == "low"
+    assert content["claims"][0]["evidence"][1]["artifact_id"] == "run_blocked"
+    assert content["generation"]["attempts"] == 2
+
+
+def _delivery_payload(evidence_id: str = "EV1") -> dict:
+    return {
+        "title": "AI 采用与企业创新：受当前证据约束的研究报告",
+        "executive_summary": "现有论文提示二者存在关系，但本地运行阻塞，因此报告只保留低置信、有限范围的结论。",
+        "conclusions": [
+            {
+                "conclusion_id": "CON1",
+                "statement": "当前证据只能支持 AI 采用与创新关系的有限判断，不能确认因果效应。",
+                "claim_ids": ["C1"],
+                "evidence_ids": [evidence_id],
+                "status": "limited",
+                "scope_note": "仅适用于现有论文覆盖范围，且不包含本地估计。",
+            }
+        ],
+        "policy_implications": [
+            {
+                "implication_id": "POL1",
+                "statement": "管理者可将 AI 采用作为创新能力建设的候选方向，但不应据此承诺确定收益。",
+                "audience": "企业管理者",
+                "claim_ids": ["C1"],
+                "conditions": ["先完成数据验证和稳健性运行"],
+                "risk_note": "当前因果效应未经本地数据验证。",
+            }
+        ],
+        "outline": [
+            {"section_id": "SEC1", "title": "问题与证据", "purpose": "说明研究问题和文献边界。", "claim_ids": ["C1"], "evidence_ids": ["EV1"]},
+            {"section_id": "SEC2", "title": "结果限制", "purpose": "披露运行阻塞及其解释影响。", "claim_ids": ["C1"], "evidence_ids": ["EV2"]},
+            {"section_id": "SEC3", "title": "结论", "purpose": "给出受证据约束的结论。", "claim_ids": ["C1"], "evidence_ids": ["EV1", "EV2"]},
+        ],
+        "reference_paper_ids": ["paper_a"],
+        "limitations": ["本地 Runner 不可用。"],
+        "reproducibility_notes": ["所有结论保留 claim_id 和 evidence_id。"],
+        "disclosure": "本报告由 AI 生成结构草稿并由研究者审阅，未把阻塞运行表述为成功结果。",
+        "release_notes": "首次生成受 G4 约束的交付草稿。",
+        "unknowns": ["本地估计值"],
+    }
+
+
+def test_delivery_generation_only_uses_approved_claims_and_their_evidence():
+    project = _s8_project()
+    project["stages"][8].update(
+        {"status": "approved", "revision": 2, "content_hash": "evidence_hash", "content": _claim_evidence_payload()}
+    )
+    project["stages"][9]["status"] = "in_progress"
+    gateway = _FakeGateway(
+        [
+            InferenceResponse(text=json.dumps(_delivery_payload("EV_UNKNOWN"), ensure_ascii=False), model="test", usage={}),
+            InferenceResponse(text=json.dumps(_delivery_payload("EV1"), ensure_ascii=False), model="test", usage={}),
+        ]
+    )
+
+    content = asyncio.run(StageGenerationService(lambda: gateway).generate(project, "delivery"))
+
+    assert content["conclusions"][0]["evidence_ids"] == ["EV1"]
+    assert content["approved_claims"] == ["C1"]
+    assert content["references"][0]["paper_id"] == "paper_a"
+    assert content["source_evidence_hash"] == "evidence_hash"
+    assert content["generation"]["attempts"] == 2
