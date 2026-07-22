@@ -49,6 +49,19 @@ type ChatMessage = {
 };
 type ChatSyncTarget = "content" | "summary" | "evidenceNote" | "decision";
 type ChatSyncMode = "append" | "replace";
+type InterfaceTheme = "graphite" | "blueprint" | "paper";
+type DiagnosticRule = {
+  id: string;
+  family: string;
+  name: string;
+  appliesTo: string;
+  trigger: string;
+  evidence: string;
+  action: string;
+  level: "阻塞" | "警告" | "记录";
+  stage: "S4" | "S5" | "S6" | "S7";
+  implementation: string;
+};
 
 const stages = [
   { key: "problem", id: "S0", name: "问题识别", agent: "Topic Agent", gate: "G0", status: "done", output: "课题简报与已有研究报告", decision: "确认边界、改写问题或暂停课题", check: "候选空白完成反向检索" },
@@ -168,6 +181,51 @@ const formulas: FormulaRecord[] = [
   { id: "F10", title: "两阶段随机规划", family: "优化", methodId: "M12", formula: "min cᵀx + E_ξ[Q(x,ξ)]", purpose: "平衡当前决策与未来情景中的补救成本。", symbols: [{ symbol: "x", meaning: "第一阶段决策" }, { symbol: "ξ", meaning: "随机情景" }, { symbol: "Q", meaning: "情景补救价值函数" }], assumptions: ["情景覆盖充分", "非预见性约束正确"], diagnostics: ["VSS/EVPI", "场景稳定性", "尾部风险"], stata: "* scenario probability estimation only", source: "Pyomo / mpi-sppy" },
   { id: "F11", title: "网络流平衡", family: "运营研究", methodId: "M13", formula: "Σ_j x_{ji} − Σ_j x_{ij} = b_i", purpose: "保证每个节点的流入、流出与供需守恒。", symbols: [{ symbol: "x_ij", meaning: "边 i→j 上的流量" }, { symbol: "b_i", meaning: "节点供给或需求" }], assumptions: ["拓扑完整", "容量与单位一致"], diagnostics: ["不可行约束", "容量瓶颈", "边成本扰动"], stata: "* validate demand and post-solution outcomes", source: "Google OR-Tools" },
   { id: "F12", title: "双重机器学习残差式", family: "因果机器学习", methodId: "M16", formula: "Y-ĝ(X) = θ(X)(T-m̂(X)) + ε", purpose: "用正交化与交叉拟合降低高维干扰估计偏差。", symbols: [{ symbol: "ĝ(X)", meaning: "结果条件均值模型" }, { symbol: "m̂(X)", meaning: "处理条件均值模型" }, { symbol: "θ(X)", meaning: "条件处理效应" }], assumptions: ["混杂可由 X 控制", "交叉拟合", "重叠"], diagnostics: ["校准", "样本外稳定性", "策略价值"], stata: "* export approved analytic sample to locked Python runner", source: "EconML / CausalML" },
+];
+
+const diagnosticRules: DiagnosticRule[] = [
+  { id: "D01", family: "数据质量", name: "关键字段缺失机制", appliesTo: "全部研究设计", trigger: "因变量、处理变量、时间或主键存在缺失", evidence: "按变量和组别报告缺失率、缺失模式及处理前后样本变化", action: "关键字段无法恢复且缺失具有系统性时，阻塞主分析并修改数据合同。", level: "阻塞", stage: "S4", implementation: "misstable summarize; misstable patterns" },
+  { id: "D02", family: "数据质量", name: "主键唯一性与重复记录", appliesTo: "面板、事件与交易数据", trigger: "进入任何合并、面板设定或聚合步骤前", evidence: "报告主键重复数、重复来源和人工处理规则", action: "主键不唯一且无法解释时停止合并与估计。", level: "阻塞", stage: "S4", implementation: "isid firm_id year; duplicates report firm_id year" },
+  { id: "D03", family: "数据质量", name: "单位、币种与时间口径", appliesTo: "多源数据与跨期比较", trigger: "变量来自不同数据库、年度或币种", evidence: "单位表、平减指数、汇率来源、时区和会计期间映射", action: "口径未统一时不得生成跨源指标。", level: "阻塞", stage: "S4", implementation: "assert unit_code != \"\"; codebook fiscal_year" },
+  { id: "D04", family: "数据质量", name: "异常值与影响点", appliesTo: "回归、预测与效率评价", trigger: "连续变量进入估计或求解器参数", evidence: "分位数、箱线范围、影响统计与处理前后结果", action: "保留原始结果；缩尾或删除必须作为有依据的替代规格。", level: "警告", stage: "S4", implementation: "summarize, detail; predict cooksd, cooksd" },
+  { id: "D05", family: "统计与面板", name: "组内有效变异", appliesTo: "固定效应与动态面板", trigger: "核心解释变量由个体固定效应识别", evidence: "组内/组间标准差、变化单位数及处理转换次数", action: "组内变异不足时停止将固定效应系数解释为主要证据。", level: "阻塞", stage: "S5", implementation: "xtsum treatment outcome" },
+  { id: "D06", family: "统计与面板", name: "异方差与稳健标准误", appliesTo: "OLS、GLM 与面板模型", trigger: "误差方差可能随规模、组别或时间变化", evidence: "残差图、BP/White 检验及稳健标准误对照", action: "推断必须使用与数据生成结构匹配的稳健或聚类标准误。", level: "警告", stage: "S6", implementation: "estat hettest; regress y x, vce(robust)" },
+  { id: "D07", family: "统计与面板", name: "聚类层级一致性", appliesTo: "面板、政策与实验数据", trigger: "处理在组、地区、机构或时间层级分配", evidence: "处理分配层级、聚类数和替代聚类结果", action: "聚类层级低于处理分配层级时阻塞显著性结论。", level: "阻塞", stage: "S5", implementation: "reghdfe y d x, absorb(id year) vce(cluster policy_cluster)" },
+  { id: "D08", family: "统计与面板", name: "序列相关", appliesTo: "面板与时间序列回归", trigger: "同一对象跨期重复观测", evidence: "Wooldridge/残差自相关检验与修正规格", action: "存在序列相关时使用适当聚类、动态项或误差结构。", level: "警告", stage: "S6", implementation: "xtserial y x" },
+  { id: "D09", family: "统计与面板", name: "横截面相关", appliesTo: "宏观、行业与大面板", trigger: "对象同时暴露于共同冲击", evidence: "Pesaran CD 或共同因子诊断", action: "显著相关时增加共同因子、时间效应或替代标准误。", level: "警告", stage: "S6", implementation: "xtcsd, pesaran abs" },
+  { id: "D10", family: "统计与面板", name: "多重共线性", appliesTo: "回归、SEM 与预测模型", trigger: "多个高度相关构念或交互项同时进入模型", evidence: "VIF、条件数、相关矩阵与变量定义", action: "共线性影响解释时重构变量或降级单个系数结论。", level: "警告", stage: "S5", implementation: "estat vif" },
+  { id: "D11", family: "统计与面板", name: "固定效应吸收检查", appliesTo: "高维固定效应模型", trigger: "核心变量可能在固定效应内不变化", evidence: "被吸收变量、有效样本与自由度变化", action: "核心变量被吸收后不得更换模型以追求可报告系数。", level: "阻塞", stage: "S5", implementation: "reghdfe y d x, absorb(id year) verbose(1)" },
+  { id: "D12", family: "因果识别", name: "DID 平行趋势", appliesTo: "双重差分与事件研究", trigger: "处理前至少存在两个可比时期", evidence: "处理前动态系数、联合检验、图形与置信区间", action: "实质性预趋势无法解释时停止核心 ATT 表述。", level: "阻塞", stage: "S7", implementation: "estat ptrends; eventstudyinteract y lead* lag*" },
+  { id: "D13", family: "因果识别", name: "提前反应与预期效应", appliesTo: "政策、采用与事件研究", trigger: "主体可能在正式处理前改变行为", evidence: "提前期系数、制度时间线和替代处理时点", action: "发现提前反应时重新定义处理窗口与 estimand。", level: "阻塞", stage: "S7", implementation: "testparm lead*" },
+  { id: "D14", family: "因果识别", name: "分期处理异质性", appliesTo: "错位实施 DID", trigger: "不同组在不同时间首次受处理", evidence: "组时 ATT、队列权重及传统 TWFE 对照", action: "禁止仅用传统 TWFE 作为主结果。", level: "阻塞", stage: "S5", implementation: "csdid y x, ivar(id) time(year) gvar(first_treat)" },
+  { id: "D15", family: "因果识别", name: "干扰与空间溢出", appliesTo: "政策、网络与平台研究", trigger: "对照组可能被邻近或网络处理影响", evidence: "暴露映射、距离/网络窗口和排除样本结果", action: "存在溢出时改写 estimand，不再称为无处理对照。", level: "阻塞", stage: "S5", implementation: "generate exposure = ...; reghdfe y treated exposure x, ..." },
+  { id: "D16", family: "因果识别", name: "工具变量相关性", appliesTo: "IV / 2SLS", trigger: "工具变量进入第一阶段", evidence: "第一阶段系数、partial R²、F 或 Kleibergen–Paap 统计量", action: "弱工具时使用弱工具稳健推断或放弃 IV 主设计。", level: "阻塞", stage: "S6", implementation: "ivreg2 y x (d=z), first weakiv" },
+  { id: "D17", family: "因果识别", name: "排除限制论证", appliesTo: "IV / 2SLS", trigger: "工具可能通过处理之外路径影响结果", evidence: "机制图、制度依据、负向结果与敏感性边界", action: "没有可信论证时仅报告相关性或探索性 IV。", level: "阻塞", stage: "S5", implementation: "* narrative evidence + negative-control specification" },
+  { id: "D18", family: "因果识别", name: "过度识别与工具一致性", appliesTo: "多工具 IV / GMM", trigger: "排除工具数量超过内生变量数量", evidence: "Hansen/Sargan、逐个工具结果与工具来源", action: "检验失败或工具结论分裂时降级主张并调查工具。", level: "警告", stage: "S7", implementation: "estat overid" },
+  { id: "D19", family: "准实验与加权", name: "RDD 密度操纵", appliesTo: "断点回归", trigger: "处理由运行变量阈值决定", evidence: "阈值附近密度图与 McCrary/rddensity 检验", action: "存在精确操纵时停止局部随机或连续性识别。", level: "阻塞", stage: "S6", implementation: "rddensity running, c(cutoff)" },
+  { id: "D20", family: "准实验与加权", name: "RDD 协变量连续性", appliesTo: "断点回归", trigger: "处理前协变量在阈值处应连续", evidence: "每个预定协变量的跳跃估计与多重检验说明", action: "系统性不连续时调查制度共变并停止主解释。", level: "阻塞", stage: "S7", implementation: "rdrobust covariate running, c(cutoff)" },
+  { id: "D21", family: "准实验与加权", name: "RDD 带宽与函数形式", appliesTo: "断点回归", trigger: "局部多项式估计完成后", evidence: "最优带宽、上下带宽、核函数与 donut 规格", action: "结果只在单一任意规格成立时标记为不稳健。", level: "警告", stage: "S7", implementation: "rdrobust y running, c(cutoff) all" },
+  { id: "D22", family: "准实验与加权", name: "倾向得分重叠", appliesTo: "匹配、IPW、DML", trigger: "基于可观测协变量调整选择", evidence: "组别得分分布、共同支持范围与截尾样本", action: "严重无重叠时更改目标总体，不做外推 ATE。", level: "阻塞", stage: "S6", implementation: "teffects overlap" },
+  { id: "D23", family: "准实验与加权", name: "加权后协变量平衡", appliesTo: "匹配、IPW、加权回归", trigger: "权重或匹配样本生成后", evidence: "标准化差异、方差比和平衡图", action: "关键协变量仍不平衡时重新设定处理模型。", level: "阻塞", stage: "S6", implementation: "tebalance summarize; tebalance density" },
+  { id: "D24", family: "准实验与加权", name: "极端权重与有效样本量", appliesTo: "IPW、熵平衡与调查权重", trigger: "个别观测可能获得过大权重", evidence: "权重分位数、最大值、截尾规则和 ESS", action: "ESS 过低时改变目标总体或使用更稳定估计器。", level: "警告", stage: "S7", implementation: "summarize weight, detail; scalar ESS=(sum_w^2)/sum_w2" },
+  { id: "D25", family: "准实验与加权", name: "合成控制处理前拟合", appliesTo: "合成控制", trigger: "供体权重求解完成后", evidence: "处理前 RMSPE、路径图与预测变量平衡", action: "处理前拟合差时不得解释处理后差距为反事实效应。", level: "阻塞", stage: "S6", implementation: "synth y predictors, trunit() trperiod()" },
+  { id: "D26", family: "准实验与加权", name: "合成控制供体敏感性", appliesTo: "合成控制", trigger: "少数供体权重集中或可能受溢出", evidence: "leave-one-out、空间安慰剂和 RMSPE 比率", action: "结论依赖单一不合格供体时撤回主结果。", level: "警告", stage: "S7", implementation: "* loop donor exclusions and placebo units" },
+  { id: "D27", family: "动态模型", name: "GMM 二阶序列相关", appliesTo: "差分/系统 GMM", trigger: "动态面板 GMM 估计后", evidence: "Arellano–Bond AR(1) 与 AR(2) 检验", action: "AR(2) 显著时矩条件无效，阻塞 GMM 主结果。", level: "阻塞", stage: "S6", implementation: "estat abond; xtabond2 ..., robust" },
+  { id: "D28", family: "动态模型", name: "GMM 工具膨胀", appliesTo: "差分/系统 GMM", trigger: "工具数量接近或超过组数", evidence: "工具数量、滞后范围、collapse 前后结果", action: "压缩工具集合；不可用高 Hansen p 值掩盖膨胀。", level: "阻塞", stage: "S6", implementation: "xtabond2 ..., gmm(..., lag(2 3) collapse)" },
+  { id: "D29", family: "机制与测量", name: "测量信度与聚合效度", appliesTo: "SEM、量表与潜变量", trigger: "构念由多个测量题项形成", evidence: "α/ω、因子载荷、AVE 与题项处理记录", action: "测量不成立时停止解释结构路径。", level: "阻塞", stage: "S5", implementation: "sem ...; estat framework, fitted" },
+  { id: "D30", family: "机制与测量", name: "区分效度与竞争模型", appliesTo: "SEM、PLS-SEM", trigger: "多个理论构念高度相关", evidence: "HTMT/Fornell–Larcker、交叉载荷与竞争模型", action: "构念不可区分时合并、重定义或撤回差异化机制。", level: "阻塞", stage: "S7", implementation: "* compare constrained and unconstrained measurement models" },
+  { id: "D31", family: "机制与测量", name: "中介因果顺序", appliesTo: "中介与机制检验", trigger: "间接效应被表述为因果机制", evidence: "时间顺序、DAG、中介—结果混杂和替代顺序", action: "横截面或顺序不明时只表述为机制一致性证据。", level: "阻塞", stage: "S5", implementation: "sem (m <- x c) (y <- m x c); bootstrap" },
+  { id: "D32", family: "优化与运营", name: "可行性与冲突约束", appliesTo: "LP、MILP、路由与调度", trigger: "求解器返回 infeasible 或无解", evidence: "IIS/冲突约束、单位检查和最小可复现实例", action: "不可行时禁止报告最优值，先修复模型或业务规则。", level: "阻塞", stage: "S6", implementation: "solver IIS / conflict refiner; validate units" },
+  { id: "D33", family: "优化与运营", name: "最优性差距与运行时", appliesTo: "MILP、CP-SAT 与组合优化", trigger: "在时间或资源上限内停止求解", evidence: "incumbent、bound、MIP gap、运行时与硬件环境", action: "未证明最优时必须报告为当前最好可行解。", level: "警告", stage: "S6", implementation: "record objective, best_bound, mip_gap, wall_time" },
+  { id: "D34", family: "优化与运营", name: "鲁棒半径与保守成本", appliesTo: "鲁棒与分布鲁棒优化", trigger: "不确定集合或半径由研究者设定", evidence: "半径来源、价格—稳健性曲线和样本外违约率", action: "半径任意或保守成本未披露时不输出政策建议。", level: "阻塞", stage: "S7", implementation: "solve over epsilon grid; out-of-sample stress test" },
+  { id: "D35", family: "优化与运营", name: "随机情景稳定性", appliesTo: "随机规划与仿真优化", trigger: "情景抽样、删减或概率设定完成后", evidence: "不同种子、样本量、VSS/EVPI 与尾部风险", action: "方案随情景剧烈变化时标记不稳定并增加样本外验证。", level: "警告", stage: "S7", implementation: "repeat SAA; report VSS, EVPI, CVaR" },
+  { id: "D36", family: "因果机器学习", name: "交叉拟合、校准与策略外推", appliesTo: "DML、因果森林与 CATE", trigger: "报告平均或异质处理效应前", evidence: "重叠、nuisance 误差、校准、honest split 与 holdout 策略价值", action: "未通过样本外验证时不得把 CATE 排名转成确定性分群政策。", level: "阻塞", stage: "S7", implementation: "cross-fit folds; calibration; policy_value on holdout" },
+];
+
+const interfaceThemes: { id: InterfaceTheme; name: string; description: string; colors: string[]; note: string }[] = [
+  { id: "graphite", name: "石墨极简", description: "黑白灰、低阴影、最克制的 Apple 工作台。", colors: ["#101114", "#f5f5f7", "#d2d2d7"], note: "适合长时间阅读与正式汇报" },
+  { id: "blueprint", name: "冷蓝研究", description: "低饱和蓝灰、清晰状态色、轻量层次。", colors: ["#315f87", "#eef3f7", "#aebdca"], note: "适合证据、方法和运行监控" },
+  { id: "paper", name: "论文纸张", description: "暖白纸色、深墨文字、学术编辑感。", colors: ["#2f2d29", "#f5f1e8", "#b8aa91"], note: "适合写作、评审和打印阅读" },
 ];
 
 const gateCards = [
@@ -353,6 +411,51 @@ function DetailModal({ detail, onClose }: { detail: DetailPanel | null; onClose:
         {detail.bullets && <ul className="detail-bullets">{detail.bullets.map((item) => <li key={item}>{item}</li>)}</ul>}
         {detail.code && <pre className="detail-code"><code>{detail.code}</code></pre>}
         <footer className="detail-modal-actions"><button className="primary-action" onClick={onClose}>完成查看</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function PreferencesModal({
+  open,
+  value,
+  onSelect,
+  onClose,
+}: {
+  open: boolean;
+  value: InterfaceTheme;
+  onSelect: (theme: InterfaceTheme) => void;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  const selectedTheme = interfaceThemes.find((theme) => theme.id === value) ?? interfaceThemes[0];
+  return (
+    <div className="modal-backdrop preferences-backdrop" role="presentation" onMouseDown={(event) => event.currentTarget === event.target && onClose()}>
+      <section className="preferences-modal" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
+        <header className="detail-modal-header">
+          <div><p className="eyebrow">Appearance preferences</p><h2 id="preferences-title">界面偏好</h2></div>
+          <button className="modal-close" onClick={onClose} aria-label="关闭界面偏好">×</button>
+        </header>
+        <p className="detail-lede">选择最适合当前工作方式的颜色与排版。设置只保存在此浏览器，不会影响研究内容或协作者。</p>
+        <div className="theme-choice-grid" role="radiogroup" aria-label="界面风格">
+          {interfaceThemes.map((theme) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={theme.id === value}
+              className={`theme-choice ${theme.id === value ? "is-selected" : ""}`}
+              onClick={() => onSelect(theme.id)}
+              key={theme.id}
+            >
+              <span className="theme-choice-check">{theme.id === value ? "✓" : ""}</span>
+              <span className="theme-swatches" aria-hidden="true">{theme.colors.map((color) => <i style={{ background: color }} key={color} />)}</span>
+              <strong>{theme.name}</strong>
+              <small>{theme.description}</small>
+              <em>{theme.note}</em>
+            </button>
+          ))}
+        </div>
+        <footer className="preferences-actions"><span>当前：{selectedTheme.name} · 已自动保存</span><button className="primary-action" onClick={onClose}>完成</button></footer>
       </section>
     </div>
   );
@@ -712,21 +815,24 @@ function MethodsView({ onOpenMethod, onOpenFormula, onAdd, onToast }: { onOpenMe
   const [query, setQuery] = useState("");
   const [family, setFamily] = useState("全部");
   const [compare, setCompare] = useState<string[]>(["M01", "M02"]);
-  const families = ["全部", ...Array.from(new Set(methods.map((method) => method.family)))];
+  const [expandedDiagnostic, setExpandedDiagnostic] = useState<string | null>("D01");
+  const families = ["全部", ...Array.from(new Set((tab === "diagnostics" ? diagnosticRules.map((rule) => rule.family) : methods.map((method) => method.family))))];
   const filteredMethods = methods.filter((method) => (family === "全部" || method.family === family) && `${method.name} ${method.goal} ${method.tags.join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()));
   const filteredFormulas = formulas.filter((formula) => (family === "全部" || formula.family.includes(family) || methods.find((method) => method.id === formula.methodId)?.family === family) && `${formula.title} ${formula.formula} ${formula.purpose}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const filteredDiagnostics = diagnosticRules.filter((rule) => (family === "全部" || rule.family === family) && `${rule.id} ${rule.family} ${rule.name} ${rule.appliesTo} ${rule.trigger} ${rule.evidence} ${rule.action} ${rule.implementation}`.toLowerCase().includes(query.trim().toLowerCase()));
   const activeMethod = filteredMethods.find((method) => method.id === selected) ?? filteredMethods[0] ?? methods.find((method) => method.id === selected) ?? methods[0];
   const toggleCompare = (methodId: string) => setCompare((current) => current.includes(methodId) ? current.filter((item) => item !== methodId) : current.length < 3 ? [...current, methodId] : [...current.slice(1), methodId]);
+  const changeTab = (next: typeof tab) => { setTab(next); setQuery(""); setFamily("全部"); };
   return <div className="methods-view page-view method-studio">
     <header className="view-header method-studio-header"><div><p className="eyebrow">Method & Formula Studio · versioned registry</p><h1>方法与公式库</h1><p>从研究目标和数据结构出发，连接公式、假设、诊断、代码与人工选择记录。</p></div><div className="studio-metrics"><div><strong>{methods.length}</strong><span>核心方法</span></div><div><strong>47</strong><span>公式模板</span></div><div><strong>36</strong><span>诊断规则</span></div></div></header>
-    <nav className="studio-tabs" aria-label="方法工作台分区">{[["methods", "方法库"], ["formulas", "公式库"], ["diagnostics", "诊断规则"], ["design", "当前研究设计"]].map(([key, label]) => <button className={tab === key ? "is-active" : ""} onClick={() => setTab(key as typeof tab)} key={key}>{label}<span>{key === "methods" ? methods.length : key === "formulas" ? 47 : key === "diagnostics" ? 36 : compare.length}</span></button>)}</nav>
-    <section className="studio-toolbar"><label className="search-field"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索目标、方法、公式、诊断或标签" aria-label="搜索方法与公式" /></label><select value={family} onChange={(event) => setFamily(event.target.value)} aria-label="筛选方法家族">{families.map((item) => <option key={item}>{item}</option>)}</select><button onClick={() => { setQuery(""); setFamily("全部"); }}>清除筛选</button></section>
+    <nav className="studio-tabs" aria-label="方法工作台分区">{[["methods", "方法库"], ["formulas", "公式库"], ["diagnostics", "诊断规则"], ["design", "当前研究设计"]].map(([key, label]) => <button className={tab === key ? "is-active" : ""} onClick={() => changeTab(key as typeof tab)} key={key}>{label}<span>{key === "methods" ? methods.length : key === "formulas" ? 47 : key === "diagnostics" ? diagnosticRules.length : compare.length}</span></button>)}</nav>
+    <section className="studio-toolbar"><label className="search-field"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === "diagnostics" ? "搜索规则、适用方法、触发条件或 Stata 命令" : "搜索目标、方法、公式、诊断或标签"} aria-label="搜索方法、公式与诊断规则" /></label><select value={family} onChange={(event) => setFamily(event.target.value)} aria-label="筛选知识家族">{families.map((item) => <option key={item}>{item}</option>)}</select><button onClick={() => { setQuery(""); setFamily("全部"); }}>清除筛选</button></section>
 
     {tab === "methods" && <div className="method-library-shell"><section className="method-library-list" aria-label="候选方法">{filteredMethods.map((method) => <article className={`method-library-row ${selected === method.id ? "is-selected" : ""}`} key={method.id}><button className="method-row-main" onClick={() => setSelected(method.id)}><span className="method-code">{method.id}</span><div><div><b>{method.family}</b><small>{method.dataShape}</small></div><h2>{method.name}</h2><p>{method.goal}</p><div className="method-tag-row">{method.tags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}</div></div><strong className="method-row-fit">{method.fit}<small>%</small></strong></button><div className="method-row-actions"><button className={compare.includes(method.id) ? "is-active" : ""} onClick={() => toggleCompare(method.id)}>{compare.includes(method.id) ? "已加入比较" : "加入比较"}</button><button onClick={() => onOpenMethod(method.id)}>完整方法卡 →</button></div></article>)}{filteredMethods.length === 0 && <div className="empty-state">没有匹配的方法，请调整关键词或方法家族。</div>}</section><aside className="method-detail method-studio-detail"><p className="eyebrow">Selected method</p><div className="selected-method-title"><div><span>{activeMethod.id}</span><h2>{activeMethod.name}</h2></div><strong>{activeMethod.fit}%</strong></div><pre>{activeMethod.formula}</pre><dl><div><dt>目标</dt><dd>{activeMethod.estimand}</dd></div><div><dt>数据</dt><dd>{activeMethod.dataShape}</dd></div><div><dt>实现</dt><dd>{activeMethod.engine}</dd></div></dl><h3>关键假设</h3><ul>{activeMethod.assumptions.map((item) => <li key={item}><span>!</span>{item}</li>)}</ul><div className="method-warning"><strong>失败规则</strong><p>{activeMethod.failureRule}</p></div><div className="method-detail-actions"><button onClick={() => onOpenMethod(activeMethod.id)}>审阅完整方法卡</button><button className="primary-action" onClick={() => onAdd(activeMethod.id)}>加入研究设计</button></div></aside></div>}
 
     {tab === "formulas" && <section className="formula-library-grid">{filteredFormulas.map((formula) => <article className="formula-library-card" key={formula.id}><header><span>{formula.id}</span><b>{formula.family}</b></header><h2>{formula.title}</h2><p>{formula.purpose}</p><pre>{formula.formula}</pre><div className="formula-card-meta"><span>{formula.symbols.length} 个符号</span><span>{formula.assumptions.length} 项假设</span><span>{formula.diagnostics.length} 项诊断</span></div><footer><button onClick={() => { void navigator.clipboard?.writeText(formula.formula); onToast(`${formula.id} 公式已复制`); }}>复制公式</button><button className="primary-action" onClick={() => onOpenFormula(formula.id)}>打开公式卡 →</button></footer></article>)}<article className="formula-library-card formula-coming-card"><span>+35</span><h2>已策划扩展模板</h2><p>时间序列、离散选择、生存分析、多层模型、多目标优化、排队与博弈模型将在后端注册表中版本化上线。</p><button onClick={() => onToast("扩展公式目录已加入产品 Roadmap")}>查看上线规则</button></article></section>}
 
-    {tab === "diagnostics" && <section className="diagnostic-library"><header><div><p className="eyebrow">Diagnostic policy registry</p><h2>诊断不是附录，是方法的退出条件</h2></div><button onClick={() => onToast("36 条诊断规则已加入 S5 分析计划检查清单")}>全部加入分析计划</button></header>{[{ family: "因果识别", trigger: "DID / IV / RDD / 加权", rules: ["平行趋势与提前反应", "弱工具与排除限制", "重叠、操纵与安慰剂"], action: "失败时降级或停止因果表述" }, { family: "面板与统计", trigger: "FE / GMM / SEM", rules: ["聚类与序列相关", "工具膨胀与 AR(2)", "测量信效度与替代顺序"], action: "保留失败项并由方法审核者解释" }, { family: "优化与运营", trigger: "LP / 鲁棒 / 随机 / 路由", rules: ["可行性与冲突约束", "最优性 gap 与运行时", "参数、场景和压力敏感性"], action: "不可行或缺约束时禁止称为最优方案" }, { family: "因果机器学习", trigger: "DML / CATE", rules: ["交叉拟合稳定性", "重叠与校准", "样本外策略价值"], action: "探索性异质性不得自动转为分群政策" }].map((group, index) => <article key={group.family}><span>0{index + 1}</span><div><b>{group.family}</b><h3>{group.trigger}</h3><ul>{group.rules.map((rule) => <li key={rule}>{rule}</li>)}</ul></div><aside><small>触发动作</small><strong>{group.action}</strong><button onClick={() => onToast(`${group.family}诊断规则已加入当前设计`)}>加入当前设计</button></aside></article>)}</section>}
+    {tab === "diagnostics" && <section className="diagnostic-registry"><header><div><p className="eyebrow">Diagnostic policy registry · 36 / 36</p><h2>诊断不是附录，是方法的退出条件</h2><p>每条规则都包含适用方法、触发时点、所需证据、失败动作和实现提示。</p></div><div><span>当前显示 <strong>{filteredDiagnostics.length}</strong> / {diagnosticRules.length}</span><button onClick={() => onToast(`${filteredDiagnostics.length} 条诊断规则已加入 S5–S7 分析计划检查清单`)}>加入当前结果</button></div></header><div className="diagnostic-rule-grid">{filteredDiagnostics.map((rule) => { const expanded = expandedDiagnostic === rule.id; return <article className={`diagnostic-rule-card level-${rule.level} ${expanded ? "is-expanded" : ""}`} key={rule.id}><header><span>{rule.id}</span><b>{rule.level}</b><small>{rule.stage}</small></header><div className="diagnostic-rule-family">{rule.family}</div><h3>{rule.name}</h3><p>{rule.appliesTo}</p><dl><div><dt>触发</dt><dd>{rule.trigger}</dd></div>{expanded && <><div><dt>证据</dt><dd>{rule.evidence}</dd></div><div><dt>失败动作</dt><dd>{rule.action}</dd></div></>}</dl>{expanded && <div className="diagnostic-implementation"><span>实现提示</span><code>{rule.implementation}</code></div>}<footer><button onClick={() => onToast(`${rule.id} ${rule.name} 已加入当前分析计划`)}>加入计划</button><button className="primary-action" onClick={() => setExpandedDiagnostic(expanded ? null : rule.id)}>{expanded ? "收起规则" : "查看完整规则"}</button></footer></article>; })}{filteredDiagnostics.length === 0 && <div className="empty-state">没有匹配的诊断规则，请清除筛选或更换关键词。</div>}</div></section>}
 
     {tab === "design" && <section className="current-design-board"><header><div><p className="eyebrow">Research design bundle</p><h2>当前候选方法比较</h2><p>最多同时比较 3 个候选；确定主模型前必须记录未采用理由。</p></div><button className="primary-action" disabled={!compare.length} onClick={() => { if (compare[0]) onAdd(compare[0]); }}>将首项设为主方案草稿</button></header><div className="design-compare-grid">{compare.map((methodId, index) => { const method = methods.find((item) => item.id === methodId); if (!method) return null; return <article key={method.id}><div><span>{index === 0 ? "PRIMARY CANDIDATE" : `ALTERNATIVE ${index}`}</span><button onClick={() => toggleCompare(method.id)}>移除</button></div><h2>{method.name}</h2><pre>{method.formula}</pre><dl><div><dt>估计 / 决策目标</dt><dd>{method.estimand}</dd></div><div><dt>数据结构</dt><dd>{method.dataShape}</dd></div><div><dt>失败规则</dt><dd>{method.failureRule}</dd></div></dl><button onClick={() => onOpenMethod(method.id)}>打开方法卡核对</button></article>; })}{!compare.length && <div className="empty-state">从“方法库”加入 1–3 个候选方法进行比较。</div>}</div></section>}
   </div>;
@@ -857,6 +963,8 @@ export default function Home() {
   const [apiError, setApiError] = useState("");
   const [projectMenu, setProjectMenu] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [interfaceTheme, setInterfaceTheme] = useState<InterfaceTheme>("graphite");
   const [detail, setDetail] = useState<DetailPanel | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatAgent, setChatAgent] = useState(3);
@@ -869,6 +977,14 @@ export default function Home() {
   const g1Submitted = Boolean(submittedGates[`${activeProject.id}:G1`]);
   const activeSubmittedCount = Object.keys(submittedGates).filter((key) => key.startsWith(`${activeProject.id}:`) && submittedGates[key]).length;
   const pageTitle = useMemo(() => navItems.find((item) => item.key === view)?.short ?? "研究旅程", [view]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("ai4ms-interface-theme");
+    const frame = window.requestAnimationFrame(() => {
+      if (saved === "graphite" || saved === "blueprint" || saved === "paper") setInterfaceTheme(saved);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -915,6 +1031,10 @@ export default function Home() {
   function showToast(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
+  }
+  function selectInterfaceTheme(theme: InterfaceTheme) {
+    setInterfaceTheme(theme);
+    window.localStorage.setItem("ai4ms-interface-theme", theme);
   }
   function decideSuggestion(id: number, state: SuggestionState) {
     setSuggestionStates((current) => ({ ...current, [id]: state }));
@@ -1137,7 +1257,7 @@ export default function Home() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-interface-theme={interfaceTheme}>
       <header className="topbar">
         <button className="brand" onClick={() => navigateView("journey")} aria-label="返回研究旅程"><span>AI</span>4MS</button>
         <nav className="topnav" aria-label="主导航">
@@ -1161,8 +1281,8 @@ export default function Home() {
             {userMenu && <div className="user-menu-popover">
               <strong>研究者工作区</strong><span>Human reviewer</span>
               <button onClick={() => { setUserMenu(false); openAgentChat(); }}>打开当前智能体</button>
-              <button onClick={() => { setUserMenu(false); setDetail({ eyebrow: "Workspace guide", title: "如何使用 AI4MS", description: "按 S0–S9 推进科研，每个阶段与专属智能体协作，阶段资产由人修改并在关键审批门确认。", bullets: ["智能体只提出建议和草稿", "所有查看按钮均打开对应内容或状态", "正式分析、接受风险和发布必须由人批准"] }); }}>使用说明</button>
-              <button onClick={() => { setUserMenu(false); showToast("界面偏好已保存"); }}>保存界面偏好</button>
+              <button onClick={() => { setUserMenu(false); window.open("/ai4ms-user-guide.html", "_blank", "noopener,noreferrer"); }}>使用说明</button>
+              <button onClick={() => { setUserMenu(false); setPreferencesOpen(true); }}>界面偏好</button>
             </div>}
           </div>
         </div>
@@ -1199,6 +1319,7 @@ export default function Home() {
 
       <ApprovalModal key={`${activeProject.id}:${activeStageData.gate}:${approvalOpen}`} open={approvalOpen} stageIndex={activeStage} onClose={() => setApprovalOpen(false)} onConfirm={confirmApproval} />
       <DetailModal detail={detail} onClose={() => setDetail(null)} />
+      <PreferencesModal open={preferencesOpen} value={interfaceTheme} onSelect={selectInterfaceTheme} onClose={() => setPreferencesOpen(false)} />
       <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[chatAgent] ?? []} busy={chatBusy} onClose={() => setChatOpen(false)} onSelectAgent={setChatAgent} onSend={sendAgentMessage} onCapture={syncAgentOutput} />
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
       <div className="screen-reader-status" aria-live="polite">当前页面：{pageTitle}</div>
