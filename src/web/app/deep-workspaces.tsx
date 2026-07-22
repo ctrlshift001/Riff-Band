@@ -460,7 +460,89 @@ export function EvidenceRecordPage({ record, onBack, onSave }: { record: Evidenc
   const [claim, setClaim] = useState("该研究支持 AI 作为通用目的技术，需要组织互补投资后才可能产生可观测绩效提升。");
   const [sample, setSample] = useState("企业层面纵向样本；具体口径需在全文核验后补充。");
   const [limits, setLimits] = useState("研究情境与当前中国上市公司样本并不完全一致，不直接外推效应大小。");
-  return <div className="deep-page evidence-record-page"><DeepHeader level="L3 · 论文证据卡" eyebrow={`${record.status} · ${record.year}`} title={record.title} description={`${record.authors} · ${record.stream} · ${record.method}`} trail={["证据库"]} onBack={onBack} actions={<><span className="source-level verified">{record.status}</span><button className="primary-action" onClick={() => onSave("论文卡人工修改已保存")}>保存论文卡</button></>} /><div className="record-layout"><section className="record-main"><nav className="editor-tabs">{["研究摘要", "证据提取", "主张连接", "核验记录"].map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}>{item}</button>)}</nav><div className="record-body">{tab === 0 && <div className="field-stack"><Field label="研究对象与样本"><textarea rows={5} value={sample} onChange={(event) => setSample(event.target.value)} /></Field><Field label="可用于当前课题的核心发现"><textarea rows={7} value={claim} onChange={(event) => setClaim(event.target.value)} /></Field><Field label="适用边界与限制"><textarea rows={6} value={limits} onChange={(event) => setLimits(event.target.value)} /></Field></div>}{tab === 1 && <div className="extraction-grid"><article><span>研究问题</span><textarea defaultValue="AI 与互补性组织投资如何共同影响生产率实现？" /></article><article><span>识别与方法</span><textarea defaultValue={record.method} /></article><article><span>变量与测量</span><textarea defaultValue="数字资本、组织资本与生产率结果。" /></article><article><span>主要结论</span><textarea defaultValue={claim} /></article></div>}{tab === 2 && <div className="claim-edge-list"><article><span>C01</span><div><strong>生成式 AI 的创新效应可能存在实现滞后</strong><p>连接类型：支持 · 强度：中 · 使用位置：理论与假设 H2</p></div><button onClick={() => onSave("已打开证据片段核验记录")}>查看证据片段</button></article><article><span>C02</span><div><strong>组织互补投资可能构成边界条件</strong><p>连接类型：机制启发 · 强度：中 · 使用位置：竞争解释</p></div><button onClick={() => onSave("已打开主张连接记录")}>编辑连接</button></article></div>}{tab === 3 && <div className="verification-list">{["题名、作者与年份已核对", "研究问题已人工概括", "方法与样本已从全文核验", "核心发现可定位到原文", "限制与外推边界已记录"].map((item, index) => <label key={item}><input type="checkbox" defaultChecked={index < 2 || record.status === "已核验"} /><span>{item}</span></label>)}</div>}</div></section><aside className="record-aside"><p className="eyebrow">Provenance</p><h2>来源与使用记录</h2><dl><div><dt>证据等级</dt><dd>{record.status}</dd></div><div><dt>进入课题</dt><dd>S1 文献综述</dd></div><div><dt>连接主张</dt><dd>2 条</dd></div><div><dt>最后修改</dt><dd>研究者 · 刚刚</dd></div></dl><div className="record-warning"><strong>引用边界</strong><p>摘要级或待全文来源不能直接支持核心结论；必须保留原始来源和人工概括记录。</p></div></aside></div></div>;
+  const [selectedClaim, setSelectedClaim] = useState<number | null>(null);
+  const [connectionTypes, setConnectionTypes] = useState<Record<number, string>>({ 0: "支持", 1: "机制启发" });
+  const [connectionNotes, setConnectionNotes] = useState<Record<number, string>>({
+    0: "用于说明数字技术的绩效影响可能经过组织调整后才显现；当前仅作为机制与时间窗口的背景证据。",
+    1: "用于构建组织互补能力的边界条件，不直接支持当前样本中的效应大小。",
+  });
+  const claimLinks = [
+    { id: "C01", title: "生成式 AI 的创新效应可能存在实现滞后", strength: "中", location: "理论与假设 H2", locator: "全文结果与讨论部分 · 待人工补充页码", excerpt: "作者报告技术投资与绩效改善之间存在调整期，并强调组织资本等互补投入的作用。" },
+    { id: "C02", title: "组织互补投资可能构成边界条件", strength: "中", location: "竞争解释", locator: "理论框架与稳健性讨论 · 待人工补充页码", excerpt: "论文将组织流程和人力资本视为技术价值实现的重要互补条件，适合作为机制启发而非直接因果证据。" },
+  ] as const;
+  const activeClaim = selectedClaim === null ? null : claimLinks[selectedClaim];
+
+  return (
+    <div className="deep-page evidence-record-page">
+      <DeepHeader
+        level="L3 · 论文证据卡"
+        eyebrow={record.status + " · " + record.year}
+        title={record.title}
+        description={record.authors + " · " + record.stream + " · " + record.method}
+        trail={["证据库"]}
+        onBack={onBack}
+        actions={<><span className="source-level verified">{record.status}</span><button className="primary-action" onClick={() => onSave("论文卡人工修改已保存")}>保存论文卡</button></>}
+      />
+      <div className="record-layout">
+        <section className="record-main">
+          <nav className="editor-tabs">{["研究摘要", "证据提取", "主张连接", "核验记录"].map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => { setTab(index); if (index !== 2) setSelectedClaim(null); }} key={item}>{item}</button>)}</nav>
+          <div className="record-body">
+            {tab === 0 && (
+              <div className="field-stack">
+                <Field label="研究对象与样本"><textarea rows={5} value={sample} onChange={(event) => setSample(event.target.value)} /></Field>
+                <Field label="可用于当前课题的核心发现"><textarea rows={7} value={claim} onChange={(event) => setClaim(event.target.value)} /></Field>
+                <Field label="适用边界与限制"><textarea rows={6} value={limits} onChange={(event) => setLimits(event.target.value)} /></Field>
+              </div>
+            )}
+            {tab === 1 && (
+              <div className="extraction-grid">
+                <article><span>研究问题</span><textarea defaultValue="AI 与互补性组织投资如何共同影响生产率实现？" /></article>
+                <article><span>识别与方法</span><textarea defaultValue={record.method} /></article>
+                <article><span>变量与测量</span><textarea defaultValue="数字资本、组织资本与生产率结果。" /></article>
+                <article><span>主要结论</span><textarea defaultValue={claim} /></article>
+              </div>
+            )}
+            {tab === 2 && (
+              <>
+                <div className="claim-edge-list">
+                  {claimLinks.map((item, index) => (
+                    <article className={selectedClaim === index ? "is-open" : ""} key={item.id}>
+                      <span>{item.id}</span>
+                      <div><strong>{item.title}</strong><p>连接类型：{connectionTypes[index]} · 强度：{item.strength} · 使用位置：{item.location}</p></div>
+                      <button aria-expanded={selectedClaim === index} aria-controls="claim-link-detail" onClick={() => setSelectedClaim((current) => current === index ? null : index)}>{selectedClaim === index ? "收起详情" : index === 0 ? "查看证据片段" : "编辑连接"}</button>
+                    </article>
+                  ))}
+                </div>
+                {activeClaim && selectedClaim !== null && (
+                  <section className="claim-link-detail" id="claim-link-detail">
+                    <header><div><p className="eyebrow">Claim-evidence edge · {activeClaim.id}</p><h3>{activeClaim.title}</h3></div><button className="modal-close" onClick={() => setSelectedClaim(null)} aria-label="关闭主张连接详情">×</button></header>
+                    <dl>
+                      <div><dt>原文定位</dt><dd>{activeClaim.locator}</dd></div>
+                      <div><dt>证据强度</dt><dd>{activeClaim.strength} · 仍需全文人工核验</dd></div>
+                      <div><dt>使用位置</dt><dd>{activeClaim.location}</dd></div>
+                      <div><dt>引用边界</dt><dd>不能据此直接外推当前课题的因果效应大小。</dd></div>
+                    </dl>
+                    <div className="claim-source-fragment"><span>证据片段人工概括</span><p>{activeClaim.excerpt}</p></div>
+                    <div className="two-field-row">
+                      <Field label="连接类型"><select value={connectionTypes[selectedClaim]} onChange={(event) => setConnectionTypes((current) => ({ ...current, [selectedClaim]: event.target.value }))}><option>支持</option><option>反驳</option><option>机制启发</option><option>背景</option><option>冲突</option></select></Field>
+                      <Field label="强度与使用备注"><textarea rows={5} value={connectionNotes[selectedClaim]} onChange={(event) => setConnectionNotes((current) => ({ ...current, [selectedClaim]: event.target.value }))} /></Field>
+                    </div>
+                    <footer><span>保存只更新工作草稿；核心主张仍需在 G4 由人工审核。</span><button className="primary-action" onClick={() => onSave(activeClaim.id + " 主张—证据连接已保存")}>保存连接</button></footer>
+                  </section>
+                )}
+              </>
+            )}
+            {tab === 3 && <div className="verification-list">{["题名、作者与年份已核对", "研究问题已人工概括", "方法与样本已从全文核验", "核心发现可定位到原文", "限制与外推边界已记录"].map((item, index) => <label key={item}><input type="checkbox" defaultChecked={index < 2 || record.status === "已核验"} /><span>{item}</span></label>)}</div>}
+          </div>
+        </section>
+        <aside className="record-aside">
+          <p className="eyebrow">Provenance</p><h2>来源与使用记录</h2>
+          <dl><div><dt>证据等级</dt><dd>{record.status}</dd></div><div><dt>进入课题</dt><dd>S1 文献综述</dd></div><div><dt>连接主张</dt><dd>2 条</dd></div><div><dt>最后修改</dt><dd>研究者 · 刚刚</dd></div></dl>
+          <div className="record-warning"><strong>引用边界</strong><p>摘要级或待全文来源不能直接支持核心结论；必须保留原始来源和人工概括记录。</p></div>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 export function MethodRecordPage({ method, onBack, onAdd, onSave }: { method: MethodRecord; onBack: () => void; onAdd: () => void; onSave: (message: string) => void }) {
@@ -546,8 +628,135 @@ export function ApprovalGatePage({ gate, onBack, onOpenAsset, onSubmit }: { gate
   </div>;
 }
 
+const assetSections = [
+  {
+    title: "研究问题与研究边界",
+    status: "已核对",
+    source: "S0 TopicBrief · Revision 3",
+    summary: "明确研究对象、时间窗口、排除范围和可证伪的核心问题。",
+    content: "核心问题：生成式 AI 的采用是否以及通过何种组织机制影响企业创新质量？\n\n研究对象：中国 A 股非金融企业；样本窗口以数据合同最终批准范围为准。\n\n纳入范围：企业层面的 AI 采用、组织互补能力与创新结果。排除范围：仅讨论工具曝光但无法识别实际采用的观察、缺少可追溯来源的二手判断。\n\n停止条件：若处理变量无法形成稳定、可审计的时间变化，主识别设计必须回到 G1 重新审批。",
+  },
+  {
+    title: "理论机制与竞争解释",
+    status: "已核对",
+    source: "S2 TheoryGraph · Revision 4",
+    summary: "记录主机制、边界条件以及至少一个可以被数据区分的竞争解释。",
+    content: "主机制：AI 采用通过知识重组与搜索效率提升创新质量，组织互补能力强化这一作用。\n\n竞争解释 A：高质量企业同时更容易采用 AI 并产生创新，观察到的关系来自反向因果。\n竞争解释 B：行业冲击同时推动数字化投入与专利活动，关系来自共同趋势。\n\n可区分证据：采用前趋势、行业×年份冲击控制、机制变量时序与安慰剂结果。理论智能体可建议文字，但机制选择与删改由研究者确认。",
+  },
+  {
+    title: "主设计、备选设计与 estimand",
+    status: "待方法复核",
+    source: "S3 ResearchProtocol · Revision 4",
+    summary: "冻结目标量、主备识别设计、关键假设、失败规则和未采用理由。",
+    content: "目标量（estimand）：采用生成式 AI 对采用企业创新质量的平均处理效应。\n\n主设计：企业与年份固定效应面板模型；标准误按企业聚类。\n备选设计：具备清晰采用时点时使用分期 DID；存在可信外生工具时使用 IV。\n\n必须检查：处理前趋势、共同支持、聚类层级、模型设定和多重检验。\n失败规则：平行趋势或重叠条件严重失败时，不得把相关性结果表述为因果效应。",
+  },
+  {
+    title: "变量口径与数据约束",
+    status: "已核对",
+    source: "S4 DataContract · 草稿",
+    summary: "列出变量定义、数据来源、许可、缺失处理和不可越过的使用边界。",
+    content: "处理变量：企业 AI 采用指标，需保留来源文本、抽取规则、置信度与人工复核记录。\n结果变量：高质量专利占比、被引加权创新产出；窗口口径在正式运行前冻结。\n控制变量：规模、年龄、资本结构、研发投入及行业竞争度。\n\n数据约束：任何数据源必须登记许可与访问日期；受限数据不得上传外部模型；缺失、缩尾和样本排除规则必须写入分析计划与 do-file。",
+  },
+  {
+    title: "证据覆盖与冲突来源",
+    status: "1 条冲突",
+    source: "S1 EvidenceSet · Revision 5",
+    summary: "连接支持、反驳和背景证据，保留冲突而不是静默覆盖。",
+    content: "当前覆盖：12 篇核心论文、4 个研究流派、92% 核心主张可追溯。\n\n已披露冲突：不同研究对 AI 投资与创新产出的短期关系方向不一致，可能来自采用测量、行业构成与观察窗口差异。\n\n处理方式：正文区分短期产出与长期质量，不合并不可比 estimand；冲突论文保留在证据图中，并在 G4 对核心主张做降级或限定。",
+  },
+  {
+    title: "人工决定、风险和失败条件",
+    status: "需最终确认",
+    source: "G0–G3 Decision log",
+    summary: "汇总不可委托给智能体的选择、剩余风险、停止条件与下游失效影响。",
+    content: "人工决定：研究边界、理论机制、主备设计、变量代理、正式运行、失败结果解释与最终发布均由指定研究者审批。\n\n剩余风险：处理变量可能包含测量误差；采用时间可能不精确；行业共同冲击仍需更强检验。\n\n失败条件：关键诊断为阻塞时停止正式结论；修改 estimand、样本窗口或主模型会使 G1/G3 及受影响的下游资产失效。\n\n披露原则：智能体建议、人工修改、接受或拒绝及其理由全部进入版本和审计记录。",
+  },
+] as const;
+
 export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; onBack: () => void; onSave: (message: string) => void }) {
   const editable = gate.status === "draft";
   const [note, setNote] = useState("本 revision 汇总阶段交付、证据覆盖、人工决定、风险与下游影响。请在提交前完成最终核对。");
-  return <div className="deep-page asset-version-page"><DeepHeader level="L4 · 版本资产" eyebrow={`${gate.id} · Frozen asset revision`} title={gate.asset} description="查看审批对象的确定版本、内容哈希、上游依赖和与上一版本的差异。" trail={["人工审批中心", gate.title]} onBack={onBack} actions={<><span className="hash-chip">SHA-256 · 7c91…ae20</span>{editable && <button className="primary-action" onClick={() => onSave("审批资产说明已保存")}>保存资产说明</button>}</>} /><section className="asset-version-summary"><div><span>Revision</span><strong>4</strong></div><div><span>内容状态</span><strong>{editable ? "工作草稿" : "冻结快照"}</strong></div><div><span>生成角色</span><strong>研究者</strong></div><div><span>上游依赖</span><strong>6 项已锁定</strong></div></section><div className="asset-version-grid"><section className="asset-document"><div className="section-heading"><div><p className="eyebrow">Asset content</p><h2>资产摘要</h2></div><span>{editable ? "可人工修改" : "只读"}</span></div><Field label="版本说明"><textarea rows={6} value={note} onChange={(event) => setNote(event.target.value)} readOnly={!editable} /></Field><div className="asset-section-list">{["研究问题与研究边界", "理论机制与竞争解释", "主设计、备选设计与 estimand", "变量口径与数据约束", "证据覆盖与冲突来源", "人工决定、风险和失败条件"].map((item, index) => <article key={item}><span>0{index + 1}</span><div><strong>{item}</strong><small>{index === 4 ? "1 条冲突已披露" : "已包含在当前 revision"}</small></div><button onClick={() => onSave(`已打开：${item}`)}>展开</button></article>)}</div></section><aside className="version-provenance"><p className="eyebrow">Provenance</p><h2>版本血缘</h2><div className="provenance-chain"><article><span>S0–S2</span><strong>上游批准资产</strong><small>6 个 revision</small></article><i>↓</i><article><span>{gate.id}</span><strong>{gate.asset}</strong><small>当前 Revision 4</small></article><i>↓</i><article><span>下游</span><strong>等待审批结果</strong><small>尚未解锁</small></article></div><h3>与 Revision 3 的差异</h3><ul><li>新增 1 条冲突证据说明</li><li>修改主变量口径</li><li>补充失败条件与停止规则</li><li>明确下游交接字段</li></ul></aside></div></div>;
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [sectionText, setSectionText] = useState<Record<number, string>>(() => Object.fromEntries(assetSections.map((section, index) => [index, section.content])));
+  const openSection = expanded === null ? null : assetSections[expanded];
+
+  function toggleSection(index: number) {
+    const next = expanded === index ? null : index;
+    setExpanded(next);
+    if (next !== null) {
+      window.requestAnimationFrame(() => document.getElementById("asset-section-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+    }
+  }
+
+  return (
+    <div className="deep-page asset-version-page">
+      <DeepHeader
+        level="L4 · 版本资产"
+        eyebrow={gate.id + " · Frozen asset revision"}
+        title={gate.asset}
+        description="查看审批对象的确定版本、内容哈希、上游依赖和与上一版本的差异。"
+        trail={["人工审批中心", gate.title]}
+        onBack={onBack}
+        actions={<><span className="hash-chip">SHA-256 · 7c91…ae20</span>{editable && <button className="primary-action" onClick={() => onSave("审批资产说明已保存")}>保存资产说明</button>}</>}
+      />
+      <section className="asset-version-summary">
+        <div><span>Revision</span><strong>4</strong></div>
+        <div><span>内容状态</span><strong>{editable ? "工作草稿" : "冻结快照"}</strong></div>
+        <div><span>生成角色</span><strong>研究者</strong></div>
+        <div><span>上游依赖</span><strong>6 项已锁定</strong></div>
+      </section>
+      <div className="asset-version-grid">
+        <section className="asset-document">
+          <div className="section-heading"><div><p className="eyebrow">Asset content</p><h2>资产摘要</h2></div><span>{editable ? "可人工修改" : "只读"}</span></div>
+          <Field label="版本说明"><textarea rows={6} value={note} onChange={(event) => setNote(event.target.value)} readOnly={!editable} /></Field>
+          <div className="asset-section-list">
+            {assetSections.map((section, index) => (
+              <article className={expanded === index ? "is-open" : ""} key={section.title}>
+                <span>{"0" + (index + 1)}</span>
+                <div><strong>{section.title}</strong><small>{section.status} · {section.source}</small></div>
+                <button aria-expanded={expanded === index} aria-controls="asset-section-detail" onClick={() => toggleSection(index)}>{expanded === index ? "收起" : "展开"}</button>
+              </article>
+            ))}
+          </div>
+          {openSection && expanded !== null && (
+            <section className="asset-section-detail" id="asset-section-detail" aria-live="polite">
+              <header>
+                <div><p className="eyebrow">Asset section · {"0" + (expanded + 1)}</p><h3>{openSection.title}</h3><p>{openSection.summary}</p></div>
+                <button className="modal-close" onClick={() => setExpanded(null)} aria-label="关闭资产章节">×</button>
+              </header>
+              <dl>
+                <div><dt>来源资产</dt><dd>{openSection.source}</dd></div>
+                <div><dt>核对状态</dt><dd>{openSection.status}</dd></div>
+                <div><dt>当前权限</dt><dd>{editable ? "研究者可编辑并保存" : "冻结版本，只读查看"}</dd></div>
+                <div><dt>血缘影响</dt><dd>语义修改后需重新运行一致性检查，并评估受影响审批是否失效。</dd></div>
+              </dl>
+              <label className="asset-section-editor">
+                <span>章节正文</span>
+                <textarea
+                  rows={15}
+                  value={sectionText[expanded]}
+                  onChange={(event) => setSectionText((current) => ({ ...current, [expanded]: event.target.value }))}
+                  readOnly={!editable}
+                />
+              </label>
+              <footer>
+                <span>{editable ? "保存会形成新的工作草稿记录；提交审批后冻结。" : "这是审批时的确定快照，不能直接修改。"}</span>
+                <div><button onClick={() => setExpanded(null)}>关闭</button>{editable && <button className="primary-action" onClick={() => onSave("资产章节「" + openSection.title + "」已保存")}>保存本章节</button>}</div>
+              </footer>
+            </section>
+          )}
+        </section>
+        <aside className="version-provenance">
+          <p className="eyebrow">Provenance</p><h2>版本血缘</h2>
+          <div className="provenance-chain">
+            <article><span>S0–S2</span><strong>上游批准资产</strong><small>6 个 revision</small></article><i>↓</i>
+            <article><span>{gate.id}</span><strong>{gate.asset}</strong><small>当前 Revision 4</small></article><i>↓</i>
+            <article><span>下游</span><strong>等待审批结果</strong><small>尚未解锁</small></article>
+          </div>
+          <h3>与 Revision 3 的差异</h3>
+          <ul><li>新增 1 条冲突证据说明</li><li>修改主变量口径</li><li>补充失败条件与停止规则</li><li>明确下游交接字段</li></ul>
+        </aside>
+      </div>
+    </div>
+  );
 }
