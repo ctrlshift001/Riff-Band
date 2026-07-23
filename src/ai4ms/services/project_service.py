@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from ai4ms.db.store import ProjectStore
+from ai4ms.db.store import ProjectStore, RevisionConflictError
 from ai4ms.delivery import DeliveryExportError, DeliveryExportService
 from ai4ms.literature.service import LiteratureSearchService
 from ai4ms.runners import AnalysisRunnerService
@@ -19,6 +19,8 @@ from ai4ms.services.models import (
     StageDecisionRequest,
     StageStatus,
     StageUpdateRequest,
+    StageWorkspaceUpdateRequest,
+    UpdateProjectRequest,
 )
 from ai4ms.services.stage_generation import (
     StageContentValidationError,
@@ -35,6 +37,10 @@ class StageNotFoundError(LookupError):
 
 
 class StageLockedError(RuntimeError):
+    pass
+
+
+class StageRevisionConflictError(RuntimeError):
     pass
 
 
@@ -95,6 +101,14 @@ class ProjectService:
         self._require_stage(stage_key)
         try:
             return self.store.get_stage(project_id, stage_key)
+        except KeyError as exc:
+            raise ProjectNotFoundError(project_id) from exc
+
+    def update_project(self, project_id: str, request: UpdateProjectRequest) -> dict[str, Any]:
+        try:
+            return self._enrich(
+                self.store.update_project(project_id, request.title, request.initial_idea)
+            )
         except KeyError as exc:
             raise ProjectNotFoundError(project_id) from exc
 
@@ -228,6 +242,32 @@ class ProjectService:
                 change_reason=request.change_reason,
                 author_type=request.author_type,
             )
+        except KeyError as exc:
+            raise ProjectNotFoundError(project_id) from exc
+        return self._enrich(result)
+
+    def update_stage_workspace(
+        self,
+        project_id: str,
+        stage_key: str,
+        request: StageWorkspaceUpdateRequest,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        self._ensure_unlocked(project, stage_key)
+        stage = next(item for item in project["stages"] if item["key"] == stage_key)
+        content = deepcopy(stage.get("content") or {})
+        content["_workspace"] = request.workspace.model_dump()
+        try:
+            result = self.store.update_stage(
+                project_id=project_id,
+                stage_key=stage_key,
+                content=content,
+                change_reason=request.change_reason,
+                author_type="human",
+                expected_revision=request.expected_revision,
+            )
+        except RevisionConflictError as exc:
+            raise StageRevisionConflictError(str(exc)) from exc
         except KeyError as exc:
             raise ProjectNotFoundError(project_id) from exc
         return self._enrich(result)

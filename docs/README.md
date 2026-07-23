@@ -45,7 +45,7 @@
 - 工程参考基线：AI4MS DevPack `v0.3`；
 - 当前 Git 分支：`ai4ms`；
 - 当前代码仍保留 RiffBand 兼容入口；
-- 十阶段 Next.js/FastAPI/SQLite、不可变 revision、人工审批、分阶段 Agent、Stata BYOL Runner、证据关联和导出已经可运行；Docker 单入口仍需在装有 Docker 的机器完成最终 smoke test；
+- 十阶段 Next.js 已与 FastAPI/SQLite 的项目、工作区 revision 和人工批准打通；模型、检索、Runner、证据和导出后端能力仍需逐页替换前端演示交互；Docker 单入口代码已完成，仍需在装有 Docker 的机器完成最终 smoke test；
 - 最终比赛只交付带浏览器 GUI 的 Docker 镜像和部署说明；评委在本机启动并访问 `localhost`，项目没有公网网站；`/api/v1` 仅作为产品内部接口；
 - HTML 可视化报告是保留并升级的现有能力，不属于待删除的旧产品资料。
 

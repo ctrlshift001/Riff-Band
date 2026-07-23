@@ -9,7 +9,7 @@
 - 浏览器 GUI：`http://localhost:8000/`
 - 健康检查：`http://localhost:8000/healthz`
 
-项目没有公网网站。比赛只提交 Docker 部署包，评委在本机启动容器后访问 `http://localhost:8000/`。容器内仍运行 FastAPI，供 GUI 完成项目、阶段、模型、审批和导出操作；它属于产品内部实现，不是第二种交付方式。当前 Dockerfile 仍服务兼容静态入口，Next.js 单入口打包尚待发布阶段完成；Stata 不进入镜像，而是由可选外部 BYOL Runner 提供。
+项目没有公网网站。比赛只提交 Docker 部署包，评委在本机启动容器后访问 `http://localhost:8000/`。容器内运行 FastAPI，并由它在同一端口服务 Next.js 静态导出、`/api/v1`、报告下载和健康检查；内部 API 不是第二种交付方式。Stata 不进入镜像，而是由可选外部 BYOL Runner 提供。
 
 ## 2. 部署包文件
 
@@ -25,7 +25,9 @@ docs/DEPLOYMENT.md
 
 ## 3. 构建与启动
 
-最终实现必须支持：
+`Dockerfile` 使用两阶段构建：Node 阶段执行 `npm ci` 和 Next.js 静态导出，Python 阶段安装 FastAPI 并复制前端产物。最终运行镜像不包含 Node 开发环境。
+
+构建与启动：
 
 ```powershell
 docker build -t ai4ms-workbench:competition .
@@ -43,6 +45,14 @@ docker compose up --build
 ```
 
 容器进程必须监听 `0.0.0.0:8000`，宿主机只把它映射到 `127.0.0.1:8000`。启动完成后先检查 `/healthz`，再打开根路径使用 GUI。
+
+同一端口的路径约定：
+
+- `/`：Next.js 十阶段科研工作台；
+- `/_next/*`、`/favicon.svg`、`/ai4ms-user-guide.html`：前端静态资源；
+- `/api/v1/*`：GUI 使用的内部应用接口；
+- `/docs`：开发调试用 OpenAPI；
+- `/healthz`：容器健康检查。
 
 ## 4. 配置与密钥
 

@@ -65,6 +65,30 @@ export interface AnalysisPreflight {
   issues: Array<{ code: string; line?: number; message: string }>;
 }
 
+export interface StageWorkspacePayload {
+  title: string;
+  summary: string;
+  objective: string;
+  content: string;
+  scope: string;
+  evidence_note: string;
+  decision: string;
+  risk: string;
+  handoff: string;
+  human_confirmed: boolean;
+  sync_history: string[];
+  project_context?: {
+    code: string;
+    icon: string;
+    discipline: string;
+    sample_window: string;
+    keywords: string;
+    data_sources: string[];
+    owner: string;
+    reviewers: string;
+  } | null;
+}
+
 interface ApiErrorPayload {
   error?: { code?: string; message?: string };
   detail?: string | Array<{ msg?: string }>;
@@ -121,6 +145,13 @@ export function createProject(title: string, initialIdea: string): Promise<Proje
   });
 }
 
+export function updateProject(projectId: string, title: string, initialIdea: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title, initial_idea: initialIdea }),
+  });
+}
+
 export function saveStage(
   projectId: string,
   stageKey: string,
@@ -131,6 +162,26 @@ export function saveStage(
     method: "PUT",
     body: JSON.stringify({ content, change_reason: changeReason, author_type: "human" }),
   });
+}
+
+export function saveStageWorkspace(
+  projectId: string,
+  stageKey: string,
+  workspace: StageWorkspacePayload,
+  expectedRevision: number,
+  changeReason: string,
+): Promise<Project> {
+  return request<Project>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/workspace`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        workspace,
+        expected_revision: expectedRevision,
+        change_reason: changeReason,
+      }),
+    },
+  );
 }
 
 export function createStageDraft(

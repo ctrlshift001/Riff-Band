@@ -3,6 +3,10 @@
 .env
 .venv
 venv
+**/node_modules
+**/.next
+**/out
+**/dist
 workspace
 dist
 build

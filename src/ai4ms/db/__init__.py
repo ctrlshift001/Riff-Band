@@ -1,3 +1,3 @@
-from ai4ms.db.store import ProjectStore
+from ai4ms.db.store import ProjectStore, RevisionConflictError
 
-__all__ = ["ProjectStore"]
+__all__ = ["ProjectStore", "RevisionConflictError"]

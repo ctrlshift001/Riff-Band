@@ -65,10 +65,55 @@ class CreateProjectRequest(BaseModel):
         return value.strip()
 
 
+class UpdateProjectRequest(CreateProjectRequest):
+    pass
+
+
 class StageUpdateRequest(BaseModel):
     content: dict[str, Any]
     change_reason: str = Field(default="", max_length=500)
     author_type: str = Field(default="human", pattern="^(human|agent|import)$")
+
+
+class ProjectWorkspaceContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(default="", max_length=80)
+    icon: str = Field(default="研", max_length=4)
+    discipline: str = Field(default="管理科学研究", max_length=160)
+    sample_window: str = Field(default="", max_length=160)
+    keywords: str = Field(default="", max_length=2000)
+    data_sources: list[str] = Field(default_factory=list, max_length=50)
+    owner: str = Field(default="当前研究者", max_length=160)
+    reviewers: str = Field(default="导师 + 方法审核者", max_length=500)
+
+
+class StageWorkspaceContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(default="", max_length=500)
+    summary: str = Field(default="", max_length=8000)
+    objective: str = Field(default="", max_length=8000)
+    content: str = Field(default="", max_length=100_000)
+    scope: str = Field(default="", max_length=20_000)
+    evidence_note: str = Field(default="", max_length=20_000)
+    decision: str = Field(default="", max_length=20_000)
+    risk: str = Field(default="", max_length=20_000)
+    handoff: str = Field(default="", max_length=20_000)
+    human_confirmed: bool = False
+    sync_history: list[str] = Field(default_factory=list, max_length=100)
+    project_context: ProjectWorkspaceContext | None = None
+
+    @field_validator("sync_history")
+    @classmethod
+    def limit_sync_history_items(cls, values: list[str]) -> list[str]:
+        return [str(value).strip()[:1000] for value in values if str(value).strip()]
+
+
+class StageWorkspaceUpdateRequest(BaseModel):
+    workspace: StageWorkspaceContent
+    expected_revision: int = Field(ge=0)
+    change_reason: str = Field(default="", max_length=500)
 
 
 class StageDecisionRequest(BaseModel):

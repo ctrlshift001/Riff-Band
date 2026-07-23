@@ -19,6 +19,15 @@ LEGACY_STAGE_RENAMES: tuple[tuple[str, str], ...] = (
 )
 
 
+class RevisionConflictError(RuntimeError):
+    def __init__(self, expected_revision: int, current_revision: int):
+        self.expected_revision = expected_revision
+        self.current_revision = current_revision
+        super().__init__(
+            f"stage revision changed: expected {expected_revision}, current {current_revision}"
+        )
+
+
 def _now() -> str:
     from datetime import datetime, timezone
 
@@ -273,6 +282,21 @@ class ProjectStore:
                 return stage
         raise KeyError(stage_key)
 
+    def update_project(self, project_id: str, title: str, initial_idea: str) -> dict[str, Any]:
+        timestamp = _now()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE projects
+                SET title = ?, initial_idea = ?, updated_at = ?
+                WHERE project_id = ?
+                """,
+                (title, initial_idea, timestamp, project_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(project_id)
+        return self.get_project(project_id)
+
     def update_stage(
         self,
         project_id: str,
@@ -280,10 +304,14 @@ class ProjectStore:
         content: dict[str, Any],
         change_reason: str,
         author_type: str,
+        expected_revision: int | None = None,
     ) -> dict[str, Any]:
         timestamp = _now()
         with self._connect() as conn:
             state = self._get_stage_state(conn, project_id, stage_key)
+            current_revision = int(state["current_revision"])
+            if expected_revision is not None and current_revision != expected_revision:
+                raise RevisionConflictError(expected_revision, current_revision)
             self._write_revision(
                 conn,
                 project_id=project_id,

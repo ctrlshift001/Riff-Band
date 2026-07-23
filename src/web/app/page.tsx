@@ -4,11 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   createProject as createApiProject,
+  decideStage as decideApiStage,
   getProject as getApiProject,
   listProjects as listApiProjects,
-  saveStage as saveApiStage,
+  saveStageWorkspace as saveApiStageWorkspace,
+  updateProject as updateApiProject,
   type Project as ApiProject,
   type ProjectSummary as ApiProjectSummary,
+  type StageWorkspacePayload,
 } from "@/lib/api";
 import {
   ApprovalGatePage,
@@ -324,30 +327,100 @@ const initialProjects: ResearchProject[] = [
   },
 ];
 
+const newProjectPlaceholder: ResearchProject = {
+  id: "local-new-project",
+  name: "新建研究项目",
+  code: "NEW",
+  icon: "研",
+  discipline: "管理科学研究",
+  question: "请通过项目向导创建第一个研究课题。",
+  objective: "",
+  boundary: "",
+  sampleWindow: "",
+  keywords: "",
+  dataSources: [],
+  owner: "当前研究者",
+  reviewers: "导师 + 方法审核者",
+  stageIndex: 0,
+  status: "draft",
+  createdAt: new Date().toLocaleDateString("zh-CN"),
+};
+
 function apiStageIndex(currentStage: string) {
   const index = stages.findIndex((stage) => stage.key === currentStage || stage.id === currentStage);
   return index >= 0 ? index : 0;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stageWorkspace(content: Record<string, unknown>): Record<string, unknown> {
+  return asRecord(content._workspace) ?? content;
+}
+
+function projectContext(project: ResearchProject): NonNullable<StageWorkspacePayload["project_context"]> {
+  return {
+    code: project.code,
+    icon: project.icon,
+    discipline: project.discipline,
+    sample_window: project.sampleWindow,
+    keywords: project.keywords,
+    data_sources: project.dataSources,
+    owner: project.owner,
+    reviewers: project.reviewers,
+  };
+}
+
+function draftWorkspace(
+  draft: StageDraft,
+  context?: StageWorkspacePayload["project_context"],
+): StageWorkspacePayload {
+  return {
+    title: draft.title,
+    summary: draft.summary,
+    objective: draft.objective,
+    content: draft.content,
+    scope: draft.scope,
+    evidence_note: draft.evidenceNote,
+    decision: draft.decision,
+    risk: draft.risk,
+    handoff: draft.handoff,
+    human_confirmed: draft.humanConfirmed,
+    sync_history: draft.syncHistory,
+    project_context: context,
+  };
+}
+
 function mapApiProject(summary: ApiProjectSummary | ApiProject, existing?: ResearchProject): ResearchProject {
   const full = "stages" in summary ? summary : undefined;
   const designContent = full?.stages.find((stage) => stage.key === "design")?.content;
+  const problemContent = full?.stages.find((stage) => stage.key === "problem")?.content;
+  const problemWorkspace = problemContent ? stageWorkspace(problemContent) : undefined;
+  const context = asRecord(problemWorkspace?.project_context);
   const question = typeof designContent?.research_question === "string" ? designContent.research_question : summary.initial_idea;
-  const objective = typeof designContent?.research_objective === "string" ? designContent.research_objective : existing?.objective ?? "围绕当前研究问题形成可复核、可审批、可复现的管理科学研究。";
+  const objective = typeof problemWorkspace?.objective === "string"
+    ? problemWorkspace.objective
+    : typeof designContent?.estimand_or_objective === "string"
+      ? designContent.estimand_or_objective
+      : existing?.objective ?? "围绕当前研究问题形成可复核、可审批、可复现的管理科学研究。";
+  const contextText = (key: string, fallback: string) => typeof context?.[key] === "string" ? String(context[key]) : fallback;
   return {
     id: summary.project_id,
     name: summary.title,
-    code: existing?.code ?? summary.project_id.slice(0, 12).toUpperCase(),
-    icon: existing?.icon ?? (summary.title.trim().slice(0, 1) || "研"),
-    discipline: existing?.discipline ?? "管理科学研究",
+    code: contextText("code", existing?.code ?? summary.project_id.slice(0, 12).toUpperCase()),
+    icon: contextText("icon", existing?.icon ?? (summary.title.trim().slice(0, 1) || "研")),
+    discipline: contextText("discipline", existing?.discipline ?? "管理科学研究"),
     question,
     objective,
-    boundary: existing?.boundary ?? "研究对象、地区、行业与排除范围待在 S0 由研究者确认。",
-    sampleWindow: existing?.sampleWindow ?? "待确认",
-    keywords: existing?.keywords ?? "",
-    dataSources: existing?.dataSources ?? [],
-    owner: existing?.owner ?? "当前研究者",
-    reviewers: existing?.reviewers ?? "导师 + 方法审核者",
+    boundary: typeof problemWorkspace?.scope === "string" ? problemWorkspace.scope : existing?.boundary ?? "研究对象、地区、行业与排除范围待在 S0 由研究者确认。",
+    sampleWindow: contextText("sample_window", existing?.sampleWindow ?? "待确认"),
+    keywords: contextText("keywords", existing?.keywords ?? ""),
+    dataSources: Array.isArray(context?.data_sources) ? context.data_sources.filter((item): item is string => typeof item === "string") : existing?.dataSources ?? [],
+    owner: contextText("owner", existing?.owner ?? "当前研究者"),
+    reviewers: contextText("reviewers", existing?.reviewers ?? "导师 + 方法审核者"),
     stageIndex: apiStageIndex(summary.current_stage),
     status: summary.status === "active" ? "active" : "paused",
     createdAt: new Date(summary.created_at).toLocaleDateString("zh-CN"),
@@ -360,22 +433,34 @@ function mapApiDrafts(project: ApiProject, localProject: ResearchProject) {
     const index = stages.findIndex((stage) => stage.key === remoteStage.key);
     if (index < 0) return;
     const base = createLocalStageDraft(stages[index], localProject);
-    const content = remoteStage.content;
-    const text = (key: "title" | "summary" | "objective" | "content" | "scope" | "evidenceNote" | "decision" | "risk" | "handoff") => typeof content[key] === "string" ? String(content[key]) : base[key];
+    const workspace = stageWorkspace(remoteStage.content);
+    const text = (key: "title" | "summary" | "objective" | "content" | "scope" | "decision" | "risk" | "handoff") => typeof workspace[key] === "string" ? String(workspace[key]) : base[key];
     mapped[`${localProject.id}:${index}`] = {
       title: text("title"),
       summary: text("summary"),
       objective: text("objective"),
       content: text("content"),
       scope: text("scope"),
-      evidenceNote: text("evidenceNote"),
+      evidenceNote: typeof workspace.evidence_note === "string"
+        ? workspace.evidence_note
+        : typeof workspace.evidenceNote === "string"
+          ? workspace.evidenceNote
+          : base.evidenceNote,
       decision: text("decision"),
       risk: text("risk"),
       handoff: text("handoff"),
-      humanConfirmed: typeof content.humanConfirmed === "boolean" ? content.humanConfirmed : base.humanConfirmed,
+      humanConfirmed: typeof workspace.human_confirmed === "boolean"
+        ? workspace.human_confirmed
+        : typeof workspace.humanConfirmed === "boolean"
+          ? workspace.humanConfirmed
+          : base.humanConfirmed,
       version: remoteStage.revision || base.version,
       savedAt: remoteStage.revision_created_at ? new Date(remoteStage.revision_created_at).toLocaleString("zh-CN") : base.savedAt,
-      syncHistory: Array.isArray(content.syncHistory) ? content.syncHistory.filter((item): item is string => typeof item === "string") : base.syncHistory,
+      syncHistory: Array.isArray(workspace.sync_history)
+        ? workspace.sync_history.filter((item): item is string => typeof item === "string")
+        : Array.isArray(workspace.syncHistory)
+          ? workspace.syncHistory.filter((item): item is string => typeof item === "string")
+          : base.syncHistory,
     };
   });
   return mapped;
@@ -904,11 +989,15 @@ function ApprovalsView({ project, submittedGates, onOpenGate, onOpenDetail }: { 
 function ApprovalModal({
   open,
   stageIndex,
+  revision,
+  contentHash,
   onClose,
   onConfirm,
 }: {
   open: boolean;
   stageIndex: number;
+  revision: number;
+  contentHash: string | null;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -930,15 +1019,15 @@ function ApprovalModal({
       <section className="approval-modal" role="dialog" aria-modal="true" aria-labelledby="approval-title">
         <button className="modal-close" onClick={onClose} aria-label="关闭审批窗口">×</button>
         <p className="eyebrow">Human approval · {stage.gate}</p>
-        <h2 id="approval-title">提交“{stage.name}”审批</h2>
-        <p>本次提交将冻结当前 revision。审批人会看到与上一批准版的差异、证据状态和未解决风险。</p>
-        <div className="review-packet"><div><span>审批对象</span><strong>{stage.output}</strong></div><div><span>当前版本</span><strong>Revision 4 · 7c91…ae20</strong></div><div><span>默认批准人</span><strong>{copy.owner}</strong></div></div>
+        <h2 id="approval-title">人工批准“{stage.name}”</h2>
+        <p>你将以研究者身份批准当前 revision。批准后会记录人工决定，并解锁下一阶段。</p>
+        <div className="review-packet"><div><span>审批对象</span><strong>{stage.output}</strong></div><div><span>当前版本</span><strong>Revision {revision} · {contentHash ? `${contentHash.slice(0, 8)}…${contentHash.slice(-4)}` : "尚无内容哈希"}</strong></div><div><span>默认批准人</span><strong>{copy.owner}</strong></div></div>
         <h3>提交前由研究者确认</h3>
         <div className="modal-checks">
           {copy.checks.map((item, index) => <label key={item}><input type="checkbox" checked={checked[index]} onChange={() => setChecked((current) => current.map((value, itemIndex) => itemIndex === index ? !value : value))} /><span>{item}</span></label>)}
         </div>
         <label className="reason-field"><span>提交说明</span><textarea key={stage.gate} defaultValue={copy.note} /></label>
-        <div className="modal-actions"><button onClick={onClose}>继续修改</button><button className="primary-action" disabled={!allChecked} onClick={onConfirm}>确认提交人工审批</button></div>
+        <div className="modal-actions"><button onClick={onClose}>继续修改</button><button className="primary-action" disabled={!allChecked} onClick={onConfirm}>确认批准当前 Revision</button></div>
       </section>
     </div>
   );
@@ -958,6 +1047,7 @@ export default function Home() {
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [submittedGates, setSubmittedGates] = useState<Record<string, boolean>>({});
   const [apiProjectIds, setApiProjectIds] = useState<Record<string, boolean>>({});
+  const [apiProjects, setApiProjects] = useState<Record<string, ApiProject>>({});
   const [apiMode, setApiMode] = useState<"loading" | "connected" | "fallback">("loading");
   const [apiBusy, setApiBusy] = useState(false);
   const [apiError, setApiError] = useState("");
@@ -973,6 +1063,7 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
   const activeStageData = stages[activeStage];
+  const activeRemoteStage = apiProjects[activeProject.id]?.stages.find((stage) => stage.key === activeStageData.key);
   const deepRoute = deepStack[deepStack.length - 1];
   const g1Submitted = Boolean(submittedGates[`${activeProject.id}:G1`]);
   const activeSubmittedCount = Object.keys(submittedGates).filter((key) => key.startsWith(`${activeProject.id}:`) && submittedGates[key]).length;
@@ -995,7 +1086,14 @@ export default function Home() {
         setApiMode("connected");
         setApiError("");
         setApiProjectIds(Object.fromEntries(summaries.map((item) => [item.project_id, true])));
-        if (!summaries.length) return;
+        if (!summaries.length) {
+          setProjects([newProjectPlaceholder]);
+          setActiveProjectId(newProjectPlaceholder.id);
+          setActiveStage(0);
+          setQuestion(newProjectPlaceholder.question);
+          setDeepStack([{ kind: "project-wizard" }]);
+          return;
+        }
         const mapped = summaries.map((item) => mapApiProject(item));
         setProjects(mapped);
         setActiveProjectId(mapped[0].id);
@@ -1005,6 +1103,7 @@ export default function Home() {
           const full = await getApiProject(mapped[0].id);
           if (cancelled) return;
           const hydrated = mapApiProject(full, mapped[0]);
+          setApiProjects({ [full.project_id]: full });
           setProjects((current) => current.map((item) => item.id === hydrated.id ? hydrated : item));
           setStageDrafts((current) => ({ ...current, ...mapApiDrafts(full, hydrated) }));
           setActiveStage(hydrated.stageIndex);
@@ -1041,12 +1140,48 @@ export default function Home() {
     const verb = state === "accepted" ? "接受" : state === "modified" ? "转为人工修改" : state === "rejected" ? "拒绝" : "撤销处理";
     showToast(`已${verb}建议，决定记录已保存`);
   }
+  function applyApiProject(updated: ApiProject, preferred?: ResearchProject) {
+    const existing = preferred ?? projects.find((item) => item.id === updated.project_id);
+    const hydrated = mapApiProject(updated, existing);
+    setApiProjects((current) => ({ ...current, [updated.project_id]: updated }));
+    setApiProjectIds((current) => ({ ...current, [updated.project_id]: true }));
+    setProjects((current) => {
+      const found = current.some((item) => item.id === updated.project_id);
+      return found
+        ? current.map((item) => item.id === updated.project_id ? hydrated : item)
+        : [...current, hydrated];
+    });
+    setStageDrafts((current) => ({ ...current, ...mapApiDrafts(updated, hydrated) }));
+    if (activeProjectId === updated.project_id) {
+      setActiveStage(hydrated.stageIndex);
+      setQuestion(hydrated.question);
+    }
+    return hydrated;
+  }
   function confirmApproval() {
     setApprovalOpen(false);
-    if (/^G[0-5]$/.test(activeStageData.gate)) {
-      setSubmittedGates((current) => ({ ...current, [`${activeProject.id}:${activeStageData.gate}`]: true }));
+    if (!apiProjectIds[activeProject.id]) {
+      if (/^G[0-5]$/.test(activeStageData.gate)) {
+        setSubmittedGates((current) => ({ ...current, [`${activeProject.id}:${activeStageData.gate}`]: true }));
+      }
+      showToast(`${activeStageData.gate} 已在本地演示状态中标记`);
+      return;
     }
-    showToast(`${activeStageData.gate} 审批包已提交，AI 无法自行通过`);
+    setApiBusy(true);
+    void decideApiStage(
+      activeProject.id,
+      activeStageData.key,
+      "approve",
+      "研究者已人工核对当前 revision，并批准进入下一阶段。",
+    ).then((updated) => {
+      applyApiProject(updated);
+      setSubmittedGates((current) => ({ ...current, [`${activeProject.id}:${activeStageData.gate}`]: true }));
+      setApiError("");
+      showToast(`${activeStageData.gate} 已由研究者批准，流程进入下一阶段`);
+    }).catch((error) => {
+      setApiError(readApiError(error));
+      showToast(`审批未完成：${readApiError(error)}`);
+    }).finally(() => setApiBusy(false));
   }
   function navigateView(nextView: ViewKey) {
     setView(nextView);
@@ -1083,6 +1218,7 @@ export default function Home() {
       setApiBusy(true);
       void getApiProject(project.id).then((full) => {
         const hydrated = mapApiProject(full, project);
+        setApiProjects((current) => ({ ...current, [full.project_id]: full }));
         setProjects((current) => current.map((item) => item.id === hydrated.id ? hydrated : item));
         setStageDrafts((current) => ({ ...current, ...mapApiDrafts(full, hydrated) }));
         setActiveStage(hydrated.stageIndex);
@@ -1145,16 +1281,31 @@ export default function Home() {
     setStageDrafts((current) => ({ ...current, [key]: draft }));
     showToast(message);
     if (apiProjectIds[projectId]) {
+      const remoteProject = apiProjects[projectId];
+      const remoteStage = remoteProject?.stages.find((item) => item.key === stages[stageIndex].key);
+      if (!remoteStage) {
+        setApiError("当前项目尚未完成后端加载，请重新进入项目后再保存");
+        showToast("后端阶段尚未加载，本地编辑已保留");
+        return;
+      }
+      const existingWorkspace = stageWorkspace(remoteStage.content);
+      const existingContext = asRecord(existingWorkspace.project_context) as StageWorkspacePayload["project_context"];
       setApiBusy(true);
-      void saveApiStage(projectId, stages[stageIndex].key, { ...draft }, message).then((updated) => {
-        const existing = projects.find((item) => item.id === projectId);
-        const hydrated = mapApiProject(updated, existing);
-        setProjects((current) => current.map((item) => item.id === projectId ? hydrated : item));
+      void saveApiStageWorkspace(
+        projectId,
+        stages[stageIndex].key,
+        draftWorkspace(draft, existingContext),
+        remoteStage.revision,
+        message,
+      ).then((updated) => {
+        applyApiProject(updated);
         setApiError("");
         showToast(`${stages[stageIndex].id} 已同步到 FastAPI revision`);
       }).catch((error) => {
         setApiError(readApiError(error));
-        showToast("本地草稿已保存，后端同步待重试");
+        showToast(error instanceof ApiError && error.code === "revision_conflict"
+          ? "阶段已有新版本，请重新进入项目后合并修改"
+          : "本地编辑已保留，后端同步待重试");
       }).finally(() => setApiBusy(false));
     }
   }
@@ -1166,28 +1317,58 @@ export default function Home() {
   }
   function completeProject(project: ResearchProject) {
     const exists = projects.some((item) => item.id === project.id);
+    const isApiProject = Boolean(apiProjectIds[project.id]);
+    if (apiMode === "connected") {
+      setApiBusy(true);
+      const persist = isApiProject
+        ? updateApiProject(project.id, project.name, project.question)
+        : createApiProject(project.name, project.question);
+      void persist.then(async (remoteProject) => {
+        const problemStage = remoteProject.stages.find((stage) => stage.key === "problem");
+        if (!problemStage) throw new Error("后端缺少 S0 阶段");
+        const localDraft = stageDrafts[`${project.id}:0`] ?? createLocalStageDraft(stages[0], project);
+        const updatedDraft = {
+          ...localDraft,
+          objective: project.objective,
+          scope: project.boundary,
+          savedAt: "刚刚由研究者保存",
+        };
+        return saveApiStageWorkspace(
+          remoteProject.project_id,
+          "problem",
+          draftWorkspace(updatedDraft, projectContext(project)),
+          problemStage.revision,
+          exists ? "更新项目设置" : "创建项目工作区",
+        );
+      }).then((updated) => {
+        const hydrated = mapApiProject(updated, { ...project, id: updated.project_id });
+        setApiProjects((current) => ({ ...current, [updated.project_id]: updated }));
+        setApiProjectIds((current) => ({ ...current, [updated.project_id]: true }));
+        setProjects((current) => [
+          ...current.filter((item) => item.id !== project.id && item.id !== updated.project_id && item.id !== newProjectPlaceholder.id),
+          hydrated,
+        ]);
+        setStageDrafts((current) => ({ ...current, ...mapApiDrafts(updated, hydrated) }));
+        setActiveProjectId(updated.project_id);
+        setActiveStage(hydrated.stageIndex);
+        setQuestion(hydrated.question);
+        setView("journey");
+        replaceDeep({ kind: "project-overview", projectId: updated.project_id });
+        setApiError("");
+        showToast(exists ? "项目设置已同步到 FastAPI" : "新项目已创建并同步到 FastAPI");
+      }).catch((error) => {
+        setApiError(readApiError(error));
+        showToast(`项目保存失败：${readApiError(error)}`);
+      }).finally(() => setApiBusy(false));
+      return;
+    }
     setProjects((current) => exists ? current.map((item) => item.id === project.id ? project : item) : [...current, project]);
     setActiveProjectId(project.id);
     setActiveStage(project.stageIndex);
     setQuestion(project.question);
     setView("journey");
     replaceDeep({ kind: "project-overview", projectId: project.id });
-    showToast(exists ? "项目设置已保存" : "新项目已创建并加入项目列表");
-    if (!exists && apiMode === "connected") {
-      setApiBusy(true);
-      void createApiProject(project.name, project.question).then((created) => {
-        const hydrated = mapApiProject(created, { ...project, id: created.project_id });
-        setProjects((current) => current.map((item) => item.id === project.id ? hydrated : item));
-        setApiProjectIds((current) => ({ ...current, [created.project_id]: true }));
-        setActiveProjectId(created.project_id);
-        replaceDeep({ kind: "project-overview", projectId: created.project_id });
-        setApiError("");
-        showToast("新项目已创建并同步到 FastAPI");
-      }).catch((error) => {
-        setApiError(readApiError(error));
-        showToast("项目已保存在前端，后端创建待重试");
-      }).finally(() => setApiBusy(false));
-    }
+    showToast(exists ? "项目设置已保存在本地演示状态" : "新项目已加入本地演示列表");
   }
   function applyIssueFix(stageIndex: number, issueId: string, value: string, resolve: boolean) {
     const draft = getDraft(stageIndex);
@@ -1317,7 +1498,15 @@ export default function Home() {
         </div>
       </main>
 
-      <ApprovalModal key={`${activeProject.id}:${activeStageData.gate}:${approvalOpen}`} open={approvalOpen} stageIndex={activeStage} onClose={() => setApprovalOpen(false)} onConfirm={confirmApproval} />
+      <ApprovalModal
+        key={`${activeProject.id}:${activeStageData.gate}:${approvalOpen}`}
+        open={approvalOpen}
+        stageIndex={activeStage}
+        revision={activeRemoteStage?.revision ?? getDraft(activeStage).version}
+        contentHash={activeRemoteStage?.content_hash ?? null}
+        onClose={() => setApprovalOpen(false)}
+        onConfirm={confirmApproval}
+      />
       <DetailModal detail={detail} onClose={() => setDetail(null)} />
       <PreferencesModal open={preferencesOpen} value={interfaceTheme} onSelect={selectInterfaceTheme} onClose={() => setPreferencesOpen(false)} />
       <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[chatAgent] ?? []} busy={chatBusy} onClose={() => setChatOpen(false)} onSelectAgent={setChatAgent} onSend={sendAgentMessage} onCapture={syncAgentOutput} />

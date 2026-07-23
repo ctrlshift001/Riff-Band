@@ -45,11 +45,19 @@ npm run start
 
 ## 当前连接范围
 
-- 项目创建、列表和切换已连接 SQLite；
-- S0-S9 状态、结构草稿、JSON 阶段资产和不可变 revision 已连接 FastAPI；
-- S0-S9 模型草稿已连接；S1 支持多源检索与证据综述，S6 支持 Stata Runner 预检和提交运行，S9 支持生成与下载 HTML/ZIP 交付包；
-- `approve/request_changes/reject` 人工决定已连接，批准后自动解锁下一阶段；
-- 顶层证据库、方法库和 Stata Runs 独立视图仍含演示数据；S0-S9 阶段资产中的检索、方法候选、Run、Claim-Evidence 和交付数据来自真实 API。
+- 项目创建、基本信息更新、列表、切换和 SQLite 持久化已连接；
+- S0-S9 当前状态、工作区草稿和不可变 revision 已连接 FastAPI；
+- 工作区保存使用专用 `PATCH .../workspace` 接口，审批使用真实 human decision 接口；
+- 模型草稿、S1 多源检索、S6 Runner 和 S9 HTML/ZIP 导出的 API 客户端与后端路由已经存在，后续逐个替换相应页面中的演示交互；
+- 顶层证据库、方法库、Stata Runs、智能体对话和部分审批详情仍含演示数据，不能把这些视图中的示例数字当作真实科研结果。
+
+## 前后端数据契约
+
+- 每个阶段的顶层 `content` 是后端规范对象，例如 S1 的 `papers`、S5 的 `model_specifications`、S8 的 `claims` 和 S9 的 `exports`；
+- 新版界面的长文本编辑内容只写入 `content._workspace`，不得使用通用草稿覆盖整个 `content`；
+- 工作区 DTO 由 FastAPI/Pydantic 校验，前端保存时必须携带 `expected_revision`；
+- revision 不一致时后端返回 `409 revision_conflict`，前端保留本地编辑并要求重新加载合并；
+- 项目向导资料保存在 S0 的 `_workspace.project_context`，项目名称与初始问题同时更新到项目记录。
 
 ## 当前前端能力
 
@@ -61,4 +69,4 @@ npm run start
 
 本轮仓库核对和验收结果见 [`../../docs/ai4ms/REPOSITORY_AUDIT_2026-07-21.md`](../../docs/ai4ms/REPOSITORY_AUDIT_2026-07-21.md)。
 
-`static/` 是 FastAPI 8000 根路径仍在服务的旧静态兼容入口。开发和演示新版界面应使用 Next.js 的 3000 端口；最终 Docker 统一入口将在发布阶段完成。
+`static/` 只在没有 Next.js 构建产物时作为旧静态兼容入口。Docker 会将 `out/` 复制到镜像内的 `src/web/dist/`，FastAPI 在 `8000` 端口优先服务新版界面；本地前端开发仍使用 `3000` 端口和 API 重写。

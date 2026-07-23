@@ -23,12 +23,15 @@ from ai4ms.services.models import (
     LiteratureSearchRequest,
     StageDecisionRequest,
     StageUpdateRequest,
+    StageWorkspaceUpdateRequest,
+    UpdateProjectRequest,
 )
 from ai4ms.services.project_service import (
     ProjectNotFoundError,
     ProjectService,
     StageLockedError,
     StageNotFoundError,
+    StageRevisionConflictError,
 )
 from ai4ms.services.stage_generation import (
     StageContentValidationError,
@@ -39,8 +42,18 @@ from ai4ms.services.stage_generation import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-WEB_ROOT = REPO_ROOT / "src" / "web" / "static"
 load_dotenv(REPO_ROOT / ".env", override=False)
+
+
+def _web_root() -> Path:
+    configured = os.environ.get("AI4MS_WEB_ROOT", "").strip()
+    candidates = [
+        Path(configured) if configured else None,
+        REPO_ROOT / "src" / "web" / "dist",
+        REPO_ROOT / "src" / "web" / "out",
+        REPO_ROOT / "src" / "web" / "static",
+    ]
+    return next((path for path in candidates if path is not None and path.exists()), REPO_ROOT / "src" / "web" / "static")
 
 
 def _default_data_dir() -> Path:
@@ -55,6 +68,7 @@ def create_app(
     analysis_runner: AnalysisRunnerService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
+    web_root = _web_root()
     service = ProjectService(
         ProjectStore(resolved_data_dir / "ai4ms.db"),
         resolved_data_dir,
@@ -69,6 +83,7 @@ def create_app(
         description="面向管理科学的本地优先 AI 科研工作台。",
     )
     app.state.project_service = service
+    app.state.web_root = web_root
 
     origins = [item.strip() for item in os.environ.get("AI4MS_CORS_ORIGINS", "*").split(",") if item.strip()]
     app.add_middleware(
@@ -78,9 +93,6 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    if WEB_ROOT.exists():
-        app.mount("/assets", StaticFiles(directory=WEB_ROOT), name="assets")
 
     def get_service(request: Request) -> ProjectService:
         return request.app.state.project_service
@@ -96,6 +108,10 @@ def create_app(
     @app.exception_handler(StageLockedError)
     async def stage_locked(_request: Request, exc: StageLockedError):
         return _json_error(status.HTTP_409_CONFLICT, "stage_locked", str(exc))
+
+    @app.exception_handler(StageRevisionConflictError)
+    async def stage_revision_conflict(_request: Request, exc: StageRevisionConflictError):
+        return _json_error(status.HTTP_409_CONFLICT, "revision_conflict", str(exc))
 
     @app.exception_handler(StageGenerationNotSupportedError)
     async def generation_not_supported(_request: Request, exc: StageGenerationNotSupportedError):
@@ -123,7 +139,7 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     async def web_workbench():
-        index = WEB_ROOT / "index.html"
+        index = web_root / "index.html"
         if not index.exists():
             raise HTTPException(status_code=503, detail="web workbench assets are unavailable")
         return FileResponse(index)
@@ -172,6 +188,10 @@ def create_app(
     async def get_project(project_id: str, request: Request):
         return get_service(request).get_project(project_id)
 
+    @app.patch("/api/v1/projects/{project_id}", tags=["projects"])
+    async def update_project(project_id: str, payload: UpdateProjectRequest, request: Request):
+        return get_service(request).update_project(project_id, payload)
+
     @app.get("/api/v1/projects/{project_id}/stages/current", tags=["stages"])
     async def get_current_stage(project_id: str, request: Request):
         project = get_service(request).get_project(project_id)
@@ -185,6 +205,15 @@ def create_app(
     @app.put("/api/v1/projects/{project_id}/stages/{stage_key}", tags=["stages"])
     async def update_stage(project_id: str, stage_key: str, payload: StageUpdateRequest, request: Request):
         return get_service(request).update_stage(project_id, stage_key, payload)
+
+    @app.patch("/api/v1/projects/{project_id}/stages/{stage_key}/workspace", tags=["stages"])
+    async def update_stage_workspace(
+        project_id: str,
+        stage_key: str,
+        payload: StageWorkspaceUpdateRequest,
+        request: Request,
+    ):
+        return get_service(request).update_stage_workspace(project_id, stage_key, payload)
 
     @app.post("/api/v1/projects/{project_id}/stages/{stage_key}/draft", tags=["stages"])
     async def create_stage_draft(project_id: str, stage_key: str, payload: DraftRequest, request: Request):
@@ -232,6 +261,11 @@ def create_app(
             return get_service(request).decide_stage(project_id, stage_key, payload)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if web_root.name == "static":
+        app.mount("/assets", StaticFiles(directory=web_root), name="legacy-assets")
+    elif web_root.exists():
+        app.mount("/", StaticFiles(directory=web_root, html=True), name="web")
 
     return app
 

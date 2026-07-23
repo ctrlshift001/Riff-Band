@@ -172,8 +172,13 @@ def test_health_meta_and_web_assets(tmp_path):
 
     page = client.get("/")
     assert page.status_code == 200
-    assert "AI4MS 科研工作台" in page.text
-    assert client.get("/assets/app.js").status_code == 200
+    assert "AI4MS" in page.text
+    if client.app.state.web_root.name == "static":
+        assert client.get("/assets/app.js").status_code == 200
+    else:
+        assert "/_next/static/" in page.text
+        assert client.get("/favicon.svg").status_code == 200
+        assert client.get("/ai4ms-user-guide.html").status_code == 200
 
 
 def test_project_stage_gate_and_revision_flow(tmp_path):
@@ -363,6 +368,70 @@ def test_validation_and_missing_resources(tmp_path):
     unknown_stage = client.get(f"/api/v1/projects/{project['project_id']}/stages/unknown")
     assert unknown_stage.status_code == 404
     assert unknown_stage.json()["error"]["code"] == "stage_not_found"
+
+
+def test_stage_workspace_update_preserves_canonical_content_and_detects_conflicts(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    project = _create_project(client)
+    project_id = project["project_id"]
+    problem = project["stages"][0]
+    canonical_content = dict(problem["content"])
+
+    payload = {
+        "workspace": {
+            "title": "问题识别工作资产",
+            "summary": "围绕当前研究问题形成可审阅说明。",
+            "objective": "明确研究问题与边界。",
+            "content": "研究者编辑的说明正文。",
+            "scope": "平台企业。",
+            "evidence_note": "文献证据待补充。",
+            "decision": "保留当前问题。",
+            "risk": "数据不可得时收缩范围。",
+            "handoff": "交付给文献检索阶段。",
+            "human_confirmed": True,
+            "sync_history": ["研究者保存"],
+        },
+        "expected_revision": problem["revision"],
+        "change_reason": "Save workspace notes",
+    }
+    saved = client.patch(
+        f"/api/v1/projects/{project_id}/stages/problem/workspace",
+        json=payload,
+    )
+
+    assert saved.status_code == 200
+    updated_stage = saved.json()["stages"][0]
+    assert updated_stage["revision"] == problem["revision"] + 1
+    for key, value in canonical_content.items():
+        assert updated_stage["content"][key] == value
+    assert updated_stage["content"]["_workspace"]["evidence_note"] == "文献证据待补充。"
+
+    conflict = client.patch(
+        f"/api/v1/projects/{project_id}/stages/problem/workspace",
+        json=payload,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "revision_conflict"
+
+    invalid = dict(payload)
+    invalid["expected_revision"] = updated_stage["revision"]
+    invalid["workspace"] = {**payload["workspace"], "papers": []}
+    response = client.patch(
+        f"/api/v1/projects/{project_id}/stages/problem/workspace",
+        json=invalid,
+    )
+    assert response.status_code == 422
+
+    renamed = client.patch(
+        f"/api/v1/projects/{project_id}",
+        json={
+            "title": "平台企业 AI 采用研究",
+            "initial_idea": "平台企业采用 AI 后如何改变创新行为？",
+        },
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "平台企业 AI 采用研究"
+    assert renamed.json()["initial_idea"] == "平台企业采用 AI 后如何改变创新行为？"
 
 
 def test_complete_s0_to_s9_flow(tmp_path):

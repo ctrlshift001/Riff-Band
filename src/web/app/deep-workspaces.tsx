@@ -271,14 +271,14 @@ export function StageDraftWorkspace({
     const fields = [form.title, form.summary, form.objective, form.content, form.scope, form.evidenceNote, form.decision, form.risk, form.handoff];
     return Math.round((fields.filter((item) => item.trim().length > 24).length / fields.length) * 100);
   }, [form]);
-  const save = (newVersion: boolean) => {
-    const next = { ...form, version: newVersion ? form.version + 1 : form.version, savedAt: "刚刚由研究者保存" };
+  const save = () => {
+    const next = { ...form, version: form.version + 1, savedAt: "刚刚由研究者保存" };
     setForm(next);
     setDirty(false);
-    onSave(next, newVersion ? `已创建 Revision ${next.version}` : "草稿修改已保存");
+    onSave(next, `已创建 Revision ${next.version}`);
   };
   const openChat = () => {
-    if (dirty) save(false);
+    if (dirty) save();
     onOpenChat();
   };
   return (
@@ -290,7 +290,7 @@ export function StageDraftWorkspace({
         description="这是阶段正式工作区，不是只读预览。研究者可修改正文、证据说明、决定理由与下游交接内容。"
         trail={[project.name, stage.name]}
         onBack={onBack}
-        actions={<><span className={`save-state ${dirty ? "is-dirty" : ""}`}>{dirty ? "有未保存修改" : form.savedAt}</span><button onClick={() => save(false)}>保存草稿</button><button className="primary-action" onClick={() => save(true)}>保存为新版本</button></>}
+        actions={<><span className={`save-state ${dirty ? "is-dirty" : ""}`}>{dirty ? "有未保存修改" : form.savedAt}</span><button className="primary-action" onClick={save}>保存新 Revision</button></>}
       />
       <div className="deep-workspace-grid">
         <section className="editor-shell">
@@ -319,7 +319,7 @@ export function StageDraftWorkspace({
             </div>}
             {tab === 4 && <div className="version-list">
               {[form.version, Math.max(1, form.version - 1), Math.max(1, form.version - 2)].filter((value, index, values) => values.indexOf(value) === index).map((version, index) => <article key={version}><span>v{version}</span><div><strong>Revision {version}</strong><small>{index === 0 ? form.savedAt : `${index + 1} 天前 · 研究者保存`}</small></div><p>{index === 0 ? "当前工作版本" : "历史冻结快照，可恢复为新草稿"}</p><button disabled={index === 0} onClick={() => { update("summary", `从 Revision ${version} 恢复的草稿：${form.summary}`); }}>恢复为草稿</button></article>)}
-              <div className="version-policy"><strong>版本规则</strong><p>保存草稿不会改变审批对象；“保存为新版本”会生成新的 revision。已批准版本不会被覆盖。</p></div>
+              <div className="version-policy"><strong>版本规则</strong><p>每次保存都会生成新的 revision；已批准版本不会被覆盖。审批只针对当时的确定 revision。</p></div>
             </div>}
           </div>
         </section>
