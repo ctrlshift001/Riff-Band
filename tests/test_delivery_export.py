@@ -127,6 +127,7 @@ def test_delivery_fingerprint_changes_only_for_scientific_content():
     first = DeliveryExportService.delivery_fingerprint(content)
     content["exports"] = [{"export_id": "export_1"}]
     content["visual_report_path"] = "exports/export_1/report.html"
+    content["_workspace"] = {"human_confirmed": True}
     assert DeliveryExportService.delivery_fingerprint(content) == first
 
     content["conclusions"][0]["statement"] = "修改后的结论内容必须触发重新导出。"

@@ -7,6 +7,7 @@ from typing import Any
 from ai4ms.assets import DataAssetService
 from ai4ms.db.store import ProjectStore, RevisionConflictError
 from ai4ms.delivery import DeliveryExportError, DeliveryExportService
+from ai4ms.knowledge import KnowledgeEvaluationService
 from ai4ms.literature.service import LiteratureSearchService
 from ai4ms.orchestration import AOrchestraStageService
 from ai4ms.runners import AnalysisJobService, AnalysisRunnerService
@@ -18,8 +19,10 @@ from ai4ms.services.models import (
     AnalysisRunRequest,
     CreateProjectRequest,
     DraftRequest,
+    KnowledgeEvaluationRequest,
     LiteratureSearchRequest,
     StageDecisionRequest,
+    StageRestoreRequest,
     StageStatus,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
@@ -70,6 +73,7 @@ class ProjectService:
         literature_search: LiteratureSearchService | None = None,
         analysis_runner: AnalysisRunnerService | None = None,
         delivery_export: DeliveryExportService | None = None,
+        knowledge_evaluation: KnowledgeEvaluationService | None = None,
     ):
         self.store = store
         self.data_dir = Path(data_dir)
@@ -81,6 +85,9 @@ class ProjectService:
         self.analysis_runner = analysis_runner or AnalysisRunnerService()
         self.delivery_export = delivery_export or DeliveryExportService(self.projects_dir)
         self.data_assets = DataAssetService(self.store, self.projects_dir)
+        self.knowledge_evaluation = knowledge_evaluation or KnowledgeEvaluationService(
+            self.projects_dir
+        )
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
         self.analysis_jobs = AnalysisJobService(
@@ -131,6 +138,64 @@ class ProjectService:
             return self.store.get_stage(project_id, stage_key)
         except KeyError as exc:
             raise ProjectNotFoundError(project_id) from exc
+
+    def list_stage_revisions(
+        self, project_id: str, stage_key: str
+    ) -> list[dict[str, Any]]:
+        self._require_stage(stage_key)
+        self.get_project(project_id)
+        try:
+            return self.store.list_stage_revisions(project_id, stage_key)
+        except KeyError as exc:
+            raise ProjectNotFoundError(project_id) from exc
+
+    def restore_stage_revision(
+        self,
+        project_id: str,
+        stage_key: str,
+        request: StageRestoreRequest,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        self._ensure_unlocked(project, stage_key)
+        try:
+            source = self.store.get_stage_revision(
+                project_id, stage_key, request.revision
+            )
+            content = deepcopy(source["content"])
+            workspace = content.get("_workspace")
+            if isinstance(workspace, dict):
+                workspace["human_confirmed"] = False
+                history = workspace.get("sync_history")
+                workspace["sync_history"] = [
+                    f"从 Revision {request.revision} 恢复为新草稿",
+                    *(history if isinstance(history, list) else []),
+                ][:100]
+            result = self.store.update_stage(
+                project_id=project_id,
+                stage_key=stage_key,
+                content=content,
+                change_reason=request.change_reason
+                or f"Restored revision {request.revision} as a new draft",
+                author_type="human",
+                expected_revision=request.expected_revision,
+            )
+        except RevisionConflictError as exc:
+            raise StageRevisionConflictError(str(exc)) from exc
+        except KeyError as exc:
+            raise StageNotFoundError(
+                f"{stage_key} revision {request.revision}"
+            ) from exc
+        return self._enrich(result)
+
+    def get_knowledge_evaluation(self, project_id: str) -> dict[str, Any]:
+        return self.knowledge_evaluation.load(self.get_project(project_id))
+
+    async def evaluate_knowledge(
+        self, project_id: str, request: KnowledgeEvaluationRequest
+    ) -> dict[str, Any]:
+        return await self.knowledge_evaluation.evaluate(
+            self.get_project(project_id), request
+        )
 
     def update_project(self, project_id: str, request: UpdateProjectRequest) -> dict[str, Any]:
         try:
@@ -289,11 +354,15 @@ class ProjectService:
     def update_stage(self, project_id: str, stage_key: str, request: StageUpdateRequest) -> dict[str, Any]:
         project = self.get_project(project_id)
         self._ensure_unlocked(project, stage_key)
+        content = deepcopy(request.content)
+        workspace = content.get("_workspace")
+        if isinstance(workspace, dict):
+            workspace["human_confirmed"] = False
         try:
             result = self.store.update_stage(
                 project_id=project_id,
                 stage_key=stage_key,
-                content=request.content,
+                content=content,
                 change_reason=request.change_reason,
                 author_type=request.author_type,
             )
@@ -333,6 +402,11 @@ class ProjectService:
         self._ensure_unlocked(project, stage_key)
         if request.decision is ApprovalDecision.APPROVE:
             stage = next(item for item in project["stages"] if item["key"] == stage_key)
+            workspace = stage.get("content", {}).get("_workspace", {})
+            if not isinstance(workspace, dict) or workspace.get("human_confirmed") is not True:
+                raise StageContentValidationError(
+                    "当前 revision 的人工确认尚未保存；请在阶段资产中勾选人工确认并保存新 revision"
+                )
             StageGenerationService.validate_stage_content(project, stage_key, stage.get("content", {}))
             if stage_key == "literature":
                 content = stage.get("content", {})

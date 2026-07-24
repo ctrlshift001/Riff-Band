@@ -74,19 +74,25 @@ export type CheckIssue = {
 };
 
 export type EvidenceRecord = {
+  id: string;
   title: string;
   authors: string;
   year: number;
   stream: string;
   method: string;
   status: string;
+  abstract?: string;
+  venue?: string;
+  doi?: string;
+  sourceUrl?: string;
 };
 
 export type MethodRecord = {
   id: string;
   name: string;
   family: string;
-  fit: number;
+  fit: number | null;
+  fitRationale?: string;
   goal: string;
   assumptions: readonly string[];
   engine: string;
@@ -113,6 +119,8 @@ export type FormulaRecord = {
   diagnostics: readonly string[];
   stata: string;
   source: string;
+  fit?: number | null;
+  fitRationale?: string;
 };
 
 export type GateRecord = {
@@ -122,6 +130,20 @@ export type GateRecord = {
   status: string;
   time: string;
   asset: string;
+  history?: readonly {
+    revision: number;
+    decision: string;
+    reason: string;
+    createdAt: string;
+  }[];
+};
+
+export type StageRevisionRecord = {
+  revision: number;
+  change_reason: string;
+  author_type: string;
+  content_hash: string;
+  created_at: string;
 };
 
 export function createStageDraft(stage: StageDescriptor, project: ResearchProject): StageDraft {
@@ -131,7 +153,7 @@ export function createStageDraft(stage: StageDescriptor, project: ResearchProjec
     objective: project.objective || `完成 ${stage.output}，并明确能够进入下一阶段的条件。`,
     content: `一、阶段目标\n${stage.name}阶段将围绕研究问题、证据与执行约束形成结构化成果。\n\n二、当前方案\n请在此补充主方案、备选方案及选择依据。\n\n三、待核查事项\n请记录仍需补证、复核或人工决定的事项。`,
     scope: project.boundary || "研究对象、时间范围和排除条件待研究者确认。",
-    evidenceNote: "已连接当前课题证据库；核心主张仍需逐条绑定来源。",
+    evidenceNote: "",
     decision: "请记录研究者最终选择、未采用方案和决定理由。",
     risk: "请明确一个可能导致当前方案失效的条件及处理方式。",
     handoff: `向下一阶段交付：${stage.output}、决定记录、证据限制与未解决问题。`,
@@ -248,6 +270,10 @@ export function StageDraftWorkspace({
   onOpenDecisions,
   onOpenChat,
   onOpenEvidence,
+  evidenceRecords,
+  revisions,
+  restoringRevision,
+  onRestore,
 }: {
   stage: StageDescriptor;
   project: ResearchProject;
@@ -258,13 +284,21 @@ export function StageDraftWorkspace({
   onOpenDecisions: () => void;
   onOpenChat: () => void;
   onOpenEvidence: () => void;
+  evidenceRecords: readonly EvidenceRecord[];
+  revisions: readonly StageRevisionRecord[];
+  restoringRevision: number | null;
+  onRestore: (revision: number) => void;
 }) {
   const tabs = ["工作摘要", "交付正文", "证据与引用", "决定记录", "版本历史"];
   const [tab, setTab] = useState(0);
   const [form, setForm] = useState(draft);
   const [dirty, setDirty] = useState(false);
   const update = <K extends keyof StageDraft>(key: K, value: StageDraft[K]) => {
-    setForm((current) => ({ ...current, [key]: value }));
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === "humanConfirmed" ? {} : { humanConfirmed: false }),
+    }));
     setDirty(true);
   };
   const completeness = useMemo(() => {
@@ -306,9 +340,9 @@ export function StageDraftWorkspace({
             </div>}
             {tab === 1 && <div className="field-stack"><Field label="交付正文" hint="支持人工增删、改写和粘贴结构化内容"><textarea className="document-editor" rows={22} value={form.content} onChange={(event) => update("content", event.target.value)} /></Field><div className="writing-assist"><span>AI 写作协助不会自动覆盖正文</span><button onClick={openChat}>与 {stage.agent} 讨论并同步</button></div></div>}
             {tab === 2 && <div className="field-stack">
-              <div className="linked-evidence-summary"><div><strong>12</strong><span>已连接来源</span></div><div><strong>9</strong><span>全文已核验</span></div><div><strong>1</strong><span>冲突证据</span></div><button onClick={onOpenEvidence}>打开证据库</button></div>
+              <div className="linked-evidence-summary"><div><strong>{evidenceRecords.length}</strong><span>项目证据</span></div><div><strong>{evidenceRecords.filter((item) => item.status === "已核验").length}</strong><span>全文已核验</span></div><div><strong>{evidenceRecords.filter((item) => item.status === "冲突").length}</strong><span>冲突证据</span></div><button onClick={onOpenEvidence}>打开证据库</button></div>
               <Field label="证据覆盖说明" hint="说明支持、冲突、未核验与不可外推的范围"><textarea rows={10} value={form.evidenceNote} onChange={(event) => update("evidenceNote", event.target.value)} /></Field>
-              <div className="evidence-link-list"><article><span>E01</span><div><strong>The Productivity J-Curve</strong><small>支持数字技术存在组织互补与滞后效应</small></div><button onClick={onOpenEvidence}>查看来源</button></article><article><span>E02</span><div><strong>Artificial Intelligence and Innovation</strong><small>支持 AI、创新与竞争机制的理论连接</small></div><button onClick={onOpenEvidence}>查看来源</button></article></div>
+              {evidenceRecords.length > 0 ? <div className="evidence-link-list">{evidenceRecords.slice(0, 2).map((record) => <article key={record.id}><span>{record.id.slice(-4).toUpperCase()}</span><div><strong>{record.title}</strong><small>{record.authors || "作者信息待补充"} · {record.status}</small></div><button onClick={onOpenEvidence}>查看来源</button></article>)}</div> : <div className="empty-state">当前项目还没有证据。请先在证据库执行检索，检索结果才会进入这里。</div>}
             </div>}
             {tab === 3 && <div className="field-stack">
               <div className="human-decision-banner"><span>人</span><div><strong>这一部分必须由研究者填写和确认</strong><p>智能体可以建议措辞，但不能代替你接受风险或作出关键选择。</p></div></div>
@@ -318,7 +352,8 @@ export function StageDraftWorkspace({
               <label className="human-confirm-check"><input type="checkbox" checked={form.humanConfirmed} onChange={(event) => update("humanConfirmed", event.target.checked)} /><span><strong>我已人工检查本页内容</strong><small>勾选只代表完成检查，不等于通过审批门。</small></span></label>
             </div>}
             {tab === 4 && <div className="version-list">
-              {[form.version, Math.max(1, form.version - 1), Math.max(1, form.version - 2)].filter((value, index, values) => values.indexOf(value) === index).map((version, index) => <article key={version}><span>v{version}</span><div><strong>Revision {version}</strong><small>{index === 0 ? form.savedAt : `${index + 1} 天前 · 研究者保存`}</small></div><p>{index === 0 ? "当前工作版本" : "历史冻结快照，可恢复为新草稿"}</p><button disabled={index === 0} onClick={() => { update("summary", `从 Revision ${version} 恢复的草稿：${form.summary}`); }}>恢复为草稿</button></article>)}
+              {revisions.map((revision, index) => <article key={revision.revision}><span>v{revision.revision}</span><div><strong>Revision {revision.revision}</strong><small>{new Date(revision.created_at).toLocaleString("zh-CN")} · {revision.author_type}</small></div><p>{index === 0 ? "当前工作版本" : revision.change_reason || "历史快照"}</p><button disabled={index === 0 || restoringRevision !== null} onClick={() => onRestore(revision.revision)}>{restoringRevision === revision.revision ? "正在恢复…" : "恢复为新草稿"}</button></article>)}
+              {revisions.length === 0 && <div className="empty-state">当前阶段还没有已保存的 revision。</div>}
               <div className="version-policy"><strong>版本规则</strong><p>每次保存都会生成新的 revision；已批准版本不会被覆盖。审批只针对当时的确定 revision。</p></div>
             </div>}
           </div>
@@ -457,19 +492,13 @@ export function ProjectOverviewPage({ project, onBack, onStart, onEdit, onNew }:
 
 export function EvidenceRecordPage({ record, onBack, onSave }: { record: EvidenceRecord; onBack: () => void; onSave: (message: string) => void }) {
   const [tab, setTab] = useState(0);
-  const [claim, setClaim] = useState("该研究支持 AI 作为通用目的技术，需要组织互补投资后才可能产生可观测绩效提升。");
-  const [sample, setSample] = useState("企业层面纵向样本；具体口径需在全文核验后补充。");
-  const [limits, setLimits] = useState("研究情境与当前中国上市公司样本并不完全一致，不直接外推效应大小。");
+  const [claim, setClaim] = useState("");
+  const [sample, setSample] = useState("");
+  const [limits, setLimits] = useState("");
   const [selectedClaim, setSelectedClaim] = useState<number | null>(null);
-  const [connectionTypes, setConnectionTypes] = useState<Record<number, string>>({ 0: "支持", 1: "机制启发" });
-  const [connectionNotes, setConnectionNotes] = useState<Record<number, string>>({
-    0: "用于说明数字技术的绩效影响可能经过组织调整后才显现；当前仅作为机制与时间窗口的背景证据。",
-    1: "用于构建组织互补能力的边界条件，不直接支持当前样本中的效应大小。",
-  });
-  const claimLinks = [
-    { id: "C01", title: "生成式 AI 的创新效应可能存在实现滞后", strength: "中", location: "理论与假设 H2", locator: "全文结果与讨论部分 · 待人工补充页码", excerpt: "作者报告技术投资与绩效改善之间存在调整期，并强调组织资本等互补投入的作用。" },
-    { id: "C02", title: "组织互补投资可能构成边界条件", strength: "中", location: "竞争解释", locator: "理论框架与稳健性讨论 · 待人工补充页码", excerpt: "论文将组织流程和人力资本视为技术价值实现的重要互补条件，适合作为机制启发而非直接因果证据。" },
-  ] as const;
+  const [connectionTypes, setConnectionTypes] = useState<Record<number, string>>({});
+  const [connectionNotes, setConnectionNotes] = useState<Record<number, string>>({});
+  const claimLinks: readonly { id: string; title: string; strength: string; location: string; locator: string; excerpt: string }[] = [];
   const activeClaim = selectedClaim === null ? null : claimLinks[selectedClaim];
 
   return (
@@ -481,7 +510,7 @@ export function EvidenceRecordPage({ record, onBack, onSave }: { record: Evidenc
         description={record.authors + " · " + record.stream + " · " + record.method}
         trail={["证据库"]}
         onBack={onBack}
-        actions={<><span className="source-level verified">{record.status}</span><button className="primary-action" onClick={() => onSave("论文卡人工修改已保存")}>保存论文卡</button></>}
+        actions={<><span className="source-level verified">{record.status}</span><button className="primary-action" onClick={() => onSave("论文卡修改已保留在当前页面；请在 S1 阶段资产中保存正式 revision")}>暂存编辑</button></>}
       />
       <div className="record-layout">
         <section className="record-main">
@@ -489,6 +518,7 @@ export function EvidenceRecordPage({ record, onBack, onSave }: { record: Evidenc
           <div className="record-body">
             {tab === 0 && (
               <div className="field-stack">
+                {record.abstract && <div className="claim-source-fragment"><span>检索接口返回的摘要</span><p>{record.abstract}</p></div>}
                 <Field label="研究对象与样本"><textarea rows={5} value={sample} onChange={(event) => setSample(event.target.value)} /></Field>
                 <Field label="可用于当前课题的核心发现"><textarea rows={7} value={claim} onChange={(event) => setClaim(event.target.value)} /></Field>
                 <Field label="适用边界与限制"><textarea rows={6} value={limits} onChange={(event) => setLimits(event.target.value)} /></Field>
@@ -496,9 +526,9 @@ export function EvidenceRecordPage({ record, onBack, onSave }: { record: Evidenc
             )}
             {tab === 1 && (
               <div className="extraction-grid">
-                <article><span>研究问题</span><textarea defaultValue="AI 与互补性组织投资如何共同影响生产率实现？" /></article>
+                <article><span>研究问题</span><textarea defaultValue="" placeholder="从全文人工提取，不使用系统预置内容" /></article>
                 <article><span>识别与方法</span><textarea defaultValue={record.method} /></article>
-                <article><span>变量与测量</span><textarea defaultValue="数字资本、组织资本与生产率结果。" /></article>
+                <article><span>变量与测量</span><textarea defaultValue="" placeholder="从全文人工提取变量定义与测量方式" /></article>
                 <article><span>主要结论</span><textarea defaultValue={claim} /></article>
               </div>
             )}
@@ -513,6 +543,7 @@ export function EvidenceRecordPage({ record, onBack, onSave }: { record: Evidenc
                     </article>
                   ))}
                 </div>
+                {claimLinks.length === 0 && <div className="empty-state">尚未建立主张—证据连接。请先人工核验全文，再在 S8 连接具体主张。</div>}
                 {activeClaim && selectedClaim !== null && (
                   <section className="claim-link-detail" id="claim-link-detail">
                     <header><div><p className="eyebrow">Claim-evidence edge · {activeClaim.id}</p><h3>{activeClaim.title}</h3></div><button className="modal-close" onClick={() => setSelectedClaim(null)} aria-label="关闭主张连接详情">×</button></header>
@@ -532,12 +563,12 @@ export function EvidenceRecordPage({ record, onBack, onSave }: { record: Evidenc
                 )}
               </>
             )}
-            {tab === 3 && <div className="verification-list">{["题名、作者与年份已核对", "研究问题已人工概括", "方法与样本已从全文核验", "核心发现可定位到原文", "限制与外推边界已记录"].map((item, index) => <label key={item}><input type="checkbox" defaultChecked={index < 2 || record.status === "已核验"} /><span>{item}</span></label>)}</div>}
+            {tab === 3 && <div className="verification-list">{["题名、作者与年份已核对", "研究问题已人工概括", "方法与样本已从全文核验", "核心发现可定位到原文", "限制与外推边界已记录"].map((item) => <label key={item}><input type="checkbox" defaultChecked={false} /><span>{item}</span></label>)}</div>}
           </div>
         </section>
         <aside className="record-aside">
           <p className="eyebrow">Provenance</p><h2>来源与使用记录</h2>
-          <dl><div><dt>证据等级</dt><dd>{record.status}</dd></div><div><dt>进入课题</dt><dd>S1 文献综述</dd></div><div><dt>连接主张</dt><dd>2 条</dd></div><div><dt>最后修改</dt><dd>研究者 · 刚刚</dd></div></dl>
+          <dl><div><dt>证据等级</dt><dd>{record.status}</dd></div><div><dt>进入课题</dt><dd>S1 文献检索</dd></div><div><dt>连接主张</dt><dd>0 条</dd></div><div><dt>DOI</dt><dd>{record.doi || "未返回"}</dd></div></dl>
           <div className="record-warning"><strong>引用边界</strong><p>摘要级或待全文来源不能直接支持核心结论；必须保留原始来源和人工概括记录。</p></div>
         </aside>
       </div>
@@ -548,7 +579,7 @@ export function EvidenceRecordPage({ record, onBack, onSave }: { record: Evidenc
 export function MethodRecordPage({ method, onBack, onAdd, onSave }: { method: MethodRecord; onBack: () => void; onAdd: () => void; onSave: (message: string) => void }) {
   const [tab, setTab] = useState(0);
   const formula: Record<string, string> = { M01: "Y_it = βD_it + γX_it + α_i + λ_t + ε_it", M02: "Y_it = α + β(Treat_i × Post_t) + γ_i + λ_t + ε_it", M03: "D_it = πZ_it + γX_it + u_it\nY_it = βD̂_it + γX_it + ε_it", M04: "Y_it = α_i + λ_t + Σₖ≠₋₁ βₖ1[t-T_i=k] + ε_it" };
-  return <div className="deep-page method-record-page"><DeepHeader level="L3 · 方法卡" eyebrow={`${method.id} · ${method.family}`} title={method.name} description={method.goal} trail={["方法库"]} onBack={onBack} actions={<><button onClick={() => onSave("方法卡备注已保存")}>保存备注</button><button className="primary-action" onClick={onAdd}>加入研究设计</button></>} /><section className="method-record-hero"><div className="method-fit-large"><strong>{method.fit}</strong><span>设计适配度</span></div><div><p className="eyebrow">Estimand & formula</p><pre>{formula[method.id]}</pre><small>{method.engine}</small></div></section><div className="record-layout"><section className="record-main"><nav className="editor-tabs">{["适用目标", "识别假设", "Stata 实现", "失败与诊断"].map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}>{item}</button>)}</nav><div className="record-body">{tab === 0 && <div className="field-stack"><Field label="当前课题中的估计目标"><textarea rows={5} defaultValue="估计生成式 AI 工具采用对企业创新质量的平均影响，并区分企业内变化与共同年份冲击。" /></Field><Field label="为什么考虑该方法"><textarea rows={6} defaultValue={`${method.goal}。推荐分数仅用于比较，最终选择需要结合数据结构和识别假设。`} /></Field></div>}{tab === 1 && <div className="assumption-audit">{method.assumptions.map((item, index) => <article key={item}><span>A{index + 1}</span><div><strong>{item}</strong><p>状态：{index === 0 ? "已有初步证据" : "需要在分析计划中检验"}</p></div><select defaultValue={index === 0 ? "support" : "pending"}><option value="support">已有支持</option><option value="pending">待检查</option><option value="fail">不满足</option></select></article>)}</div>}{tab === 2 && <div className="stata-implementation"><pre><code>{method.id === "M01" ? "xtset firm_id year\nxtreg innovation_quality ai_adoption controls i.year, fe vce(cluster firm_id)" : method.id === "M02" ? "xtdidregress (innovation_quality controls) (ai_adoption), group(firm_id) time(year)" : "* 代码模板将在分析计划中由研究者确认"}</code></pre><Field label="实现备注"><textarea rows={5} defaultValue="正式代码必须映射到 G3 已批准的 AnalysisPlan，并锁定数据签名、软件版本和输出路径。" /></Field></div>}{tab === 3 && <div className="diagnostic-matrix">{["关键假设不满足", "样本有效变异不足", "标准误层级错误", "结果对口径高度敏感"].map((item, index) => <article key={item}><span>{index === 0 ? "阻塞" : "检查"}</span><div><strong>{item}</strong><p>{index === 0 ? "停止核心因果表述，不能自动切换到更复杂模型。" : "写入诊断计划并保留完整结果。"}</p></div></article>)}</div>}</div></section><aside className="record-aside"><p className="eyebrow">Method boundary</p><h2>进入设计前</h2><ul>{method.assumptions.map((item) => <li key={item}>{item}</li>)}</ul><div className="record-warning"><strong>人工选择</strong><p>加入研究设计只会创建候选版本；主模型、备选模型和失败条件必须由研究者在 G1/G3 确认。</p></div></aside></div></div>;
+  return <div className="deep-page method-record-page"><DeepHeader level="L3 · 方法卡" eyebrow={`${method.id} · ${method.family}`} title={method.name} description={method.goal} trail={["方法库"]} onBack={onBack} actions={<><button onClick={() => onSave("方法卡备注已保存")}>保存备注</button><button className="primary-action" onClick={onAdd}>加入研究设计</button></>} /><section className="method-record-hero"><div className="method-fit-large"><strong>{method.fit ?? "待评估"}</strong><span>{method.fit === null ? "需要 AI 结合当前课题评估" : "AI 设计适配度"}</span></div><div><p className="eyebrow">Estimand & formula</p><pre>{formula[method.id]}</pre><small>{method.engine}</small></div></section><div className="record-layout"><section className="record-main"><nav className="editor-tabs">{["适用目标", "识别假设", "Stata 实现", "失败与诊断"].map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}>{item}</button>)}</nav><div className="record-body">{tab === 0 && <div className="field-stack"><Field label="当前课题中的估计目标"><textarea rows={5} defaultValue="" /></Field><Field label="为什么考虑该方法"><textarea rows={6} defaultValue={method.fitRationale || method.goal} /></Field></div>}{tab === 1 && <div className="assumption-audit">{method.assumptions.map((item, index) => <article key={item}><span>A{index + 1}</span><div><strong>{item}</strong><p>状态：需要在分析计划中检验</p></div><select defaultValue="pending"><option value="support">已有支持</option><option value="pending">待检查</option><option value="fail">不满足</option></select></article>)}</div>}{tab === 2 && <div className="stata-implementation"><pre><code>{method.stata}</code></pre><Field label="实现备注"><textarea rows={5} defaultValue="正式代码必须映射到 G3 已批准的 AnalysisPlan，并锁定数据签名、软件版本和输出路径。" /></Field></div>}{tab === 3 && <div className="diagnostic-matrix">{method.diagnostics.map((item, index) => <article key={item}><span>{index === 0 ? "阻塞" : "检查"}</span><div><strong>{item}</strong><p>写入诊断计划并保留完整结果。</p></div></article>)}</div>}</div></section><aside className="record-aside"><p className="eyebrow">Method boundary</p><h2>进入设计前</h2><ul>{method.assumptions.map((item) => <li key={item}>{item}</li>)}</ul><div className="record-warning"><strong>人工选择</strong><p>加入研究设计只会创建候选版本；主模型、备选模型和失败条件必须由研究者在 G1/G3 确认。</p></div></aside></div></div>;
 }
 
 export function MethodRecordWorkspace({ method, onBack, onAdd, onSave }: { method: MethodRecord; onBack: () => void; onAdd: () => void; onSave: (message: string) => void }) {
@@ -557,7 +588,7 @@ export function MethodRecordWorkspace({ method, onBack, onAdd, onSave }: { metho
   const tabs = ["适用与目标", "假设审计", "实现模板", "诊断与失败"];
   return <div className="deep-page method-record-page">
     <DeepHeader level="L3 · 完整方法卡" eyebrow={`${method.id} · ${method.family}`} title={method.name} description={method.goal} trail={["方法与公式库", "方法库"]} onBack={onBack} actions={<><button onClick={() => onSave("方法卡人工备注已保存")}>保存备注</button><button className="primary-action" onClick={onAdd}>加入研究设计</button></>} />
-    <section className="method-record-hero enhanced-method-hero"><div className="method-fit-large"><strong>{method.fit}</strong><span>当前课题适配度</span></div><div><p className="eyebrow">Estimand / decision objective</p><h2>{method.estimand}</h2><pre>{method.formula}</pre><small>{method.engine} · 来源：{method.source}</small></div></section>
+    <section className="method-record-hero enhanced-method-hero"><div className="method-fit-large"><strong>{method.fit ?? "待评估"}</strong><span>{method.fit === null ? "尚未运行 AI 评估" : "AI 当前课题适配度"}</span></div><div><p className="eyebrow">Estimand / decision objective</p><h2>{method.estimand}</h2><pre>{method.formula}</pre><small>{method.engine} · 来源：{method.source}</small></div></section>
     <div className="record-layout"><section className="record-main"><nav className="editor-tabs">{tabs.map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}>{item}</button>)}</nav><div className="record-body">
       {tab === 0 && <div className="field-stack"><div className="method-fact-grid"><article><span>数据结构</span><strong>{method.dataShape}</strong></article><article><span>方法家族</span><strong>{method.family}</strong></article><article><span>执行引擎</span><strong>{method.engine}</strong></article><article><span>失败处理</span><strong>阻塞核心表述</strong></article></div><Field label="当前课题采用说明" hint="仅保存候选说明，不会自动变更主模型"><textarea rows={7} value={note} onChange={(event) => setNote(event.target.value)} /></Field><div className="method-tag-row">{method.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div>}
       {tab === 1 && <div className="assumption-audit">{method.assumptions.map((item, index) => <article key={item}><span>A{index + 1}</span><div><strong>{item}</strong><p>需绑定证据、诊断或人工理由；不能由适配分数代替。</p></div><select defaultValue="pending"><option value="support">已有支持</option><option value="pending">待检查</option><option value="fail">不满足</option></select></article>)}</div>}
@@ -623,7 +654,7 @@ export function ApprovalGatePage({ gate, onBack, onOpenAsset, onSubmit }: { gate
       </section>
       <aside className="gate-reviewers"><p className="eyebrow">Reviewers</p><h2>人工角色</h2>{gate.owner.split("+").map((item, index) => <div key={item}><span>{item.trim().slice(0, 1)}</span><div><strong>{item.trim()}</strong><small>{reviewerResponsibilities[index] ?? reviewerResponsibilities[0]}</small></div><b>{gate.status === "approved" ? "已签署" : "待处理"}</b></div>)}<div className="agent-not-reviewer"><span>AI</span><p>智能体可以准备审批摘要，但不能成为批准人或代替签名。</p></div></aside>
     </div>
-    <section className="approval-timeline"><p className="eyebrow">Audit timeline</p><h2>审批与变更记录</h2><div><article><span /><strong>Revision 已生成</strong><small>研究者 · 07-20 16:08</small><p>内容哈希与上游依赖已记录。</p></article><article><span /><strong>一致性检查完成</strong><small>规则集 v2.4 · 07-20 16:12</small><p>仍保留 1 项需要人工确认的风险。</p></article><article><span /><strong>{locked ? "等待前置条件" : submitted ? "人工会签进行中" : freezeConfirmed ? "等待研究者提交" : "等待冻结确认"}</strong><small>当前状态</small><p>{locked ? gate.time : submitted ? gate.time : freezeConfirmed ? "提交后将通知指定人工角色会签。" : "研究者需确认当前 revision 的冻结与失效影响。"}</p></article></div></section>
+    <section className="approval-timeline"><p className="eyebrow">Audit timeline</p><h2>审批与变更记录</h2><div>{gate.history?.map((event) => <article key={`${event.revision}:${event.createdAt}`}><span /><strong>Revision {event.revision} · {event.decision}</strong><small>{new Date(event.createdAt).toLocaleString("zh-CN")} · human</small><p>{event.reason || "未填写理由"}</p></article>)}{!gate.history?.length && <div className="empty-state">当前阶段尚无审批事件。人工批准或退回后，记录会显示在这里。</div>}</div></section>
     <footer className="sticky-deep-actions"><span>{locked ? "当前审批门未解锁，可以查看资产但不能提交。" : submitted ? "当前 revision 已冻结并提交，等待指定人工角色完成会签。" : freezeConfirmed ? "提交会冻结当前 revision；后续语义修改会使受影响审批失效。" : "请先人工确认版本冻结影响，再提交审批。"}</span><button className="primary-action" disabled={locked || submitted || gate.status === "approved" || !freezeConfirmed} onClick={onSubmit}>{submitted ? "等待人工会签" : "提交人工审批"}</button></footer>
   </div>;
 }

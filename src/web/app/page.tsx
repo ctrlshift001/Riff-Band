@@ -7,15 +7,19 @@ import {
   createStageDraft as createApiStageDraft,
   createProject as createApiProject,
   decideStage as decideApiStage,
+  evaluateKnowledge as evaluateApiKnowledge,
   exportDelivery as exportApiDelivery,
   getAnalysisJob,
   getAnalysisRunResult,
+  getKnowledgeEvaluation as getApiKnowledgeEvaluation,
   getStataRunnerStatus,
   getProject as getApiProject,
   listProjects as listApiProjects,
   listAnalysisJobs,
+  listStageRevisions as listApiStageRevisions,
   preflightAnalysisRun,
   rerunAnalysis,
+  restoreStageRevision as restoreApiStageRevision,
   saveStageWorkspace as saveApiStageWorkspace,
   searchLiterature as searchApiLiterature,
   submitAnalysisRun,
@@ -24,10 +28,12 @@ import {
   type AnalysisPreflight,
   type AnalysisJob,
   type AnalysisRun,
+  type KnowledgeEvaluation,
   type Project as ApiProject,
   type ProjectStage as ApiProjectStage,
   type ProjectSummary as ApiProjectSummary,
   type RunnerStatus,
+  type StageRevision,
   type StageWorkspacePayload,
 } from "@/lib/api";
 import {
@@ -45,6 +51,7 @@ import {
   StageDecisionsWorkspace,
   StageDraftWorkspace,
   type DeepRoute,
+  type EvidenceRecord,
   type FormulaRecord,
   type MethodRecord,
   type ResearchProject,
@@ -161,31 +168,23 @@ const evidenceRows = [
   { id: "H4", claim: "同时采用其他数字化技术会削弱生成式 AI 的边际效应。", source: "Li et al. (2024)", state: "conflict", note: "存在相反结论" },
 ];
 
-const libraryEvidence = [
-  { title: "The Productivity J-Curve", authors: "Brynjolfsson, Rock & Syverson", year: 2021, stream: "通用技术与生产率", method: "企业面板", status: "已核验" },
-  { title: "Artificial Intelligence and Innovation", authors: "Aghion, Jones & Jones", year: 2019, stream: "AI 与创新机制", method: "理论模型", status: "已核验" },
-  { title: "Competing in the Age of AI", authors: "Iansiti & Lakhani", year: 2020, stream: "组织转型", method: "案例综合", status: "摘要级" },
-  { title: "The Simple Economics of Machine Intelligence", authors: "Agrawal, Gans & Goldfarb", year: 2018, stream: "预测技术经济学", method: "理论分析", status: "已核验" },
-  { title: "AI Adoption and Firm Performance", authors: "Representative evidence card", year: 2024, stream: "企业采用与绩效", method: "双重差分", status: "待全文" },
-];
-
 const methods: MethodRecord[] = [
-  { id: "M01", name: "面板固定效应", family: "计量与面板", fit: 92, goal: "估计同一研究对象随时间变化与结果之间的关系。", estimand: "组内变化的条件平均关联 / 处理效应", dataShape: "个体 × 时间面板", formula: "Y_it = βD_it + γX_it + α_i + λ_t + ε_it", assumptions: ["组内有效变异充分", "无随时间变化的遗漏混杂", "聚类层级与处理分配一致"], diagnostics: ["组内/组间变异分解", "序列相关与聚类层级", "高维固定效应吸收检查"], failureRule: "核心变量缺少组内变异或关键时变混杂无法处理时，停止因果表述。", engine: "Stata · xtreg / reghdfe", stata: "xtset firm_id year\nxtreg y treatment controls i.year, fe vce(cluster firm_id)", python: "PanelOLS.from_formula('y ~ treatment + controls + EntityEffects + TimeEffects', data)", tags: ["panel", "fixed effects", "cluster SE"], source: "statsmodels / linearmodels" },
-  { id: "M02", name: "双重差分", family: "因果识别", fit: 86, goal: "利用处理发生前后与对照组差异识别平均处理效应。", estimand: "ATT / group-time ATT", dataShape: "处理组与对照组的重复横截面或面板", formula: "Y_it = α_i + λ_t + β(Treat_i × Post_t) + γX_it + ε_it", assumptions: ["条件平行趋势", "无提前反应", "处理组间无干扰或溢出已建模"], diagnostics: ["处理前动态系数", "分期处理异质性", "安慰剂时点与组别"], failureRule: "平行趋势或处理时点有效性被实质性否定时，不报告主因果效应。", engine: "Stata · xtdidregress / csdid", stata: "xtdidregress (y controls) (treated), group(id) time(year) vce(cluster id)", python: "model.identify_effect(); model.estimate_effect(...); model.refute_estimate(...)", tags: ["ATT", "policy evaluation", "staggered adoption"], source: "DoWhy / linearmodels" },
-  { id: "M03", name: "工具变量 / 2SLS", family: "因果识别", fit: 64, goal: "借助外生工具变量处理选择偏差、反向因果或测量误差。", estimand: "LATE（在单调性条件下）", dataShape: "横截面、面板或时间序列", formula: "D = πZ + γX + u;   Y = βD̂ + γX + ε", assumptions: ["工具相关性", "排除限制", "工具独立性与单调性"], diagnostics: ["第一阶段强度", "弱工具稳健推断", "过度识别与排除限制论证"], failureRule: "弱工具或排除限制缺乏可信论证时，工具变量结果只能作为探索性证据。", engine: "Stata · ivregress / ivreghdfe", stata: "ivregress 2sls y controls (treatment = instrument), vce(cluster id)\nestat firststage", python: "IV2SLS.from_formula('y ~ 1 + controls + [treatment ~ instrument]', data).fit()", tags: ["endogeneity", "LATE", "weak IV"], source: "linearmodels / DoWhy" },
-  { id: "M04", name: "事件研究", family: "动态效应", fit: 80, goal: "展示事件发生前后的动态路径、提前反应与效应持续性。", estimand: "相对事件时间的动态效应 β_k", dataShape: "具有可信事件时点的面板", formula: "Y_it = α_i + λ_t + Σ_{k≠-1} β_k 1[t-T_i=k] + ε_it", assumptions: ["事件时点可靠", "基准期与窗口预先定义", "分期处理异质性得到处理"], diagnostics: ["处理前联合检验", "事件窗口敏感性", "队列加权与组成变化"], failureRule: "事件前出现系统性趋势且无法解释时，动态因果路径不得进入核心结论。", engine: "Stata · eventstudyinteract", stata: "eventstudyinteract y lead* lag*, absorb(id year) cohort(first_treat) control_cohort(never)", python: "# cohort-specific event-time effects with explicit reference period", tags: ["dynamic effect", "pre-trend", "cohort"], source: "DoWhy / causal inference practice" },
-  { id: "M05", name: "断点回归 RDD", family: "准实验", fit: 45, goal: "利用阈值附近的处理跳跃识别局部平均处理效应。", estimand: "阈值处 LATE", dataShape: "连续运行变量 + 明确阈值", formula: "τ = lim_{x↓c}E[Y|X=x] − lim_{x↑c}E[Y|X=x]", assumptions: ["阈值附近潜在结果连续", "运行变量不可精确操纵", "带宽与多项式阶数合理"], diagnostics: ["密度操纵检验", "协变量连续性", "带宽与核函数敏感性"], failureRule: "运行变量存在操纵或阈值同时触发其他制度变化时，停止局部因果解释。", engine: "Stata · rdrobust", stata: "rdrobust y running, c(cutoff) covs(controls)\nrddensity running, c(cutoff)", python: "# local polynomial fit on each side of cutoff", tags: ["threshold", "local effect", "bandwidth"], source: "DoWhy / rdrobust ecosystem" },
-  { id: "M06", name: "倾向得分与加权", family: "选择校正", fit: 58, goal: "在可观测混杂条件下构造可比样本或加权总体。", estimand: "ATE / ATT / ATC", dataShape: "处理、结果与处理前协变量", formula: "ATE = E[DY/e(X) − (1-D)Y/(1-e(X))]", assumptions: ["条件可忽略性", "正值性 / 重叠", "协变量均为处理前变量"], diagnostics: ["重叠与极端权重", "加权后平衡", "未观测混杂敏感性"], failureRule: "严重违反重叠或关键混杂不可观测时，不将匹配/加权解释为已消除选择偏差。", engine: "Stata · teffects", stata: "teffects ipwra (y controls) (treated controls), atet\ntebalance summarize", python: "CausalModel(...).identify_effect(); model.estimate_effect(...)", tags: ["propensity score", "IPW", "balance"], source: "DoWhy / CausalML" },
-  { id: "M07", name: "合成控制", family: "政策评估", fit: 52, goal: "以加权对照单元构造处理单元未受处理时的反事实路径。", estimand: "处理单元的时间路径效应", dataShape: "少量处理单元 + 长期面板 + donor pool", formula: "Y^N_{1t} ≈ Σ_{j=2}^{J+1} w_jY_{jt},  w_j≥0, Σw_j=1", assumptions: ["加权对照可逼近处理前路径", "无干扰与预期效应", "donor pool 未受同类冲击"], diagnostics: ["处理前 RMSPE", "空间与时间安慰剂", "剔除高权重单元"], failureRule: "处理前拟合质量不足或 donor pool 被污染时，停止反事实效应解释。", engine: "Stata · synth / sdid", stata: "synth y predictors, trunit(1) trperiod(2022) nested", python: "# optimize non-negative donor weights subject to sum(w)=1", tags: ["synthetic control", "policy", "counterfactual"], source: "optimization + causal inference practice" },
-  { id: "M08", name: "动态面板 GMM", family: "计量与面板", fit: 47, goal: "处理含滞后因变量的动态面板与潜在内生解释变量。", estimand: "动态短期与长期参数", dataShape: "大 N、小 T 面板", formula: "Y_it = ρY_{i,t-1} + βD_it + α_i + ε_it", assumptions: ["误差序列相关结构符合矩条件", "工具变量集合有效", "工具数量受控"], diagnostics: ["AR(1)/AR(2)", "Hansen/Sargan", "工具数量与折叠策略"], failureRule: "AR(2) 或工具有效性失败、工具膨胀时，不报告 GMM 作为主结果。", engine: "Stata · xtabond2", stata: "xtabond2 y L.y treatment controls i.year, gmm(L.y treatment, collapse) iv(controls i.year) twostep robust", python: "# dynamic panel GMM with explicitly bounded instrument set", tags: ["dynamic panel", "GMM", "instrument proliferation"], source: "linearmodels / econometrics practice" },
-  { id: "M09", name: "中介、调节与 SEM", family: "机制模型", fit: 70, goal: "检验理论机制、间接效应、边界条件与测量结构。", estimand: "直接效应、间接效应与条件效应", dataShape: "横截面、面板或潜变量测量数据", formula: "M = aX + e_M;   Y = c′X + bM + d(X×W) + e_Y", assumptions: ["因果顺序由理论与设计支持", "中介—结果混杂得到处理", "测量模型可接受"], diagnostics: ["Bootstrap 间接效应", "测量信效度与拟合", "替代因果顺序"], failureRule: "仅凭横截面相关或拟合指标不得宣称机制得到因果验证。", engine: "Stata · sem / gsem", stata: "sem (mediator <- treatment controls) (y <- mediator treatment controls), vce(robust)\nnlcom _b[mediator:treatment]*_b[y:mediator]", python: "# structural equations with bootstrap confidence intervals", tags: ["mediation", "moderation", "latent variable"], source: "statsmodels / SEM practice" },
-  { id: "M10", name: "线性 / 混合整数规划", family: "优化与决策", fit: 76, goal: "在资源、容量和逻辑约束下最小化成本或最大化收益。", estimand: "最优目标值与决策变量", dataShape: "集合、参数、决策变量、约束", formula: "min cᵀx  s.t. Ax ≥ b,  x_j∈ℝ/ℤ/{0,1}", assumptions: ["目标与约束可线性表达", "参数口径一致", "求解容差与最优性差距已定义"], diagnostics: ["可行性与冲突约束", "MIP gap / bound", "影子价格与情景敏感性"], failureRule: "模型不可行或关键约束缺失时，不得将求解器输出称为可执行最优方案。", engine: "Pyomo / PuLP / OR-Tools", stata: "* Stata 用于估计输入参数；优化由受控 solver job 执行", python: "model = ConcreteModel(); model.x = Var(...); model.obj = Objective(...); model.cons = Constraint(...)", tags: ["LP", "MILP", "resource allocation"], source: "Pyomo / PuLP / OR-Tools" },
-  { id: "M11", name: "鲁棒优化", family: "优化与决策", fit: 68, goal: "在参数处于不确定集合内时寻找最坏情形下仍可接受的方案。", estimand: "最坏情形目标与鲁棒决策", dataShape: "确定性骨架 + 不确定集合", formula: "min_x max_{u∈U} f(x,u)  s.t. g(x,u)≤0, ∀u∈U", assumptions: ["不确定集合有业务依据", "保守度参数可解释", "鲁棒对应可求解"], diagnostics: ["价格—稳健性曲线", "集合半径敏感性", "样本外压力测试"], failureRule: "不确定集合任意设定或保守成本未披露时，不输出政策建议。", engine: "Pyomo + robust counterpart", stata: "* 参数分布与区间可由 Stata 估计后冻结入模型", python: "# construct uncertainty set U and solve robust counterpart", tags: ["uncertainty set", "min-max", "stress test"], source: "Pyomo optimization ecosystem" },
-  { id: "M12", name: "随机规划", family: "优化与决策", fit: 62, goal: "在未来情景与概率不确定性下共同优化当前和递延决策。", estimand: "期望目标、CVaR 与情景决策", dataShape: "场景树或抽样情景", formula: "min cᵀx + E_ξ[Q(x,ξ)]", assumptions: ["情景生成覆盖关键风险", "概率或样本权重可信", "非预见性约束正确"], diagnostics: ["样本平均逼近稳定性", "EVPI / VSS", "尾部风险与场景删减"], failureRule: "场景覆盖不足或概率假设未审计时，最优方案只能作为情景演示。", engine: "Pyomo / mpi-sppy", stata: "* 用 Stata 估计情景概率与输入分布；求解在隔离 solver 运行", python: "# first-stage x, scenario recourse y[s], non-anticipativity constraints", tags: ["stochastic programming", "scenario", "CVaR"], source: "Pyomo / mpi-sppy" },
-  { id: "M13", name: "网络流、路径与调度", family: "运营研究", fit: 73, goal: "求解路由、分配、最短路、最大流、排程和容量决策。", estimand: "可行路径/排程及其成本、服务与碳排", dataShape: "节点、边、订单、资源与时间窗", formula: "min Σ_{(i,j)} c_{ij}x_{ij}  s.t. flow balance & capacity", assumptions: ["网络拓扑与成本可信", "时间窗/容量约束完整", "离散决策尺度可求解"], diagnostics: ["可行性与约束冲突", "最优性界与运行时", "扰动、需求与边成本敏感性"], failureRule: "遗漏业务硬约束或仅给出不可部署路线时，不进入实施建议。", engine: "OR-Tools · CP-SAT / Routing", stata: "* Stata 负责需求估计与结果统计检验", python: "routing = pywrapcp.RoutingModel(...); routing.AddDimension(...); solution = routing.SolveWithParameters(params)", tags: ["routing", "scheduling", "network flow"], source: "Google OR-Tools" },
-  { id: "M14", name: "数据包络分析 DEA", family: "效率评价", fit: 55, goal: "比较多个决策单元在多投入多产出条件下的相对效率。", estimand: "效率前沿距离与松弛变量", dataShape: "DMU × 投入/产出", formula: "max_u,v uᵀy_o / vᵀx_o  s.t. uᵀy_j/vᵀx_j≤1", assumptions: ["投入产出同质且方向合理", "样本量足以支撑维度", "异常值与环境变量已处理"], diagnostics: ["规模报酬设定", "Bootstrap 偏差", "异常值与超效率敏感性"], failureRule: "DMU 不可比或维度相对样本过高时，不发布效率排名。", engine: "DEA solver / linear programming", stata: "* dea / teradial（需在 ado manifest 中锁定）", python: "# solve one LP per DMU with Pyomo/PuLP", tags: ["efficiency", "frontier", "benchmarking"], source: "Pyomo / PuLP modeling pattern" },
-  { id: "M15", name: "仿真与蒙特卡洛", family: "仿真与预测", fit: 66, goal: "评估随机系统、策略情景和估计量在重复试验下的表现。", estimand: "输出分布、风险指标或策略差异", dataShape: "输入分布 + 状态转移/业务规则", formula: "θ̂_MC = (1/R)Σ_{r=1}^R h(X_r)", assumptions: ["输入分布与依赖结构有依据", "预热期与重复次数足够", "随机种子与版本可复现"], diagnostics: ["蒙特卡洛标准误", "收敛与方差缩减", "输入分布敏感性"], failureRule: "输入分布未经校准或仿真误差未量化时，不将场景差异解释为稳健政策效应。", engine: "Stata simulate / Python", stata: "simulate b=_b[treatment], reps(1000) seed(20260721): myprogram", python: "rng = np.random.default_rng(seed); results = [simulate(rng) for _ in range(R)]", tags: ["simulation", "Monte Carlo", "scenario"], source: "statsmodels / scientific simulation practice" },
-  { id: "M16", name: "双重机器学习 / 因果森林", family: "因果机器学习", fit: 57, goal: "在高维控制变量下估计平均或异质处理效应。", estimand: "ATE / CATE / policy value", dataShape: "大样本、高维特征、处理与结果", formula: "Y-ĝ(X) = θ(X)(T-m̂(X)) + ε", assumptions: ["可忽略性或有效工具变量", "交叉拟合与正则化条件", "重叠与样本量充分"], diagnostics: ["交叉拟合稳定性", "重叠与校准", "异质性多重比较与策略验证"], failureRule: "仅发现异质性模式而缺乏样本外验证时，不将 CATE 排名写成确定性分群结论。", engine: "EconML / CausalML", stata: "* Stata 输出经批准的分析样本；CATE 在锁定 Python 环境运行", python: "est = CausalForestDML(...); est.fit(Y, T, X=X, W=W); est.effect(X)", tags: ["DML", "CATE", "causal forest"], source: "EconML / CausalML" },
+  { id: "M01", name: "面板固定效应", family: "计量与面板", fit: null, goal: "估计同一研究对象随时间变化与结果之间的关系。", estimand: "组内变化的条件平均关联 / 处理效应", dataShape: "个体 × 时间面板", formula: "Y_it = βD_it + γX_it + α_i + λ_t + ε_it", assumptions: ["组内有效变异充分", "无随时间变化的遗漏混杂", "聚类层级与处理分配一致"], diagnostics: ["组内/组间变异分解", "序列相关与聚类层级", "高维固定效应吸收检查"], failureRule: "核心变量缺少组内变异或关键时变混杂无法处理时，停止因果表述。", engine: "Stata · xtreg / reghdfe", stata: "xtset firm_id year\nxtreg y treatment controls i.year, fe vce(cluster firm_id)", python: "PanelOLS.from_formula('y ~ treatment + controls + EntityEffects + TimeEffects', data)", tags: ["panel", "fixed effects", "cluster SE"], source: "statsmodels / linearmodels" },
+  { id: "M02", name: "双重差分", family: "因果识别", fit: null, goal: "利用处理发生前后与对照组差异识别平均处理效应。", estimand: "ATT / group-time ATT", dataShape: "处理组与对照组的重复横截面或面板", formula: "Y_it = α_i + λ_t + β(Treat_i × Post_t) + γX_it + ε_it", assumptions: ["条件平行趋势", "无提前反应", "处理组间无干扰或溢出已建模"], diagnostics: ["处理前动态系数", "分期处理异质性", "安慰剂时点与组别"], failureRule: "平行趋势或处理时点有效性被实质性否定时，不报告主因果效应。", engine: "Stata · xtdidregress / csdid", stata: "xtdidregress (y controls) (treated), group(id) time(year) vce(cluster id)", python: "model.identify_effect(); model.estimate_effect(...); model.refute_estimate(...)", tags: ["ATT", "policy evaluation", "staggered adoption"], source: "DoWhy / linearmodels" },
+  { id: "M03", name: "工具变量 / 2SLS", family: "因果识别", fit: null, goal: "借助外生工具变量处理选择偏差、反向因果或测量误差。", estimand: "LATE（在单调性条件下）", dataShape: "横截面、面板或时间序列", formula: "D = πZ + γX + u;   Y = βD̂ + γX + ε", assumptions: ["工具相关性", "排除限制", "工具独立性与单调性"], diagnostics: ["第一阶段强度", "弱工具稳健推断", "过度识别与排除限制论证"], failureRule: "弱工具或排除限制缺乏可信论证时，工具变量结果只能作为探索性证据。", engine: "Stata · ivregress / ivreghdfe", stata: "ivregress 2sls y controls (treatment = instrument), vce(cluster id)\nestat firststage", python: "IV2SLS.from_formula('y ~ 1 + controls + [treatment ~ instrument]', data).fit()", tags: ["endogeneity", "LATE", "weak IV"], source: "linearmodels / DoWhy" },
+  { id: "M04", name: "事件研究", family: "动态效应", fit: null, goal: "展示事件发生前后的动态路径、提前反应与效应持续性。", estimand: "相对事件时间的动态效应 β_k", dataShape: "具有可信事件时点的面板", formula: "Y_it = α_i + λ_t + Σ_{k≠-1} β_k 1[t-T_i=k] + ε_it", assumptions: ["事件时点可靠", "基准期与窗口预先定义", "分期处理异质性得到处理"], diagnostics: ["处理前联合检验", "事件窗口敏感性", "队列加权与组成变化"], failureRule: "事件前出现系统性趋势且无法解释时，动态因果路径不得进入核心结论。", engine: "Stata · eventstudyinteract", stata: "eventstudyinteract y lead* lag*, absorb(id year) cohort(first_treat) control_cohort(never)", python: "# cohort-specific event-time effects with explicit reference period", tags: ["dynamic effect", "pre-trend", "cohort"], source: "DoWhy / causal inference practice" },
+  { id: "M05", name: "断点回归 RDD", family: "准实验", fit: null, goal: "利用阈值附近的处理跳跃识别局部平均处理效应。", estimand: "阈值处 LATE", dataShape: "连续运行变量 + 明确阈值", formula: "τ = lim_{x↓c}E[Y|X=x] − lim_{x↑c}E[Y|X=x]", assumptions: ["阈值附近潜在结果连续", "运行变量不可精确操纵", "带宽与多项式阶数合理"], diagnostics: ["密度操纵检验", "协变量连续性", "带宽与核函数敏感性"], failureRule: "运行变量存在操纵或阈值同时触发其他制度变化时，停止局部因果解释。", engine: "Stata · rdrobust", stata: "rdrobust y running, c(cutoff) covs(controls)\nrddensity running, c(cutoff)", python: "# local polynomial fit on each side of cutoff", tags: ["threshold", "local effect", "bandwidth"], source: "DoWhy / rdrobust ecosystem" },
+  { id: "M06", name: "倾向得分与加权", family: "选择校正", fit: null, goal: "在可观测混杂条件下构造可比样本或加权总体。", estimand: "ATE / ATT / ATC", dataShape: "处理、结果与处理前协变量", formula: "ATE = E[DY/e(X) − (1-D)Y/(1-e(X))]", assumptions: ["条件可忽略性", "正值性 / 重叠", "协变量均为处理前变量"], diagnostics: ["重叠与极端权重", "加权后平衡", "未观测混杂敏感性"], failureRule: "严重违反重叠或关键混杂不可观测时，不将匹配/加权解释为已消除选择偏差。", engine: "Stata · teffects", stata: "teffects ipwra (y controls) (treated controls), atet\ntebalance summarize", python: "CausalModel(...).identify_effect(); model.estimate_effect(...)", tags: ["propensity score", "IPW", "balance"], source: "DoWhy / CausalML" },
+  { id: "M07", name: "合成控制", family: "政策评估", fit: null, goal: "以加权对照单元构造处理单元未受处理时的反事实路径。", estimand: "处理单元的时间路径效应", dataShape: "少量处理单元 + 长期面板 + donor pool", formula: "Y^N_{1t} ≈ Σ_{j=2}^{J+1} w_jY_{jt},  w_j≥0, Σw_j=1", assumptions: ["加权对照可逼近处理前路径", "无干扰与预期效应", "donor pool 未受同类冲击"], diagnostics: ["处理前 RMSPE", "空间与时间安慰剂", "剔除高权重单元"], failureRule: "处理前拟合质量不足或 donor pool 被污染时，停止反事实效应解释。", engine: "Stata · synth / sdid", stata: "synth y predictors, trunit(1) trperiod(2022) nested", python: "# optimize non-negative donor weights subject to sum(w)=1", tags: ["synthetic control", "policy", "counterfactual"], source: "optimization + causal inference practice" },
+  { id: "M08", name: "动态面板 GMM", family: "计量与面板", fit: null, goal: "处理含滞后因变量的动态面板与潜在内生解释变量。", estimand: "动态短期与长期参数", dataShape: "大 N、小 T 面板", formula: "Y_it = ρY_{i,t-1} + βD_it + α_i + ε_it", assumptions: ["误差序列相关结构符合矩条件", "工具变量集合有效", "工具数量受控"], diagnostics: ["AR(1)/AR(2)", "Hansen/Sargan", "工具数量与折叠策略"], failureRule: "AR(2) 或工具有效性失败、工具膨胀时，不报告 GMM 作为主结果。", engine: "Stata · xtabond2", stata: "xtabond2 y L.y treatment controls i.year, gmm(L.y treatment, collapse) iv(controls i.year) twostep robust", python: "# dynamic panel GMM with explicitly bounded instrument set", tags: ["dynamic panel", "GMM", "instrument proliferation"], source: "linearmodels / econometrics practice" },
+  { id: "M09", name: "中介、调节与 SEM", family: "机制模型", fit: null, goal: "检验理论机制、间接效应、边界条件与测量结构。", estimand: "直接效应、间接效应与条件效应", dataShape: "横截面、面板或潜变量测量数据", formula: "M = aX + e_M;   Y = c′X + bM + d(X×W) + e_Y", assumptions: ["因果顺序由理论与设计支持", "中介—结果混杂得到处理", "测量模型可接受"], diagnostics: ["Bootstrap 间接效应", "测量信效度与拟合", "替代因果顺序"], failureRule: "仅凭横截面相关或拟合指标不得宣称机制得到因果验证。", engine: "Stata · sem / gsem", stata: "sem (mediator <- treatment controls) (y <- mediator treatment controls), vce(robust)\nnlcom _b[mediator:treatment]*_b[y:mediator]", python: "# structural equations with bootstrap confidence intervals", tags: ["mediation", "moderation", "latent variable"], source: "statsmodels / SEM practice" },
+  { id: "M10", name: "线性 / 混合整数规划", family: "优化与决策", fit: null, goal: "在资源、容量和逻辑约束下最小化成本或最大化收益。", estimand: "最优目标值与决策变量", dataShape: "集合、参数、决策变量、约束", formula: "min cᵀx  s.t. Ax ≥ b,  x_j∈ℝ/ℤ/{0,1}", assumptions: ["目标与约束可线性表达", "参数口径一致", "求解容差与最优性差距已定义"], diagnostics: ["可行性与冲突约束", "MIP gap / bound", "影子价格与情景敏感性"], failureRule: "模型不可行或关键约束缺失时，不得将求解器输出称为可执行最优方案。", engine: "Pyomo / PuLP / OR-Tools", stata: "* Stata 用于估计输入参数；优化由受控 solver job 执行", python: "model = ConcreteModel(); model.x = Var(...); model.obj = Objective(...); model.cons = Constraint(...)", tags: ["LP", "MILP", "resource allocation"], source: "Pyomo / PuLP / OR-Tools" },
+  { id: "M11", name: "鲁棒优化", family: "优化与决策", fit: null, goal: "在参数处于不确定集合内时寻找最坏情形下仍可接受的方案。", estimand: "最坏情形目标与鲁棒决策", dataShape: "确定性骨架 + 不确定集合", formula: "min_x max_{u∈U} f(x,u)  s.t. g(x,u)≤0, ∀u∈U", assumptions: ["不确定集合有业务依据", "保守度参数可解释", "鲁棒对应可求解"], diagnostics: ["价格—稳健性曲线", "集合半径敏感性", "样本外压力测试"], failureRule: "不确定集合任意设定或保守成本未披露时，不输出政策建议。", engine: "Pyomo + robust counterpart", stata: "* 参数分布与区间可由 Stata 估计后冻结入模型", python: "# construct uncertainty set U and solve robust counterpart", tags: ["uncertainty set", "min-max", "stress test"], source: "Pyomo optimization ecosystem" },
+  { id: "M12", name: "随机规划", family: "优化与决策", fit: null, goal: "在未来情景与概率不确定性下共同优化当前和递延决策。", estimand: "期望目标、CVaR 与情景决策", dataShape: "场景树或抽样情景", formula: "min cᵀx + E_ξ[Q(x,ξ)]", assumptions: ["情景生成覆盖关键风险", "概率或样本权重可信", "非预见性约束正确"], diagnostics: ["样本平均逼近稳定性", "EVPI / VSS", "尾部风险与场景删减"], failureRule: "场景覆盖不足或概率假设未审计时，最优方案只能作为情景演示。", engine: "Pyomo / mpi-sppy", stata: "* 用 Stata 估计情景概率与输入分布；求解在隔离 solver 运行", python: "# first-stage x, scenario recourse y[s], non-anticipativity constraints", tags: ["stochastic programming", "scenario", "CVaR"], source: "Pyomo / mpi-sppy" },
+  { id: "M13", name: "网络流、路径与调度", family: "运营研究", fit: null, goal: "求解路由、分配、最短路、最大流、排程和容量决策。", estimand: "可行路径/排程及其成本、服务与碳排", dataShape: "节点、边、订单、资源与时间窗", formula: "min Σ_{(i,j)} c_{ij}x_{ij}  s.t. flow balance & capacity", assumptions: ["网络拓扑与成本可信", "时间窗/容量约束完整", "离散决策尺度可求解"], diagnostics: ["可行性与约束冲突", "最优性界与运行时", "扰动、需求与边成本敏感性"], failureRule: "遗漏业务硬约束或仅给出不可部署路线时，不进入实施建议。", engine: "OR-Tools · CP-SAT / Routing", stata: "* Stata 负责需求估计与结果统计检验", python: "routing = pywrapcp.RoutingModel(...); routing.AddDimension(...); solution = routing.SolveWithParameters(params)", tags: ["routing", "scheduling", "network flow"], source: "Google OR-Tools" },
+  { id: "M14", name: "数据包络分析 DEA", family: "效率评价", fit: null, goal: "比较多个决策单元在多投入多产出条件下的相对效率。", estimand: "效率前沿距离与松弛变量", dataShape: "DMU × 投入/产出", formula: "max_u,v uᵀy_o / vᵀx_o  s.t. uᵀy_j/vᵀx_j≤1", assumptions: ["投入产出同质且方向合理", "样本量足以支撑维度", "异常值与环境变量已处理"], diagnostics: ["规模报酬设定", "Bootstrap 偏差", "异常值与超效率敏感性"], failureRule: "DMU 不可比或维度相对样本过高时，不发布效率排名。", engine: "DEA solver / linear programming", stata: "* dea / teradial（需在 ado manifest 中锁定）", python: "# solve one LP per DMU with Pyomo/PuLP", tags: ["efficiency", "frontier", "benchmarking"], source: "Pyomo / PuLP modeling pattern" },
+  { id: "M15", name: "仿真与蒙特卡洛", family: "仿真与预测", fit: null, goal: "评估随机系统、策略情景和估计量在重复试验下的表现。", estimand: "输出分布、风险指标或策略差异", dataShape: "输入分布 + 状态转移/业务规则", formula: "θ̂_MC = (1/R)Σ_{r=1}^R h(X_r)", assumptions: ["输入分布与依赖结构有依据", "预热期与重复次数足够", "随机种子与版本可复现"], diagnostics: ["蒙特卡洛标准误", "收敛与方差缩减", "输入分布敏感性"], failureRule: "输入分布未经校准或仿真误差未量化时，不将场景差异解释为稳健政策效应。", engine: "Stata simulate / Python", stata: "simulate b=_b[treatment], reps(1000) seed(20260721): myprogram", python: "rng = np.random.default_rng(seed); results = [simulate(rng) for _ in range(R)]", tags: ["simulation", "Monte Carlo", "scenario"], source: "statsmodels / scientific simulation practice" },
+  { id: "M16", name: "双重机器学习 / 因果森林", family: "因果机器学习", fit: null, goal: "在高维控制变量下估计平均或异质处理效应。", estimand: "ATE / CATE / policy value", dataShape: "大样本、高维特征、处理与结果", formula: "Y-ĝ(X) = θ(X)(T-m̂(X)) + ε", assumptions: ["可忽略性或有效工具变量", "交叉拟合与正则化条件", "重叠与样本量充分"], diagnostics: ["交叉拟合稳定性", "重叠与校准", "异质性多重比较与策略验证"], failureRule: "仅发现异质性模式而缺乏样本外验证时，不将 CATE 排名写成确定性分群结论。", engine: "EconML / CausalML", stata: "* Stata 输出经批准的分析样本；CATE 在锁定 Python 环境运行", python: "est = CausalForestDML(...); est.fit(Y, T, X=X, W=W); est.effect(X)", tags: ["DML", "CATE", "causal forest"], source: "EconML / CausalML" },
 ];
 
 const formulas: FormulaRecord[] = [
@@ -257,33 +256,51 @@ const gateCards = [
   { id: "G5", title: "成稿与发布", owner: "通讯作者", status: "locked", time: "等待 G4", asset: "Manuscript · Repro package" },
 ];
 
-function projectGateCards(project: ResearchProject, submittedGates: Record<string, boolean>) {
+function projectGateCards(project: ResearchProject, apiProject?: ApiProject) {
   const stage = project.stageIndex;
-  const submitted = (gateId: string) => Boolean(submittedGates[`${project.id}:${gateId}`]);
+  const gateStages: Record<string, string> = {
+    G0: "problem",
+    G1: "design",
+    G2: "data",
+    G3: "identification",
+    G4: "evidence",
+    G5: "delivery",
+  };
   return gateCards.map((gate) => {
-    if (gate.id === "G0") return { ...gate, status: stage > 0 ? "approved" : submitted("G0") ? "review" : "draft", time: stage > 0 ? "已批准并锁定" : submitted("G0") ? "等待研究者与导师会签" : "等待选题提交" };
-    if (gate.id === "G1") {
-      if (stage > 3) return { ...gate, status: "approved", time: "已批准并锁定" };
-      if (stage === 3) return { ...gate, status: submitted("G1") ? "review" : "draft", time: submitted("G1") ? "等待 2 人会签" : "等待提交" };
-      return { ...gate, status: "locked", time: "等待完成 S2" };
-    }
-    if (gate.id === "G2") {
-      if (stage > 4) return { ...gate, status: "approved", time: "已批准并锁定" };
-      if (stage === 4) return { ...gate, status: submitted("G2") ? "review" : "draft", time: submitted("G2") ? "等待数据负责人会签" : "等待数据负责人提交" };
-      return { ...gate, status: stage === 3 ? "blocked" : "locked", time: stage === 3 ? "等待 G1" : "等待进入 S4" };
-    }
-    if (gate.id === "G3") {
-      if (stage > 5) return { ...gate, status: "approved", time: "已批准并锁定" };
-      if (stage === 5) return { ...gate, status: submitted("G3") ? "review" : "draft", time: submitted("G3") ? "等待方法审核者会签" : "等待分析计划提交" };
-      return { ...gate, status: "locked", time: "等待 G2 与 S5" };
-    }
-    if (gate.id === "G4") {
-      if (stage > 8) return { ...gate, status: "approved", time: "已批准并锁定" };
-      if (stage === 8) return { ...gate, status: submitted("G4") ? "review" : "draft", time: submitted("G4") ? "等待 PI 与方法审核者会签" : "等待结果主张提交" };
-      return { ...gate, status: "locked", time: "等待正式运行与稳健性检查" };
-    }
-    if (gate.id === "G5") return { ...gate, status: stage === 9 ? submitted("G5") ? "review" : "draft" : "locked", time: stage === 9 ? submitted("G5") ? "等待通讯作者会签" : "等待发布包提交" : "等待 G4" };
-    return gate;
+    const stageKey = gateStages[gate.id];
+    const remote = apiProject?.stages.find((item) => item.key === stageKey);
+    const position = stages.findIndex((item) => item.key === stageKey);
+    const history = (apiProject?.approvals ?? [])
+      .filter((event) => event.stage_key === stageKey)
+      .map((event) => ({
+        revision: event.revision,
+        decision: event.decision,
+        reason: event.reason,
+        createdAt: event.created_at,
+      }));
+    const status = remote?.status === "approved"
+      ? "approved"
+      : remote?.status === "blocked"
+        ? "blocked"
+        : apiProject?.current_stage === stageKey || stage === position
+          ? "draft"
+          : "locked";
+    const time = remote?.approved_at
+      ? `${new Date(remote.approved_at).toLocaleString("zh-CN")} 已批准`
+      : status === "draft"
+        ? remote?.revision
+          ? `Revision ${remote.revision} 等待提交`
+          : "尚未形成阶段资产"
+        : `等待进入 S${position}`;
+    return {
+      ...gate,
+      status,
+      time,
+      asset: remote
+        ? `${remote.artifact_type} · Revision ${remote.revision}`
+        : gate.asset,
+      history,
+    };
   });
 }
 
@@ -319,6 +336,48 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function stageWorkspace(content: Record<string, unknown>): Record<string, unknown> {
   return asRecord(content._workspace) ?? content;
+}
+
+function projectEvidenceRecords(project?: ApiProject): EvidenceRecord[] {
+  const literature = project?.stages.find((stage) => stage.key === "literature");
+  const papers = Array.isArray(literature?.content.papers) ? literature.content.papers : [];
+  const streams = Array.isArray(literature?.content.research_streams)
+    ? literature.content.research_streams
+    : [];
+  const streamByPaper = new Map<string, string>();
+  streams.forEach((raw) => {
+    const stream = asRecord(raw);
+    if (!stream) return;
+    const name = typeof stream.name === "string" ? stream.name : "未归类";
+    const paperIds = Array.isArray(stream.paper_ids) ? stream.paper_ids : [];
+    paperIds.forEach((paperId) => {
+      if (typeof paperId === "string") streamByPaper.set(paperId, name);
+    });
+  });
+  return papers.flatMap((raw): EvidenceRecord[] => {
+    const paper = asRecord(raw);
+    if (!paper || typeof paper.title !== "string") return [];
+    const id = typeof paper.paper_id === "string" ? paper.paper_id : paper.title;
+    const authors = Array.isArray(paper.authors)
+      ? paper.authors.filter((item): item is string => typeof item === "string").join(", ")
+      : "";
+    const sourceUrls = Array.isArray(paper.source_urls)
+      ? paper.source_urls.filter((item): item is string => typeof item === "string")
+      : [];
+    return [{
+      id,
+      title: paper.title,
+      authors,
+      year: typeof paper.year === "number" ? paper.year : Number(paper.year) || 0,
+      stream: streamByPaper.get(id) || (typeof paper.venue === "string" ? paper.venue : "未归类"),
+      method: typeof paper.method === "string" ? paper.method : "待人工提取",
+      status: typeof paper.abstract === "string" && paper.abstract.trim() ? "摘要级" : "元数据",
+      abstract: typeof paper.abstract === "string" ? paper.abstract : undefined,
+      venue: typeof paper.venue === "string" ? paper.venue : undefined,
+      doi: typeof paper.doi === "string" ? paper.doi : undefined,
+      sourceUrl: sourceUrls[0] || (typeof paper.source_url === "string" ? paper.source_url : undefined),
+    }];
+  });
 }
 
 function projectContext(project: ResearchProject): NonNullable<StageWorkspacePayload["project_context"]> {
@@ -708,7 +767,13 @@ function AgentPanel({
     && remoteStage.status !== "approved"
     && !busy,
   );
-  const canApprove = !remoteStage || remoteStage.status === "needs_review";
+  const workspace = remoteStage ? stageWorkspace(remoteStage.content) : undefined;
+  const humanConfirmed = workspace?.human_confirmed === true;
+  const canApprove = Boolean(
+    remoteStage
+    && remoteStage.status === "needs_review"
+    && humanConfirmed,
+  );
   const generateLabel = stage.key === "literature"
     ? "检索并生成综述"
     : stage.key === "delivery"
@@ -775,7 +840,11 @@ function AgentPanel({
       <div className="agent-submit-wrap">
         <div className="submit-readiness">
           <span>{remoteStage?.revision ?? 0}</span>
-          {remoteStage?.status === "needs_review" ? " 当前 Revision 待审阅" : " 先生成符合契约的阶段资产"}
+          {remoteStage?.status !== "needs_review"
+            ? " 先生成符合契约的阶段资产"
+            : humanConfirmed
+              ? " 当前 Revision 已保存人工确认"
+              : " 请先在阶段资产中保存人工确认"}
         </div>
         <div className="stage-flow-actions">
           <button className="generate-stage-action" disabled={!canGenerate} onClick={onGenerate}>{busy ? "处理中…" : generateLabel}</button>
@@ -880,44 +949,80 @@ function GenericStage({
   );
 }
 
-function EvidenceLibrary({ onOpenRecord, onToast }: { onOpenRecord: (title: string) => void; onToast: (message: string) => void }) {
+function EvidenceLibrary({
+  records,
+  searchRuns,
+  busy,
+  onOpenRecord,
+  onSearch,
+  onToast,
+}: {
+  records: EvidenceRecord[];
+  searchRuns: number;
+  busy: boolean;
+  onOpenRecord: (title: string) => void;
+  onSearch: (query: string) => Promise<void>;
+  onToast: (message: string) => void;
+}) {
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("全部");
   const [searchOpen, setSearchOpen] = useState(false);
   const [draftQuery, setDraftQuery] = useState("");
-  const filtered = libraryEvidence.filter((item) => {
+  const filtered = records.filter((item) => {
     const haystack = `${item.title} ${item.authors} ${item.stream} ${item.method}`.toLowerCase();
     const queryTerms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const matchesQuery = queryTerms.length === 0 || queryTerms.some((term) => haystack.includes(term));
     const matchesFilter = activeFilter === "全部" || item.stream === activeFilter;
     return matchesQuery && matchesFilter;
   });
+  const streams = ["全部", ...Array.from(new Set(records.map((item) => item.stream)))];
+  const verified = records.filter((item) => item.status === "已核验").length;
   return (
     <div className="library-view page-view">
       <header className="view-header"><div><p className="eyebrow">Evidence Library</p><h1>证据库</h1><p>检索、筛选并核查每一条进入研究结论的文献与运行证据。</p></div><button className="primary-compact" onClick={() => setSearchOpen((open) => !open)}>＋ 新建检索</button></header>
       <div className="metric-strip">
-        <div><strong>100</strong><span>设计语料论文</span></div><div><strong>12</strong><span>当前课题核心文献</span></div><div><strong>4</strong><span>研究流派</span></div><div><strong>92%</strong><span>核心主张可追溯</span></div>
+        <div><strong>{records.length}</strong><span>当前项目证据</span></div><div><strong>{searchRuns}</strong><span>已保存检索批次</span></div><div><strong>{Math.max(0, streams.length - 1)}</strong><span>研究流派</span></div><div><strong>{verified}</strong><span>全文已核验</span></div>
       </div>
-      {searchOpen && <section className="search-composer" aria-label="新建文献检索"><div><p className="eyebrow">New search</p><h2>创建可复核检索</h2><p>输入主题、变量或方法；本次条件会保留在检索记录中。</p></div><label><span>检索问题</span><input value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} placeholder="例如：生成式 AI 企业创新 双重差分" autoFocus /></label><label><span>来源范围</span><select defaultValue="all"><option value="all">顶刊与工作论文</option><option value="journal">仅同行评审期刊</option><option value="working">包含工作论文</option></select></label><div><button onClick={() => setSearchOpen(false)}>取消</button><button className="primary-action" onClick={() => { if (!draftQuery.trim()) { onToast("请先输入检索问题"); return; } setQuery(draftQuery.trim()); setSearchOpen(false); onToast(`已运行检索：${draftQuery.trim()}`); }}>运行检索</button></div></section>}
+      {searchOpen && <section className="search-composer" aria-label="新建文献检索"><div><p className="eyebrow">New search</p><h2>创建可复核检索</h2><p>输入主题、变量或方法；检索结果和来源批次会保存到 S1 阶段资产。</p></div><label><span>检索问题</span><input value={draftQuery} onChange={(event) => setDraftQuery(event.target.value)} placeholder="例如：生成式 AI 企业创新 双重差分" autoFocus /></label><label><span>来源范围</span><select defaultValue="all" disabled><option value="all">OpenAlex / Crossref / Semantic Scholar / arXiv</option></select></label><div><button onClick={() => setSearchOpen(false)} disabled={busy}>取消</button><button className="primary-action" disabled={busy} onClick={() => { const nextQuery = draftQuery.trim(); if (!nextQuery) { onToast("请先输入检索问题"); return; } void onSearch(nextQuery).then(() => { setQuery(nextQuery); setSearchOpen(false); }); }}>{busy ? "检索中…" : "运行检索"}</button></div></section>}
       <section className="content-card library-panel">
         <div className="library-tools">
           <label className="search-field"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题名、作者、方法或流派" aria-label="搜索证据库" /></label>
           <div className="filter-chips" aria-label="研究流派筛选">
-            {["全部", "通用技术与生产率", "AI 与创新机制", "组织转型"].map((filter) => <button className={activeFilter === filter ? "is-active" : ""} onClick={() => setActiveFilter(filter)} key={filter}>{filter}</button>)}
+            {streams.map((filter) => <button className={activeFilter === filter ? "is-active" : ""} onClick={() => setActiveFilter(filter)} key={filter}>{filter}</button>)}
           </div>
         </div>
         <div className="library-table-wrap">
           <table className="library-table"><thead><tr><th>论文</th><th>研究流派</th><th>年份</th><th>方法</th><th>证据等级</th><th /></tr></thead><tbody>
             {filtered.map((item) => <tr key={item.title}><td><strong>{item.title}</strong><span>{item.authors}</span></td><td>{item.stream}</td><td>{item.year}</td><td>{item.method}</td><td><span className={`source-level ${item.status === "已核验" ? "verified" : ""}`}>{item.status}</span></td><td><button className="row-action" onClick={() => onOpenRecord(item.title)}>打开论文卡</button></td></tr>)}
           </tbody></table>
-          {filtered.length === 0 && <div className="empty-state">没有匹配的证据，试试调整关键词或流派。</div>}
+          {filtered.length === 0 && <div className="empty-state">{records.length === 0 ? "当前项目证据库为空。执行第一次文献检索后，返回的论文元数据才会进入这里。" : "没有匹配的证据，试试调整关键词或流派。"}</div>}
         </div>
       </section>
     </div>
   );
 }
 
-function MethodsView({ onOpenMethod, onOpenFormula, onAdd, onToast }: { onOpenMethod: (methodId: string) => void; onOpenFormula: (formulaId: string) => void; onAdd: (methodId: string) => void; onToast: (message: string) => void }) {
+function MethodsView({
+  methods,
+  formulas,
+  evaluation,
+  busy,
+  onEvaluate,
+  onOpenMethod,
+  onOpenFormula,
+  onAdd,
+  onToast,
+}: {
+  methods: MethodRecord[];
+  formulas: FormulaRecord[];
+  evaluation?: KnowledgeEvaluation;
+  busy: boolean;
+  onEvaluate: () => Promise<void>;
+  onOpenMethod: (methodId: string) => void;
+  onOpenFormula: (formulaId: string) => void;
+  onAdd: (methodId: string) => void;
+  onToast: (message: string) => void;
+}) {
   const [tab, setTab] = useState<"methods" | "formulas" | "diagnostics" | "design">("methods");
   const [selected, setSelected] = useState(methods[0].id);
   const [query, setQuery] = useState("");
@@ -932,13 +1037,13 @@ function MethodsView({ onOpenMethod, onOpenFormula, onAdd, onToast }: { onOpenMe
   const toggleCompare = (methodId: string) => setCompare((current) => current.includes(methodId) ? current.filter((item) => item !== methodId) : current.length < 3 ? [...current, methodId] : [...current.slice(1), methodId]);
   const changeTab = (next: typeof tab) => { setTab(next); setQuery(""); setFamily("全部"); };
   return <div className="methods-view page-view method-studio">
-    <header className="view-header method-studio-header"><div><p className="eyebrow">Method & Formula Studio · versioned registry</p><h1>方法与公式库</h1><p>从研究目标和数据结构出发，连接公式、假设、诊断、代码与人工选择记录。</p></div><div className="studio-metrics"><div><strong>{methods.length}</strong><span>核心方法</span></div><div><strong>47</strong><span>公式模板</span></div><div><strong>36</strong><span>诊断规则</span></div></div></header>
-    <nav className="studio-tabs" aria-label="方法工作台分区">{[["methods", "方法库"], ["formulas", "公式库"], ["diagnostics", "诊断规则"], ["design", "当前研究设计"]].map(([key, label]) => <button className={tab === key ? "is-active" : ""} onClick={() => changeTab(key as typeof tab)} key={key}>{label}<span>{key === "methods" ? methods.length : key === "formulas" ? 47 : key === "diagnostics" ? diagnosticRules.length : compare.length}</span></button>)}</nav>
+    <header className="view-header method-studio-header"><div><p className="eyebrow">Method & Formula Studio · versioned registry</p><h1>方法与公式库</h1><p>从研究目标和数据结构出发，连接公式、假设、诊断、代码与人工选择记录。</p><small>{evaluation?.status === "current" ? `${evaluation.model} · ${new Date(evaluation.evaluated_at).toLocaleString("zh-CN")}` : evaluation?.status === "stale" ? "研究上下文已变化，原 AI 评分已过期" : "尚未针对当前项目运行 AI 适配评估"}</small></div><div className="studio-metrics"><div><strong>{methods.length}</strong><span>核心方法</span></div><div><strong>{formulas.length}</strong><span>公式模板</span></div><div><strong>{diagnosticRules.length}</strong><span>诊断规则</span></div><button className="primary-compact" disabled={busy} onClick={() => void onEvaluate()}>{busy ? "AI 评估中…" : "AI 评估当前课题"}</button></div></header>
+    <nav className="studio-tabs" aria-label="方法工作台分区">{[["methods", "方法库"], ["formulas", "公式库"], ["diagnostics", "诊断规则"], ["design", "当前研究设计"]].map(([key, label]) => <button className={tab === key ? "is-active" : ""} onClick={() => changeTab(key as typeof tab)} key={key}>{label}<span>{key === "methods" ? methods.length : key === "formulas" ? formulas.length : key === "diagnostics" ? diagnosticRules.length : compare.length}</span></button>)}</nav>
     <section className="studio-toolbar"><label className="search-field"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === "diagnostics" ? "搜索规则、适用方法、触发条件或 Stata 命令" : "搜索目标、方法、公式、诊断或标签"} aria-label="搜索方法、公式与诊断规则" /></label><select value={family} onChange={(event) => setFamily(event.target.value)} aria-label="筛选知识家族">{families.map((item) => <option key={item}>{item}</option>)}</select><button onClick={() => { setQuery(""); setFamily("全部"); }}>清除筛选</button></section>
 
-    {tab === "methods" && <div className="method-library-shell"><section className="method-library-list" aria-label="候选方法">{filteredMethods.map((method) => <article className={`method-library-row ${selected === method.id ? "is-selected" : ""}`} key={method.id}><button className="method-row-main" onClick={() => setSelected(method.id)}><span className="method-code">{method.id}</span><div><div><b>{method.family}</b><small>{method.dataShape}</small></div><h2>{method.name}</h2><p>{method.goal}</p><div className="method-tag-row">{method.tags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}</div></div><strong className="method-row-fit">{method.fit}<small>%</small></strong></button><div className="method-row-actions"><button className={compare.includes(method.id) ? "is-active" : ""} onClick={() => toggleCompare(method.id)}>{compare.includes(method.id) ? "已加入比较" : "加入比较"}</button><button onClick={() => onOpenMethod(method.id)}>完整方法卡 →</button></div></article>)}{filteredMethods.length === 0 && <div className="empty-state">没有匹配的方法，请调整关键词或方法家族。</div>}</section><aside className="method-detail method-studio-detail"><p className="eyebrow">Selected method</p><div className="selected-method-title"><div><span>{activeMethod.id}</span><h2>{activeMethod.name}</h2></div><strong>{activeMethod.fit}%</strong></div><pre>{activeMethod.formula}</pre><dl><div><dt>目标</dt><dd>{activeMethod.estimand}</dd></div><div><dt>数据</dt><dd>{activeMethod.dataShape}</dd></div><div><dt>实现</dt><dd>{activeMethod.engine}</dd></div></dl><h3>关键假设</h3><ul>{activeMethod.assumptions.map((item) => <li key={item}><span>!</span>{item}</li>)}</ul><div className="method-warning"><strong>失败规则</strong><p>{activeMethod.failureRule}</p></div><div className="method-detail-actions"><button onClick={() => onOpenMethod(activeMethod.id)}>审阅完整方法卡</button><button className="primary-action" onClick={() => onAdd(activeMethod.id)}>加入研究设计</button></div></aside></div>}
+    {tab === "methods" && <div className="method-library-shell"><section className="method-library-list" aria-label="候选方法">{filteredMethods.map((method) => <article className={`method-library-row ${selected === method.id ? "is-selected" : ""}`} key={method.id}><button className="method-row-main" onClick={() => setSelected(method.id)}><span className="method-code">{method.id}</span><div><div><b>{method.family}</b><small>{method.dataShape}</small></div><h2>{method.name}</h2><p>{method.goal}</p><div className="method-tag-row">{method.tags.slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}</div></div><strong className="method-row-fit">{method.fit === null ? "待评估" : <>{method.fit}<small>%</small></>}</strong></button><div className="method-row-actions"><button className={compare.includes(method.id) ? "is-active" : ""} onClick={() => toggleCompare(method.id)}>{compare.includes(method.id) ? "已加入比较" : "加入比较"}</button><button onClick={() => onOpenMethod(method.id)}>完整方法卡 →</button></div></article>)}{filteredMethods.length === 0 && <div className="empty-state">没有匹配的方法，请调整关键词或方法家族。</div>}</section><aside className="method-detail method-studio-detail"><p className="eyebrow">Selected method</p><div className="selected-method-title"><div><span>{activeMethod.id}</span><h2>{activeMethod.name}</h2></div><strong>{activeMethod.fit === null ? "待 AI 评估" : `${activeMethod.fit}%`}</strong></div><pre>{activeMethod.formula}</pre>{activeMethod.fitRationale && <p>{activeMethod.fitRationale}</p>}<dl><div><dt>目标</dt><dd>{activeMethod.estimand}</dd></div><div><dt>数据</dt><dd>{activeMethod.dataShape}</dd></div><div><dt>实现</dt><dd>{activeMethod.engine}</dd></div></dl><h3>关键假设</h3><ul>{activeMethod.assumptions.map((item) => <li key={item}><span>!</span>{item}</li>)}</ul><div className="method-warning"><strong>失败规则</strong><p>{activeMethod.failureRule}</p></div><div className="method-detail-actions"><button onClick={() => onOpenMethod(activeMethod.id)}>审阅完整方法卡</button><button className="primary-action" onClick={() => onAdd(activeMethod.id)}>加入研究设计</button></div></aside></div>}
 
-    {tab === "formulas" && <section className="formula-library-grid">{filteredFormulas.map((formula) => <article className="formula-library-card" key={formula.id}><header><span>{formula.id}</span><b>{formula.family}</b></header><h2>{formula.title}</h2><p>{formula.purpose}</p><pre>{formula.formula}</pre><div className="formula-card-meta"><span>{formula.symbols.length} 个符号</span><span>{formula.assumptions.length} 项假设</span><span>{formula.diagnostics.length} 项诊断</span></div><footer><button onClick={() => { void navigator.clipboard?.writeText(formula.formula); onToast(`${formula.id} 公式已复制`); }}>复制公式</button><button className="primary-action" onClick={() => onOpenFormula(formula.id)}>打开公式卡 →</button></footer></article>)}<article className="formula-library-card formula-coming-card"><span>+35</span><h2>已策划扩展模板</h2><p>时间序列、离散选择、生存分析、多层模型、多目标优化、排队与博弈模型将在后端注册表中版本化上线。</p><button onClick={() => onToast("扩展公式目录已加入产品 Roadmap")}>查看上线规则</button></article></section>}
+    {tab === "formulas" && <section className="formula-library-grid">{filteredFormulas.map((formula) => <article className="formula-library-card" key={formula.id}><header><span>{formula.id}</span><b>{formula.family}</b><small>{formula.fit == null ? "待 AI 评估" : `AI 适配度 ${formula.fit}%`}</small></header><h2>{formula.title}</h2><p>{formula.fitRationale || formula.purpose}</p><pre>{formula.formula}</pre><div className="formula-card-meta"><span>{formula.symbols.length} 个符号</span><span>{formula.assumptions.length} 项假设</span><span>{formula.diagnostics.length} 项诊断</span></div><footer><button onClick={() => { void navigator.clipboard?.writeText(formula.formula); onToast(`${formula.id} 公式已复制`); }}>复制公式</button><button className="primary-action" onClick={() => onOpenFormula(formula.id)}>打开公式卡 →</button></footer></article>)}</section>}
 
     {tab === "diagnostics" && <section className="diagnostic-registry"><header><div><p className="eyebrow">Diagnostic policy registry · 36 / 36</p><h2>诊断不是附录，是方法的退出条件</h2><p>每条规则都包含适用方法、触发时点、所需证据、失败动作和实现提示。</p></div><div><span>当前显示 <strong>{filteredDiagnostics.length}</strong> / {diagnosticRules.length}</span><button onClick={() => onToast(`${filteredDiagnostics.length} 条诊断规则已加入 S5–S7 分析计划检查清单`)}>加入当前结果</button></div></header><div className="diagnostic-rule-grid">{filteredDiagnostics.map((rule) => { const expanded = expandedDiagnostic === rule.id; return <article className={`diagnostic-rule-card level-${rule.level} ${expanded ? "is-expanded" : ""}`} key={rule.id}><header><span>{rule.id}</span><b>{rule.level}</b><small>{rule.stage}</small></header><div className="diagnostic-rule-family">{rule.family}</div><h3>{rule.name}</h3><p>{rule.appliesTo}</p><dl><div><dt>触发</dt><dd>{rule.trigger}</dd></div>{expanded && <><div><dt>证据</dt><dd>{rule.evidence}</dd></div><div><dt>失败动作</dt><dd>{rule.action}</dd></div></>}</dl>{expanded && <div className="diagnostic-implementation"><span>实现提示</span><code>{rule.implementation}</code></div>}<footer><button onClick={() => onToast(`${rule.id} ${rule.name} 已加入当前分析计划`)}>加入计划</button><button className="primary-action" onClick={() => setExpandedDiagnostic(expanded ? null : rule.id)}>{expanded ? "收起规则" : "查看完整规则"}</button></footer></article>; })}{filteredDiagnostics.length === 0 && <div className="empty-state">没有匹配的诊断规则，请清除筛选或更换关键词。</div>}</div></section>}
 
@@ -1233,8 +1338,8 @@ function RunsView({
   );
 }
 
-function ApprovalsView({ project, submittedGates, onOpenGate, onOpenDetail }: { project: ResearchProject; submittedGates: Record<string, boolean>; onOpenGate: (gateId: string) => void; onOpenDetail: (detail: DetailPanel) => void }) {
-  const cards = projectGateCards(project, submittedGates);
+function ApprovalsView({ project, apiProject, onOpenGate, onOpenDetail }: { project: ResearchProject; apiProject?: ApiProject; onOpenGate: (gateId: string) => void; onOpenDetail: (detail: DetailPanel) => void }) {
+  const cards = projectGateCards(project, apiProject);
   const countByStatus = (status: string) => cards.filter((gate) => gate.status === status).length;
   return (
     <div className="approvals-view page-view">
@@ -1306,8 +1411,11 @@ export default function Home() {
   const [stageDrafts, setStageDrafts] = useState<Record<string, StageDraft>>({});
   const [resolvedIssues, setResolvedIssues] = useState<Record<string, boolean>>({});
   const [suggestionStates, setSuggestionStates] = useState<Record<number, SuggestionState>>({});
-  const [approvalOpen, setApprovalOpen] = useState(false);
-  const [submittedGates, setSubmittedGates] = useState<Record<string, boolean>>({});
+  const [approvalStageIndex, setApprovalStageIndex] = useState<number | null>(null);
+  const [stageRevisions, setStageRevisions] = useState<Record<string, StageRevision[]>>({});
+  const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
+  const [knowledgeEvaluations, setKnowledgeEvaluations] = useState<Record<string, KnowledgeEvaluation>>({});
+  const [knowledgeBusy, setKnowledgeBusy] = useState(false);
   const [apiProjectIds, setApiProjectIds] = useState<Record<string, boolean>>({});
   const [apiProjects, setApiProjects] = useState<Record<string, ApiProject>>({});
   const [apiMode, setApiMode] = useState<"loading" | "connected" | "fallback">("loading");
@@ -1324,11 +1432,28 @@ export default function Home() {
   const [chatBusy, setChatBusy] = useState(false);
   const [toast, setToast] = useState("");
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
+  const activeApiProject = apiProjects[activeProject.id];
   const activeStageData = stages[activeStage];
-  const activeRemoteStage = apiProjects[activeProject.id]?.stages.find((stage) => stage.key === activeStageData.key);
+  const activeRemoteStage = activeApiProject?.stages.find((stage) => stage.key === activeStageData.key);
   const deepRoute = deepStack[deepStack.length - 1];
-  const g1Submitted = Boolean(submittedGates[`${activeProject.id}:G1`]);
-  const activeSubmittedCount = Object.keys(submittedGates).filter((key) => key.startsWith(`${activeProject.id}:`) && submittedGates[key]).length;
+  const deepStageDraftIndex = deepRoute?.kind === "stage-draft" ? deepRoute.stageIndex : null;
+  const activeEvidence = projectEvidenceRecords(activeApiProject);
+  const literatureContent = activeApiProject?.stages.find((stage) => stage.key === "literature")?.content;
+  const literatureSearchRuns = Array.isArray(literatureContent?.search_runs) ? literatureContent.search_runs.length : 0;
+  const activeKnowledgeEvaluation = knowledgeEvaluations[activeProject.id];
+  const methodAssessments = new Map((activeKnowledgeEvaluation?.status === "current" ? activeKnowledgeEvaluation.methods : []).map((item) => [item.candidate_id, item]));
+  const formulaAssessments = new Map((activeKnowledgeEvaluation?.status === "current" ? activeKnowledgeEvaluation.formulas : []).map((item) => [item.candidate_id, item]));
+  const evaluatedMethods = methods.map((method) => {
+    const assessment = methodAssessments.get(method.id);
+    return { ...method, fit: assessment?.score ?? null, fitRationale: assessment?.rationale };
+  });
+  const evaluatedFormulas = formulas.map((formula) => {
+    const assessment = formulaAssessments.get(formula.id);
+    return { ...formula, fit: assessment?.score ?? null, fitRationale: assessment?.rationale };
+  });
+  const approvalOpen = approvalStageIndex !== null;
+  const approvalStageData = stages[approvalStageIndex ?? activeStage];
+  const approvalRemoteStage = activeApiProject?.stages.find((stage) => stage.key === approvalStageData.key);
   const pageTitle = useMemo(() => navItems.find((item) => item.key === view)?.short ?? "研究旅程", [view]);
 
   useEffect(() => {
@@ -1338,6 +1463,36 @@ export default function Home() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    if (!apiProjectIds[activeProject.id]) return;
+    let cancelled = false;
+    void getApiKnowledgeEvaluation(activeProject.id).then((evaluation) => {
+      if (!cancelled) {
+        setKnowledgeEvaluations((current) => ({
+          ...current,
+          [activeProject.id]: evaluation,
+        }));
+      }
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [activeProject.id, apiProjectIds]);
+
+  useEffect(() => {
+    if (deepStageDraftIndex === null || !apiProjectIds[activeProject.id]) return;
+    const stageIndex = deepStageDraftIndex;
+    const stageKey = stages[stageIndex].key;
+    const key = `${activeProject.id}:${stageKey}`;
+    let cancelled = false;
+    void listApiStageRevisions(activeProject.id, stageKey).then((items) => {
+      if (!cancelled) {
+        setStageRevisions((current) => ({ ...current, [key]: items }));
+      }
+    }).catch((error) => {
+      if (!cancelled) setApiError(readApiError(error));
+    });
+    return () => { cancelled = true; };
+  }, [activeProject.id, apiProjectIds, deepStageDraftIndex]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1421,30 +1576,126 @@ export default function Home() {
     return hydrated;
   }
   function confirmApproval() {
-    setApprovalOpen(false);
+    const targetIndex = approvalStageIndex;
+    if (targetIndex === null) return;
+    const targetStage = stages[targetIndex];
     if (!apiProjectIds[activeProject.id]) {
-      if (/^G[0-5]$/.test(activeStageData.gate)) {
-        setSubmittedGates((current) => ({ ...current, [`${activeProject.id}:${activeStageData.gate}`]: true }));
-      }
-      showToast(`${activeStageData.gate} 已在本地演示状态中标记`);
+      setApiError("审批必须连接 FastAPI，不能只修改前端演示状态");
+      showToast("审批未提交：当前项目未连接后端");
       return;
     }
     setApiBusy(true);
     void decideApiStage(
       activeProject.id,
-      activeStageData.key,
+      targetStage.key,
       "approve",
       "研究者已人工核对当前 revision，并批准进入下一阶段。",
     ).then((updated) => {
       applyApiProject(updated);
-      setSubmittedGates((current) => ({ ...current, [`${activeProject.id}:${activeStageData.gate}`]: true }));
+      setApprovalStageIndex(null);
       setApiError("");
-      showToast(`${activeStageData.gate} 已由研究者批准，流程进入下一阶段`);
+      showToast(`${targetStage.gate} 已保存人工审批事件，流程进入下一阶段`);
     }).catch((error) => {
       setApiError(readApiError(error));
       showToast(`审批未完成：${readApiError(error)}`);
     }).finally(() => setApiBusy(false));
   }
+
+  async function runEvidenceSearch(query: string) {
+    if (!apiProjectIds[activeProject.id]) {
+      setApiError("证据检索必须连接 FastAPI 项目");
+      showToast("检索未运行：当前项目未连接后端");
+      return;
+    }
+    setApiBusy(true);
+    try {
+      const updated = await searchApiLiterature(activeProject.id, [query]);
+      applyApiProject(updated);
+      setApiError("");
+      const count = projectEvidenceRecords(updated).length;
+      showToast(`检索完成，当前项目证据库已保存 ${count} 条论文记录`);
+    } catch (error) {
+      setApiError(readApiError(error));
+      showToast(`检索未完成：${readApiError(error)}`);
+    } finally {
+      setApiBusy(false);
+    }
+  }
+
+  async function runKnowledgeEvaluation() {
+    if (!apiProjectIds[activeProject.id]) {
+      setApiError("方法评估必须连接 FastAPI 项目");
+      showToast("AI 评估未运行：当前项目未连接后端");
+      return;
+    }
+    setKnowledgeBusy(true);
+    try {
+      const evaluation = await evaluateApiKnowledge(
+        activeProject.id,
+        methods.map((method) => ({
+          candidate_id: method.id,
+          name: method.name,
+          description: `${method.goal}\n估计目标：${method.estimand}\n数据结构：${method.dataShape}`,
+          assumptions: [...method.assumptions],
+        })),
+        formulas.map((formula) => ({
+          candidate_id: formula.id,
+          name: formula.title,
+          description: `${formula.purpose}\n公式：${formula.formula}`,
+          assumptions: [...formula.assumptions],
+        })),
+      );
+      setKnowledgeEvaluations((current) => ({
+        ...current,
+        [activeProject.id]: evaluation,
+      }));
+      setApiError("");
+      showToast(`AI 已评估 ${evaluation.methods.length} 个方法和 ${evaluation.formulas.length} 个公式`);
+    } catch (error) {
+      setApiError(readApiError(error));
+      showToast(`AI 评估未完成：${readApiError(error)}`);
+    } finally {
+      setKnowledgeBusy(false);
+    }
+  }
+
+  async function refreshStageRevisions(projectId: string, stageIndex: number) {
+    const stageKey = stages[stageIndex].key;
+    const items = await listApiStageRevisions(projectId, stageKey);
+    setStageRevisions((current) => ({
+      ...current,
+      [`${projectId}:${stageKey}`]: items,
+    }));
+  }
+
+  async function restoreStageRevision(stageIndex: number, revision: number) {
+    const projectId = activeProject.id;
+    const stageKey = stages[stageIndex].key;
+    const remoteStage = apiProjects[projectId]?.stages.find((item) => item.key === stageKey);
+    if (!remoteStage) {
+      showToast("恢复失败：后端阶段尚未加载");
+      return;
+    }
+    setRestoringRevision(revision);
+    try {
+      const updated = await restoreApiStageRevision(
+        projectId,
+        stageKey,
+        revision,
+        remoteStage.revision,
+      );
+      applyApiProject(updated);
+      await refreshStageRevisions(projectId, stageIndex);
+      setApiError("");
+      showToast(`Revision ${revision} 已复制为新的未确认草稿`);
+    } catch (error) {
+      setApiError(readApiError(error));
+      showToast(`恢复失败：${readApiError(error)}`);
+    } finally {
+      setRestoringRevision(null);
+    }
+  }
+
   async function generateActiveStageAssets() {
     const projectId = activeProject.id;
     const stageKey = activeStageData.key;
@@ -1622,8 +1873,9 @@ export default function Home() {
         draftWorkspace(draft, existingContext),
         remoteStage.revision,
         message,
-      ).then((updated) => {
+      ).then(async (updated) => {
         applyApiProject(updated);
+        await refreshStageRevisions(projectId, stageIndex);
         setApiError("");
         showToast(`${stages[stageIndex].id} 已同步到 FastAPI revision`);
       }).catch((error) => {
@@ -1709,7 +1961,8 @@ export default function Home() {
     if (deepRoute.kind === "stage-draft") {
       const stage = stages[deepRoute.stageIndex];
       const draft = getDraft(deepRoute.stageIndex);
-      return <StageDraftWorkspace key={`${draft.version}:${draft.savedAt}:${draft.syncHistory.length}`} stage={stage} project={activeProject} draft={draft} onBack={backDeep} onSave={(nextDraft, message) => saveDraft(deepRoute.stageIndex, nextDraft, message)} onOpenCheck={() => openDeep({ kind: "stage-check", stageIndex: deepRoute.stageIndex })} onOpenDecisions={() => openDeep({ kind: "stage-decisions", stageIndex: deepRoute.stageIndex })} onOpenChat={() => openAgentChat(deepRoute.stageIndex)} onOpenEvidence={() => navigateView("evidence")} />;
+      const revisions = stageRevisions[`${activeProject.id}:${stage.key}`] ?? [];
+      return <StageDraftWorkspace key={`${draft.version}:${draft.savedAt}:${draft.syncHistory.length}`} stage={stage} project={activeProject} draft={draft} evidenceRecords={activeEvidence} revisions={revisions} restoringRevision={restoringRevision} onRestore={(revision) => void restoreStageRevision(deepRoute.stageIndex, revision)} onBack={backDeep} onSave={(nextDraft, message) => saveDraft(deepRoute.stageIndex, nextDraft, message)} onOpenCheck={() => openDeep({ kind: "stage-check", stageIndex: deepRoute.stageIndex })} onOpenDecisions={() => openDeep({ kind: "stage-decisions", stageIndex: deepRoute.stageIndex })} onOpenChat={() => openAgentChat(deepRoute.stageIndex)} onOpenEvidence={() => navigateView("evidence")} />;
     }
     if (deepRoute.kind === "stage-check") {
       const stage = stages[deepRoute.stageIndex];
@@ -1737,25 +1990,25 @@ export default function Home() {
       return <ProjectOverviewPage project={project} onBack={backDeep} onStart={() => activateProject(project.id)} onEdit={() => openDeep({ kind: "project-wizard", projectId: project.id })} onNew={() => openDeep({ kind: "project-wizard" })} />;
     }
     if (deepRoute.kind === "evidence-record") {
-      const record = libraryEvidence.find((item) => item.title === deepRoute.title) ?? libraryEvidence[0];
-      return <EvidenceRecordPage record={record} onBack={backDeep} onSave={showToast} />;
+      const record = activeEvidence.find((item) => item.title === deepRoute.title);
+      return record ? <EvidenceRecordPage record={record} onBack={backDeep} onSave={showToast} /> : null;
     }
     if (deepRoute.kind === "method-record") {
-      const method = methods.find((item) => item.id === deepRoute.methodId) ?? methods[0];
+      const method = evaluatedMethods.find((item) => item.id === deepRoute.methodId) ?? evaluatedMethods[0];
       return <MethodRecordWorkspace method={method} onBack={backDeep} onAdd={() => addMethodToDesign(method.id)} onSave={showToast} />;
     }
     if (deepRoute.kind === "formula-record") {
-      const formula = formulas.find((item) => item.id === deepRoute.formulaId) ?? formulas[0];
+      const formula = evaluatedFormulas.find((item) => item.id === deepRoute.formulaId) ?? evaluatedFormulas[0];
       return <FormulaRecordPage formula={formula} onBack={backDeep} onAdd={() => addMethodToDesign(formula.methodId)} onSave={showToast} />;
     }
     if (deepRoute.kind === "approval-gate") {
-      const cards = projectGateCards(activeProject, submittedGates);
+      const cards = projectGateCards(activeProject, activeApiProject);
       const gate = cards.find((item) => item.id === deepRoute.gateId) ?? cards[0];
       const gateStage: Record<string, number> = { G0: 0, G1: 3, G2: 4, G3: 5, G4: 8, G5: 9 };
-      return <ApprovalGatePage gate={gate} onBack={backDeep} onOpenAsset={() => openDeep({ kind: "asset-version", gateId: gate.id })} onSubmit={() => { setActiveStage(gateStage[gate.id] ?? activeStage); setApprovalOpen(true); }} />;
+      return <ApprovalGatePage gate={gate} onBack={backDeep} onOpenAsset={() => openDeep({ kind: "asset-version", gateId: gate.id })} onSubmit={() => setApprovalStageIndex(gateStage[gate.id] ?? activeStage)} />;
     }
     if (deepRoute.kind === "asset-version") {
-      const cards = projectGateCards(activeProject, submittedGates);
+      const cards = projectGateCards(activeProject, activeApiProject);
       const gate = cards.find((item) => item.id === deepRoute.gateId) ?? cards[0];
       return <AssetVersionPage gate={gate} onBack={backDeep} onSave={showToast} />;
     }
@@ -1767,7 +2020,7 @@ export default function Home() {
       <header className="topbar">
         <button className="brand" onClick={() => navigateView("journey")} aria-label="返回研究旅程"><span>AI</span>4MS</button>
         <nav className="topnav" aria-label="主导航">
-          {navItems.map((item) => <button className={view === item.key ? "is-active" : ""} onClick={() => navigateView(item.key)} key={item.key}><span>{item.label}</span><small>{item.short}</small>{item.key === "approvals" && activeSubmittedCount > 0 && <i>{activeSubmittedCount}</i>}</button>)}
+          {navItems.map((item) => <button className={view === item.key ? "is-active" : ""} onClick={() => navigateView(item.key)} key={item.key}><span>{item.label}</span><small>{item.short}</small></button>)}
         </nav>
         <div className="topbar-actions">
           <div className="project-switcher-wrap">
@@ -1801,7 +2054,7 @@ export default function Home() {
           {view === "journey" && (
             <>
               <header className="journey-header">
-                <div><p className="eyebrow">Research Journey · {activeStageData.agent}</p><h1>{activeStageData.name}</h1><p><strong>{activeStage + 1}/10</strong> 阶段 <span>·</span> <b>{activeStageData.gate} {activeStage === 3 && g1Submitted ? "审批中" : "待确认"}</b></p></div>
+                <div><p className="eyebrow">Research Journey · {activeStageData.agent}</p><h1>{activeStageData.name}</h1><p><strong>{activeStage + 1}/10</strong> 阶段 <span>·</span> <b>{activeStageData.gate} {activeRemoteStage?.status === "approved" ? "已批准" : "待确认"}</b></p></div>
                 <ProgressNodes activeIndex={activeStage} remoteStages={apiProjects[activeProject.id]?.stages} />
               </header>
               <div className="journey-grid">
@@ -1818,27 +2071,27 @@ export default function Home() {
                   busy={apiBusy}
                   onDecision={decideSuggestion}
                   onGenerate={generateActiveStageAssets}
-                  onSubmit={() => setApprovalOpen(true)}
+                  onSubmit={() => setApprovalStageIndex(activeStage)}
                   onOpenChat={() => openAgentChat()}
                 />
               </div>
             </>
           )}
-          {view === "evidence" && <EvidenceLibrary onOpenRecord={(title) => openDeep({ kind: "evidence-record", title })} onToast={showToast} />}
-          {view === "methods" && <MethodsView onOpenMethod={(methodId) => openDeep({ kind: "method-record", methodId })} onOpenFormula={(formulaId) => openDeep({ kind: "formula-record", formulaId })} onAdd={addMethodToDesign} onToast={showToast} />}
+          {view === "evidence" && <EvidenceLibrary records={activeEvidence} searchRuns={literatureSearchRuns} busy={apiBusy} onSearch={runEvidenceSearch} onOpenRecord={(title) => openDeep({ kind: "evidence-record", title })} onToast={showToast} />}
+          {view === "methods" && <MethodsView methods={evaluatedMethods} formulas={evaluatedFormulas} evaluation={activeKnowledgeEvaluation} busy={knowledgeBusy} onEvaluate={runKnowledgeEvaluation} onOpenMethod={(methodId) => openDeep({ kind: "method-record", methodId })} onOpenFormula={(formulaId) => openDeep({ kind: "formula-record", formulaId })} onAdd={addMethodToDesign} onToast={showToast} />}
           {view === "runs" && <RunsView project={activeProject} apiProject={apiProjects[activeProject.id]} onProjectUpdated={applyApiProject} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onToast={showToast} />}
-          {view === "approvals" && <ApprovalsView project={activeProject} submittedGates={submittedGates} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onOpenDetail={setDetail} />}
+          {view === "approvals" && <ApprovalsView project={activeProject} apiProject={activeApiProject} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onOpenDetail={setDetail} />}
           </>}
         </div>
       </main>
 
       <ApprovalModal
-        key={`${activeProject.id}:${activeStageData.gate}:${approvalOpen}`}
+        key={`${activeProject.id}:${approvalStageData.gate}:${approvalOpen}`}
         open={approvalOpen}
-        stageIndex={activeStage}
-        revision={activeRemoteStage?.revision ?? getDraft(activeStage).version}
-        contentHash={activeRemoteStage?.content_hash ?? null}
-        onClose={() => setApprovalOpen(false)}
+        stageIndex={approvalStageIndex ?? activeStage}
+        revision={approvalRemoteStage?.revision ?? getDraft(approvalStageIndex ?? activeStage).version}
+        contentHash={approvalRemoteStage?.content_hash ?? null}
+        onClose={() => setApprovalStageIndex(null)}
         onConfirm={confirmApproval}
       />
       <DetailModal detail={detail} onClose={() => setDetail(null)} />

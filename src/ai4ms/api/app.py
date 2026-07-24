@@ -14,7 +14,11 @@ from ai4ms.db import ProjectStore
 from ai4ms.delivery import DeliveryExportError
 from ai4ms.domains import MANAGEMENT_SCIENCE_PROFILE
 from ai4ms.inference import InferenceUnavailableError, inference_status
-from ai4ms.knowledge import KnowledgeRegistry
+from ai4ms.knowledge import (
+    KnowledgeEvaluationOutputError,
+    KnowledgeEvaluationService,
+    KnowledgeRegistry,
+)
 from ai4ms.literature.service import LiteratureSearchInputError, LiteratureSearchService
 from ai4ms.runners import (
     AnalysisJobConflictError,
@@ -27,8 +31,10 @@ from ai4ms.services.models import (
     AnalysisRunRequest,
     CreateProjectRequest,
     DraftRequest,
+    KnowledgeEvaluationRequest,
     LiteratureSearchRequest,
     StageDecisionRequest,
+    StageRestoreRequest,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
     UpdateProjectRequest,
@@ -72,6 +78,7 @@ def create_app(
     stage_generation: StageGenerationService | None = None,
     literature_search: LiteratureSearchService | None = None,
     analysis_runner: AnalysisRunnerService | None = None,
+    knowledge_evaluation: KnowledgeEvaluationService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
     web_root = _web_root()
@@ -81,6 +88,7 @@ def create_app(
         stage_generation=stage_generation,
         literature_search=literature_search,
         analysis_runner=analysis_runner,
+        knowledge_evaluation=knowledge_evaluation,
     )
 
     app = FastAPI(
@@ -130,6 +138,10 @@ def create_app(
     @app.exception_handler(StageGenerationOutputError)
     async def invalid_model_output(_request: Request, exc: StageGenerationOutputError):
         return _json_error(status.HTTP_502_BAD_GATEWAY, "invalid_model_output", str(exc))
+
+    @app.exception_handler(KnowledgeEvaluationOutputError)
+    async def invalid_knowledge_evaluation(_request: Request, exc: KnowledgeEvaluationOutputError):
+        return _json_error(status.HTTP_502_BAD_GATEWAY, "invalid_knowledge_evaluation", str(exc))
 
     @app.exception_handler(LiteratureSearchInputError)
     async def invalid_literature_search(_request: Request, exc: LiteratureSearchInputError):
@@ -261,6 +273,29 @@ def create_app(
     async def get_stage(project_id: str, stage_key: str, request: Request):
         return get_service(request).get_stage(project_id, stage_key)
 
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/revisions",
+        tags=["stages"],
+    )
+    async def list_stage_revisions(project_id: str, stage_key: str, request: Request):
+        return {
+            "items": get_service(request).list_stage_revisions(project_id, stage_key)
+        }
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/restore",
+        tags=["stages"],
+    )
+    async def restore_stage_revision(
+        project_id: str,
+        stage_key: str,
+        payload: StageRestoreRequest,
+        request: Request,
+    ):
+        return get_service(request).restore_stage_revision(
+            project_id, stage_key, payload
+        )
+
     @app.put("/api/v1/projects/{project_id}/stages/{stage_key}", tags=["stages"])
     async def update_stage(project_id: str, stage_key: str, payload: StageUpdateRequest, request: Request):
         return get_service(request).update_stage(project_id, stage_key, payload)
@@ -281,6 +316,24 @@ def create_app(
     @app.post("/api/v1/projects/{project_id}/stages/literature/search", tags=["literature"])
     async def search_literature(project_id: str, payload: LiteratureSearchRequest, request: Request):
         return await get_service(request).search_literature(project_id, payload)
+
+    @app.get(
+        "/api/v1/projects/{project_id}/knowledge/evaluation",
+        tags=["knowledge"],
+    )
+    async def get_knowledge_evaluation(project_id: str, request: Request):
+        return get_service(request).get_knowledge_evaluation(project_id)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/knowledge/evaluation",
+        tags=["knowledge"],
+    )
+    async def evaluate_knowledge(
+        project_id: str,
+        payload: KnowledgeEvaluationRequest,
+        request: Request,
+    ):
+        return await get_service(request).evaluate_knowledge(project_id, payload)
 
     @app.post("/api/v1/projects/{project_id}/stages/analysis/preflight", tags=["runners"])
     async def preflight_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):

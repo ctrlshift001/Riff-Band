@@ -137,6 +137,7 @@ class DeliveryExportService:
             for key, value in content.items()
             if key
             not in {
+                "_workspace",
                 "exports",
                 "visual_report_path",
                 "research_package_path",

@@ -298,6 +298,43 @@ class ProjectStore:
                 return stage
         raise KeyError(stage_key)
 
+    def list_stage_revisions(
+        self, project_id: str, stage_key: str
+    ) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            self._get_stage_state(conn, project_id, stage_key)
+            rows = conn.execute(
+                """
+                SELECT revision_id, project_id, stage_key, revision, change_reason,
+                       author_type, content_hash, created_at
+                FROM stage_revisions
+                WHERE project_id = ? AND stage_key = ?
+                ORDER BY revision DESC
+                """,
+                (project_id, stage_key),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_stage_revision(
+        self, project_id: str, stage_key: str, revision: int
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            self._get_stage_state(conn, project_id, stage_key)
+            row = conn.execute(
+                """
+                SELECT revision_id, project_id, stage_key, revision, content_json,
+                       change_reason, author_type, content_hash, created_at
+                FROM stage_revisions
+                WHERE project_id = ? AND stage_key = ? AND revision = ?
+                """,
+                (project_id, stage_key, revision),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"{project_id}:{stage_key}:revision:{revision}")
+        item = dict(row)
+        item["content"] = json.loads(str(item.pop("content_json")))
+        return item
+
     def update_project(self, project_id: str, title: str, initial_idea: str) -> dict[str, Any]:
         timestamp = _now()
         with self._connect() as conn:

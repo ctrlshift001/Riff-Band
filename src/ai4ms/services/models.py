@@ -116,6 +116,12 @@ class StageWorkspaceUpdateRequest(BaseModel):
     change_reason: str = Field(default="", max_length=500)
 
 
+class StageRestoreRequest(BaseModel):
+    revision: int = Field(ge=1)
+    expected_revision: int = Field(ge=1)
+    change_reason: str = Field(default="", max_length=500)
+
+
 class StageDecisionRequest(BaseModel):
     decision: ApprovalDecision
     reason: str = Field(default="", max_length=1000)
@@ -143,6 +149,20 @@ class LiteratureSearchRequest(BaseModel):
     @classmethod
     def clean_queries(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+
+class KnowledgeCandidateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=300)
+    description: str = Field(default="", max_length=4000)
+    assumptions: list[str] = Field(default_factory=list, max_length=20)
+
+
+class KnowledgeEvaluationRequest(BaseModel):
+    methods: list[KnowledgeCandidateInput] = Field(min_length=1, max_length=40)
+    formulas: list[KnowledgeCandidateInput] = Field(default_factory=list, max_length=80)
 
 
 class AnalysisRunRequest(BaseModel):

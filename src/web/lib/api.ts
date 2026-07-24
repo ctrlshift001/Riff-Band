@@ -39,6 +39,17 @@ export interface ProjectStage {
   content: Record<string, unknown>;
 }
 
+export interface StageRevision {
+  revision_id: string;
+  project_id: string;
+  stage_key: string;
+  revision: number;
+  change_reason: string;
+  author_type: string;
+  content_hash: string;
+  created_at: string;
+}
+
 export interface ApprovalEvent {
   approval_id: string;
   project_id: string;
@@ -205,6 +216,33 @@ export interface StageWorkspacePayload {
   } | null;
 }
 
+export interface KnowledgeCandidate {
+  candidate_id: string;
+  name: string;
+  description: string;
+  assumptions: string[];
+}
+
+export interface KnowledgeAssessment {
+  candidate_id: string;
+  score: number;
+  rationale: string;
+  missing_information: string[];
+}
+
+export interface KnowledgeEvaluation {
+  evaluation_id: string;
+  project_id: string;
+  status: "not_evaluated" | "current" | "stale" | "invalid";
+  context_hash: string;
+  model: string;
+  evaluated_at: string;
+  summary: string;
+  methods: KnowledgeAssessment[];
+  formulas: KnowledgeAssessment[];
+  usage: Record<string, unknown>;
+}
+
 interface ApiErrorPayload {
   error?: { code?: string; message?: string };
   detail?: string | Array<{ msg?: string }>;
@@ -300,6 +338,35 @@ export function saveStageWorkspace(
   );
 }
 
+export async function listStageRevisions(
+  projectId: string,
+  stageKey: string,
+): Promise<StageRevision[]> {
+  const response = await request<{ items: StageRevision[] }>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/revisions`,
+  );
+  return response.items;
+}
+
+export function restoreStageRevision(
+  projectId: string,
+  stageKey: string,
+  revision: number,
+  expectedRevision: number,
+): Promise<Project> {
+  return request<Project>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/restore`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        revision,
+        expected_revision: expectedRevision,
+        change_reason: `从 Revision ${revision} 恢复为新草稿`,
+      }),
+    },
+  );
+}
+
 export function createStageDraft(
   projectId: string,
   stageKey: string,
@@ -312,11 +379,31 @@ export function createStageDraft(
   });
 }
 
-export function searchLiterature(projectId: string): Promise<Project> {
+export function searchLiterature(projectId: string, queries: string[] = []): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}/stages/literature/search`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ queries }),
   });
+}
+
+export function getKnowledgeEvaluation(projectId: string): Promise<KnowledgeEvaluation> {
+  return request<KnowledgeEvaluation>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/evaluation`,
+  );
+}
+
+export function evaluateKnowledge(
+  projectId: string,
+  methods: KnowledgeCandidate[],
+  formulas: KnowledgeCandidate[],
+): Promise<KnowledgeEvaluation> {
+  return request<KnowledgeEvaluation>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/evaluation`,
+    {
+      method: "POST",
+      body: JSON.stringify({ methods, formulas }),
+    },
+  );
 }
 
 export async function getStataRunnerStatus(): Promise<RunnerStatus> {

@@ -107,26 +107,43 @@ def _create_project(client: TestClient) -> dict:
 
 
 def _approve(client: TestClient, project_id: str, stage_key: str) -> dict:
+    project = client.get(f"/api/v1/projects/{project_id}").json()
+    current = next(stage for stage in project["stages"] if stage["key"] == stage_key)
+    current_content = current.get("content", {})
+    content = _valid_gate_content(project, stage_key)
+    content.update(
+        {
+            key: value
+            for key, value in current_content.items()
+            if key not in content or value not in ("", [], {}, None)
+        }
+    )
+    updated = client.put(
+        f"/api/v1/projects/{project_id}/stages/{stage_key}",
+        json={"content": content, "change_reason": "Prepare valid gate fixture"},
+    )
+    assert updated.status_code == 200
+    updated_project = updated.json()
+    updated_stage = next(
+        stage for stage in updated_project["stages"] if stage["key"] == stage_key
+    )
+    workspace = {
+        **updated_stage.get("content", {}).get("_workspace", {}),
+        "human_confirmed": True,
+    }
+    confirmed = client.patch(
+        f"/api/v1/projects/{project_id}/stages/{stage_key}/workspace",
+        json={
+            "workspace": workspace,
+            "expected_revision": updated_stage["revision"],
+            "change_reason": "Persist human confirmation for gate fixture",
+        },
+    )
+    assert confirmed.status_code == 200
     response = client.post(
         f"/api/v1/projects/{project_id}/stages/{stage_key}/decisions",
         json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
     )
-    if (
-        response.status_code == 409
-        and response.json().get("error", {}).get("code") == "invalid_stage_content"
-    ):
-        project = client.get(f"/api/v1/projects/{project_id}").json()
-        current = next(stage for stage in project["stages"] if stage["key"] == stage_key)
-        content = {**current.get("content", {}), **_valid_gate_content(project, stage_key)}
-        updated = client.put(
-            f"/api/v1/projects/{project_id}/stages/{stage_key}",
-            json={"content": content, "change_reason": "Prepare valid gate fixture"},
-        )
-        assert updated.status_code == 200
-        response = client.post(
-            f"/api/v1/projects/{project_id}/stages/{stage_key}/decisions",
-            json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
-        )
     assert response.status_code == 200
     return response.json()
 
@@ -323,6 +340,10 @@ def _valid_gate_content(project: dict, stage_key: str) -> dict:
             "reproducibility_report": "当前只完成计划审查，尚未形成数值复现结论。",
             "unknowns": ["实际运行结果"],
         }
+    if stage_key == "evidence":
+        return _valid_evidence_content()
+    if stage_key == "delivery":
+        return _valid_delivery_content()
     raise AssertionError(f"missing gate fixture for {stage_key}")
 
 
@@ -404,6 +425,126 @@ def test_gate_rejects_invalid_stage_asset(tmp_path):
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "invalid_stage_content"
+
+
+def test_gate_requires_saved_confirmation_for_the_current_revision(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    project = _create_project(client)
+    project_id = project["project_id"]
+    problem = project["stages"][0]
+    valid_content = _valid_gate_content(project, "problem")
+
+    prepared = client.put(
+        f"/api/v1/projects/{project_id}/stages/problem",
+        json={"content": valid_content, "change_reason": "Prepare valid problem"},
+    )
+    assert prepared.status_code == 200
+    prepared_stage = prepared.json()["stages"][0]
+
+    missing_confirmation = client.post(
+        f"/api/v1/projects/{project_id}/stages/problem/decisions",
+        json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
+    )
+    assert missing_confirmation.status_code == 409
+    assert "人工确认尚未保存" in missing_confirmation.json()["error"]["message"]
+
+    confirmed = client.patch(
+        f"/api/v1/projects/{project_id}/stages/problem/workspace",
+        json={
+            "workspace": {"human_confirmed": True},
+            "expected_revision": prepared_stage["revision"],
+            "change_reason": "Confirm current problem revision",
+        },
+    )
+    assert confirmed.status_code == 200
+    confirmed_stage = confirmed.json()["stages"][0]
+    assert confirmed_stage["content"]["_workspace"]["human_confirmed"] is True
+
+    approved = client.post(
+        f"/api/v1/projects/{project_id}/stages/problem/decisions",
+        json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
+    )
+    assert approved.status_code == 200
+
+    changed_content = dict(confirmed_stage["content"])
+    changed_content["problem_boundary"] = "修改后的研究边界"
+    changed = client.put(
+        f"/api/v1/projects/{project_id}/stages/problem",
+        json={"content": changed_content, "change_reason": "Change canonical content"},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["stages"][0]["content"]["_workspace"]["human_confirmed"] is False
+
+    stale_confirmation = client.post(
+        f"/api/v1/projects/{project_id}/stages/problem/decisions",
+        json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
+    )
+    assert stale_confirmation.status_code == 409
+
+
+def test_stage_revision_history_can_restore_an_exact_draft(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    project = _create_project(client)
+    project_id = project["project_id"]
+
+    first_content = {
+        **_valid_gate_content(project, "problem"),
+        "draft_marker": "first",
+    }
+    first = client.put(
+        f"/api/v1/projects/{project_id}/stages/problem",
+        json={"content": first_content, "change_reason": "First draft"},
+    )
+    assert first.status_code == 200
+    first_stage = first.json()["stages"][0]
+
+    confirmed = client.patch(
+        f"/api/v1/projects/{project_id}/stages/problem/workspace",
+        json={
+            "workspace": {
+                "summary": "第一版人工说明",
+                "human_confirmed": True,
+                "sync_history": ["保存第一版"],
+            },
+            "expected_revision": first_stage["revision"],
+            "change_reason": "Confirm first draft",
+        },
+    )
+    confirmed_stage = confirmed.json()["stages"][0]
+    source_revision = confirmed_stage["revision"]
+
+    second_content = dict(confirmed_stage["content"])
+    second_content["draft_marker"] = "second"
+    second = client.put(
+        f"/api/v1/projects/{project_id}/stages/problem",
+        json={"content": second_content, "change_reason": "Second draft"},
+    )
+    second_stage = second.json()["stages"][0]
+    assert second_stage["content"]["_workspace"]["human_confirmed"] is False
+
+    revisions = client.get(
+        f"/api/v1/projects/{project_id}/stages/problem/revisions"
+    )
+    assert revisions.status_code == 200
+    revision_numbers = [item["revision"] for item in revisions.json()["items"]]
+    assert revision_numbers == sorted(revision_numbers, reverse=True)
+    assert source_revision in revision_numbers
+
+    restored = client.post(
+        f"/api/v1/projects/{project_id}/stages/problem/restore",
+        json={
+            "revision": source_revision,
+            "expected_revision": second_stage["revision"],
+            "change_reason": "Restore first draft",
+        },
+    )
+    assert restored.status_code == 200
+    restored_stage = restored.json()["stages"][0]
+    assert restored_stage["revision"] == second_stage["revision"] + 1
+    assert restored_stage["content"]["draft_marker"] == "first"
+    assert restored_stage["content"]["_workspace"]["summary"] == "第一版人工说明"
+    assert restored_stage["content"]["_workspace"]["human_confirmed"] is False
+    assert "恢复" in restored_stage["content"]["_workspace"]["sync_history"][0]
 
 
 def test_model_draft_is_saved_as_an_agent_revision(tmp_path):
@@ -547,7 +688,7 @@ def test_upstream_change_invalidates_downstream_and_persists(tmp_path):
     assert changed.status_code == 200
     project = changed.json()
     assert project["current_stage"] == "problem"
-    assert project["stages"][0]["revision"] == 3
+    assert project["stages"][0]["revision"] == 4
     assert project["stages"][1]["status"] == "needs_review"
     assert project["stages"][2]["status"] == "not_started"
     assert len(project["approvals"]) == 2
