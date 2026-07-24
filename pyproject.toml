@@ -14,10 +14,12 @@ dependencies = [
     "google-genai>=1.73",
     "mistune>=3.1",
     "openai>=1.99",
+    "pandas>=2.2",
     "pydantic>=2.12",
     "pypdf>=6.10",
     "PyYAML>=6.0",
     "python-dotenv>=1.2",
+    "python-multipart>=0.0.20",
     "rich>=13",
     "uvicorn>=0.34",
 ]
@@ -26,11 +28,11 @@ dependencies = [
 riffband = "ui.shell:_entry"
 riffband-mcp = "mcp_server:_entry"
 ai4ms-web = "ai4ms.api.app:_entry"
+ai4ms-stata-runner = "ai4ms.runners.local_app:_entry"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-web = ["static/*"]
 "ai4ms.knowledge" = ["data/*.json"]
 research = ["*.css", "*.js"]

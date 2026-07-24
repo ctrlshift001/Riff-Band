@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
 
 from fastapi.testclient import TestClient
 
 from ai4ms.api.app import create_app
+from ai4ms.services.stage_generation import StageGenerationService
 
 
 class _FakeStageGeneration:
@@ -64,9 +67,10 @@ class _FakeAnalysisRunner:
             "issues": [],
         }
 
-    async def submit(self, project: dict, project_dir, request) -> dict:
-        return {
-            "run_id": "run_api_test",
+    async def submit(self, project: dict, project_dir, request, run_id: str | None = None) -> dict:
+        resolved_run_id = run_id or "run_api_test"
+        run = {
+            "run_id": resolved_run_id,
             "status": "succeeded",
             "reason_code": "completed",
             "requested_by": request.requested_by,
@@ -76,9 +80,18 @@ class _FakeAnalysisRunner:
             "runner_profile": self.status(),
             "preflight": self.preflight(project, project_dir, request),
             "exit_code": 0,
+            "data_signature": "test-signature",
+            "structured_results": [],
             "output_artifacts": [{"path": "artifacts/runs/run_api_test/results.csv", "sha256": "b" * 64}],
-            "manifest_path": "artifacts/runs/run_api_test/manifest.json",
+            "manifest_path": f"artifacts/runs/{resolved_run_id}/manifest.json",
         }
+        manifest = project_dir / run["manifest_path"]
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps(run), encoding="utf-8")
+        return run
+
+    async def cancel(self, _run_id: str) -> bool:
+        return False
 
 
 def _create_project(client: TestClient) -> dict:
@@ -98,6 +111,22 @@ def _approve(client: TestClient, project_id: str, stage_key: str) -> dict:
         f"/api/v1/projects/{project_id}/stages/{stage_key}/decisions",
         json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
     )
+    if (
+        response.status_code == 409
+        and response.json().get("error", {}).get("code") == "invalid_stage_content"
+    ):
+        project = client.get(f"/api/v1/projects/{project_id}").json()
+        current = next(stage for stage in project["stages"] if stage["key"] == stage_key)
+        content = {**current.get("content", {}), **_valid_gate_content(project, stage_key)}
+        updated = client.put(
+            f"/api/v1/projects/{project_id}/stages/{stage_key}",
+            json={"content": content, "change_reason": "Prepare valid gate fixture"},
+        )
+        assert updated.status_code == 200
+        response = client.post(
+            f"/api/v1/projects/{project_id}/stages/{stage_key}/decisions",
+            json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
+        )
     assert response.status_code == 200
     return response.json()
 
@@ -153,6 +182,150 @@ def _valid_delivery_content() -> dict:
     }
 
 
+def _valid_gate_content(project: dict, stage_key: str) -> dict:
+    if stage_key == "problem":
+        return {
+            "initial_idea": project["initial_idea"],
+            "research_object": "采用 AI 的企业",
+            "problem_boundary": "研究企业采用 AI 与创新结果之间的关系，不预设因果成立。",
+            "objective": "explain",
+            "units": ["企业"],
+            "geography": ["待确认"],
+            "time_window": "待确认",
+            "concepts": [{"label": "AI 采用", "terms": ["AI adoption"], "exclude_terms": []}],
+            "questions": ["企业采用 AI 与创新结果之间存在什么关系？"],
+            "candidate_gaps": [],
+            "counter_searches": ["AI adoption firm innovation existing evidence"],
+            "unknowns": ["数据可得性"],
+        }
+    if stage_key == "literature":
+        return {
+            "topic_summary": "企业 AI 采用与创新结果研究",
+            "query_blocks": [
+                {"label": "核心关系", "terms": ["AI adoption", "innovation"], "exclude_terms": [], "query_zh": "人工智能采用 企业创新", "query_en": "AI adoption AND firm innovation", "purpose": "定位核心研究"},
+                {"label": "反向证据", "terms": ["AI adoption", "null effect"], "exclude_terms": [], "query_zh": "人工智能采用 创新 无显著影响", "query_en": "AI adoption AND innovation AND null effect", "purpose": "检查反证"},
+            ],
+            "databases": ["openalex", "crossref"],
+            "languages": ["zh", "en"],
+            "inclusion_criteria": ["主题与企业 AI 采用或创新有关"],
+            "exclusion_criteria": ["没有可追溯元数据"],
+            "screening_questions": ["研究对象和结论边界是否明确？"],
+            "counter_searches": ["AI adoption innovation contradictory evidence"],
+            "papers": [{"paper_id": "paper_a", "title": "Paper A", "authors": ["Li"], "year": 2025}],
+            "search_runs": [{"search_id": "search_fixture", "status": "complete"}],
+            "research_streams": [{"stream_id": "stream_core", "name": "核心关系", "description": "讨论企业 AI 采用与创新结果的研究。", "paper_ids": ["paper_a"], "naming_evidence": "当前论文题名和元数据。"}],
+            "syntheses": [{"statement": "当前论文元数据提示该关系值得进一步验证。", "status": "limited", "supporting_paper_ids": ["paper_a"], "opposing_paper_ids": [], "qualifiers": ["仅有元数据"]}],
+            "gap_candidates": [],
+            "recommended_next_steps": ["补充全文与反向证据"],
+            "unknowns": ["全文结论"],
+            "coverage_limits": ["当前测试仅保留一条论文元数据"],
+        }
+    if stage_key == "theory":
+        return {
+            "theoretical_lenses": [{"name": "组织信息处理理论", "relevance": "解释信息处理能力与创新活动的关系。", "limits": ["不能单独确认因果方向"], "supporting_paper_ids": ["paper_a"]}],
+            "constructs": [
+                {"name": "AI 采用", "definition": "企业部署并使用 AI 的程度。", "role": "antecedent", "measurement_unknowns": ["口径待定"]},
+                {"name": "企业创新", "definition": "企业形成创新成果的表现。", "role": "outcome", "measurement_unknowns": ["指标待定"]},
+            ],
+            "mechanisms": [{"name": "信息处理机制", "chain": ["AI 采用改变信息处理", "信息处理影响创新"], "boundary_conditions": ["组织吸收能力"], "supporting_paper_ids": ["paper_a"], "evidence_status": "limited"}],
+            "research_questions": ["AI 采用如何通过信息处理影响企业创新？"],
+            "competing_explanations": [{"explanation": "创新能力强的企业更早采用 AI。", "distinguishing_observation": "采用前创新趋势可区分反向因果。"}],
+            "falsifiable_propositions": [{"proposition_id": "H1", "statement": "AI 采用与企业创新存在可检验关系。", "falsification": "在可比样本中没有观察到该关系。"}],
+            "contribution_boundary": "只提出待检验机制，不把相关性写成因果事实。",
+            "unknowns": ["构念测量方式"],
+        }
+
+    context = StageGenerationService._build_context(project, stage_key)
+    if stage_key == "design":
+        method_ids = [item["method_id"] for item in context["method_candidates"][:2]]
+        return {
+            "design_lane": "empirical_causal",
+            "research_question": "AI 采用如何影响企业创新结果？",
+            "unit_of_analysis": "企业-年",
+            "estimand_or_objective": "估计 AI 采用与企业创新之间的平均关系。",
+            "method_options": [
+                {"method_id": method_ids[0], "role": "primary", "rationale": "与企业面板研究目标相匹配。", "fit_conditions": ["存在企业年度数据"], "risks": ["选择偏差"]},
+                {"method_id": method_ids[1], "role": "alternative", "rationale": "用于检查主方法的依赖。", "fit_conditions": ["满足替代方法假设"], "risks": ["假设可能不成立"]},
+            ],
+            "primary_method_id": method_ids[0],
+            "assumptions": [{"assumption_id": "A1", "category": "identification", "statement": "关键混杂因素得到适当处理。", "testability": "partially_testable", "planned_check": "检查处理前趋势和可观测平衡。"}],
+            "falsification": ["执行安慰剂检验"],
+            "threats_to_validity": ["选择偏差"],
+            "stopping_conditions": ["关键识别假设明显不成立"],
+            "unknowns": ["面板长度"],
+        }
+    if stage_key == "data":
+        source_id = context["data_source_candidates"][0]["source_id"]
+        return {
+            "data_sources": [{"source_id": source_id, "role": "candidate", "access_status": "unknown", "license_status": "unknown", "rationale": "候选数据源可能覆盖企业与创新字段。", "required_fields": ["企业标识", "年份"], "risks": ["访问状态未知"]}],
+            "variables": [
+                {"name": "AI 采用", "role": "treatment", "construct": "企业 AI 采用", "operationalization": "按可得字段构建。", "unit": "企业-年", "source_ids": [source_id], "missing_data_plan": "报告缺失机制后处理。"},
+                {"name": "创新结果", "role": "outcome", "construct": "企业创新", "operationalization": "按创新字段构建。", "unit": "企业-年", "source_ids": [source_id], "missing_data_plan": "报告缺失比例并做敏感性分析。"},
+            ],
+            "sample_definition": "具有企业标识、年份和关键变量的企业年度样本。",
+            "time_coverage": "取决于实际数据可得年份",
+            "join_keys": ["企业标识", "年份"],
+            "pii_class": "unknown",
+            "privacy_risks": ["字段分类待确认"],
+            "ethics_checks": ["确认授权和数据最小化"],
+            "quality_checks": ["主键唯一性", "缺失与异常值"],
+            "blocking_issues": ["访问权限待确认"],
+            "unknowns": ["许可条款"],
+        }
+    if stage_key == "identification":
+        method_id = context["design_content"]["method_options"][0]["method_id"]
+        return {
+            "design_lane": "empirical_causal",
+            "estimand_or_objective": "估计 AI 采用与企业创新结果之间的平均关系。",
+            "analysis_sample": "满足企业标识、年份和主变量要求的企业年度样本。",
+            "unit_of_analysis": "企业-年",
+            "variable_roles": [
+                {"name": "创新结果", "role": "outcome", "source_variable": "innovation", "transformation": "none", "rationale": "对应结果构念。"},
+                {"name": "AI 采用", "role": "treatment", "source_variable": "ai_adoption", "transformation": "none", "rationale": "对应核心处理变量。"},
+            ],
+            "model_specifications": [{"specification_id": "SPEC1", "label": "主模型", "role": "primary", "method_id": method_id, "formula_id": None, "equation_or_objective": "innovation = beta * ai_adoption + controls", "outcome_or_target": ["innovation"], "predictors_or_decisions": ["ai_adoption"], "fixed_effects": [], "uncertainty_or_standard_errors": "稳健标准误", "weights": "none", "sample_restrictions": []}],
+            "diagnostics": [{"diagnostic_id": "DIAG1", "target": "识别假设", "procedure": "检查趋势和样本结构。", "pass_condition": "没有发现明显违背。", "failure_action": "停止因果解释。"}],
+            "analysis_steps": [
+                {"step_id": "STEP1", "purpose": "检查数据", "inputs": ["input"], "operation": "检查变量和主键。", "outputs": ["audit"], "linked_specification_ids": []},
+                {"step_id": "STEP2", "purpose": "估计主模型", "inputs": ["sample"], "operation": "执行冻结规格。", "outputs": ["results"], "linked_specification_ids": ["SPEC1"]},
+            ],
+            "missing_data_plan": "先报告缺失机制再处理。",
+            "multiplicity_plan": "区分主要与次要结果。",
+            "robustness_plan": ["替代指标", "替代样本"],
+            "stopping_conditions": ["关键变量不存在"],
+            "execution_engine": "manual",
+            "code_language": "manual review",
+            "stata_do_file": "",
+            "seed": None,
+            "expected_outputs": ["数据审计", "主结果"],
+            "reproducibility_requirements": ["保存输入输出 hash"],
+            "unknowns": ["数据是否满足要求"],
+        }
+    if stage_key == "analysis":
+        return {
+            "execution_engine": "manual",
+            "readiness_summary": "分析计划已冻结，仍需完成输入与运行条件检查。",
+            "expected_outputs": ["数据审计", "主结果"],
+            "preflight_checks": ["检查输入文件", "检查计划 revision"],
+            "result_review_checks": ["检查失败诊断", "检查结果完整性"],
+            "blocking_issues": ["测试流程不执行真实分析"],
+            "unknowns": ["实际运行结果"],
+        }
+    if stage_key == "robustness":
+        return {
+            "robustness_matrix": [
+                {"check_id": "ROB1", "category": "alternative_measure", "rationale": "检查口径依赖。", "specification": "替换创新指标。", "linked_specification_ids": [], "required_run_ids": [], "status": "planned", "result_summary": "", "implication": "完成前不提升结论强度。"},
+                {"check_id": "ROB2", "category": "placebo", "rationale": "检查虚假关系。", "specification": "执行安慰剂检验。", "linked_specification_ids": [], "required_run_ids": [], "status": "planned", "result_summary": "", "implication": "失败时降低解释强度。"},
+            ],
+            "failed_checks": [],
+            "interpretation_limits": ["尚无真实运行结果"],
+            "next_runs": ["执行计划中的稳健性分支"],
+            "reproducibility_report": "当前只完成计划审查，尚未形成数值复现结论。",
+            "unknowns": ["实际运行结果"],
+        }
+    raise AssertionError(f"missing gate fixture for {stage_key}")
+
+
 def test_health_meta_and_web_assets(tmp_path):
     client = TestClient(create_app(tmp_path))
 
@@ -171,11 +344,11 @@ def test_health_meta_and_web_assets(tmp_path):
     assert client.get("/openapi.json").json()["info"]["title"] == "AI4MS 科研工作台 API"
 
     page = client.get("/")
-    assert page.status_code == 200
-    assert "AI4MS" in page.text
-    if client.app.state.web_root.name == "static":
-        assert client.get("/assets/app.js").status_code == 200
+    if client.app.state.web_root is None:
+        assert page.status_code == 503
     else:
+        assert page.status_code == 200
+        assert "AI4MS" in page.text
         assert "/_next/static/" in page.text
         assert client.get("/favicon.svg").status_code == 200
         assert client.get("/ai4ms-user-guide.html").status_code == 200
@@ -218,6 +391,19 @@ def test_project_stage_gate_and_revision_flow(tmp_path):
         json={"decision": "approve", "actor_type": "agent"},
     )
     assert invalid_actor.status_code == 422
+
+
+def test_gate_rejects_invalid_stage_asset(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    project = _create_project(client)
+
+    response = client.post(
+        f"/api/v1/projects/{project['project_id']}/stages/problem/decisions",
+        json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "invalid_stage_content"
 
 
 def test_model_draft_is_saved_as_an_agent_revision(tmp_path):
@@ -312,10 +498,26 @@ def test_analysis_runner_api_preflight_and_run_revision(tmp_path):
         f"/api/v1/projects/{project_id}/stages/analysis/runs",
         json={"input_artifact_path": "input.dta"},
     )
-    assert submitted.status_code == 200
-    stage = submitted.json()["stages"][6]
+    assert submitted.status_code == 202
+    job = submitted.json()
+    deadline = time.time() + 2
+    while job["status"] in {"queued", "running", "canceling"} and time.time() < deadline:
+        time.sleep(0.01)
+        job = client.get(
+            f"/api/v1/projects/{project_id}/stages/analysis/runs/{job['run_id']}"
+        ).json()
+    assert job["status"] == "succeeded"
+    listed = client.get(
+        f"/api/v1/projects/{project_id}/stages/analysis/runs"
+    ).json()["items"]
+    assert listed[0]["run_id"] == job["run_id"]
+    result = client.get(
+        f"/api/v1/projects/{project_id}/stages/analysis/runs/{job['run_id']}/result"
+    )
+    assert result.status_code == 200
+    stage = client.get(f"/api/v1/projects/{project_id}").json()["stages"][6]
     assert stage["revision"] == 1
-    assert stage["content"]["runs"][0]["run_id"] == "run_api_test"
+    assert stage["content"]["runs"][0]["run_id"] == job["run_id"]
     assert stage["content"]["results"][0]["status"] == "succeeded"
 
 
@@ -345,7 +547,7 @@ def test_upstream_change_invalidates_downstream_and_persists(tmp_path):
     assert changed.status_code == 200
     project = changed.json()
     assert project["current_stage"] == "problem"
-    assert project["stages"][0]["revision"] == 2
+    assert project["stages"][0]["revision"] == 3
     assert project["stages"][1]["status"] == "needs_review"
     assert project["stages"][2]["status"] == "not_started"
     assert len(project["approvals"]) == 2

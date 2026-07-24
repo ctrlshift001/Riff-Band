@@ -863,6 +863,16 @@ class MainAgent(BaseAgent):
         if not fixed.get("tools"):
             fixed["tools"] = default_worker_tools
 
+        allowed_worker_tools = {
+            str(item)
+            for item in (self.meta.get("allowed_worker_tools", []) or [])
+            if str(item).strip()
+        }
+        if allowed_worker_tools and fixed.get("tools"):
+            fixed["tools"] = [
+                tool for tool in fixed["tools"] if str(tool) in allowed_worker_tools
+            ]
+
         if parallel_mode and fixed.get("tools"):
             forbidden = set(str(item) for item in (self.meta.get("parallel_forbidden_tools", []) or []))
             fixed["tools"] = [t for t in fixed["tools"] if str(t) not in forbidden]

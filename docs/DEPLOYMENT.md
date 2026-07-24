@@ -79,15 +79,54 @@ docker compose up --build
 
 必须挂载 volume。删除容器后，项目、审批、运行索引和报告仍应保留；删除 volume 才视为删除本地产品数据。
 
-## 6. Stata 运行器
+## 6. Stata Local Runner
 
-镜像不得包含 Stata 安装文件、许可证、序列号或破解组件。当前 `RunnerService` 发现后端运行环境中由用户或机构合法安装的 Stata 批处理可执行文件；Docker 镜像默认没有 Stata，因此会准确返回 `blocked:no_runner`。需要真实运行时，应在合法授权的本机/机构执行环境启动后端并通过运行时环境变量配置，不能把 Stata 复制进比赛镜像。
+镜像不得包含 Stata 安装文件、许可证、序列号或破解组件。Docker 中的工作台通过 `host.docker.internal:8765` 连接研究者本机的 `ai4ms-stata-runner`。这条连接只用于同一台机器上的 Docker 与自带许可 Stata，不是比赛要求的公网远程调用接口。
+
+先在 `.env` 中设置同一个长随机令牌：
+
+```dotenv
+AI4MS_STATA_RUNNER_TOKEN=replace-with-a-long-random-token
+AI4MS_STATA_EXECUTABLE=C:\Program Files\Stata18\StataMP-64.exe
+AI4MS_STATA_VERSION=18
+AI4MS_STATA_LOCALE=zh_CN
+AI4MS_STATA_LICENSE_MODE=user_byol
+AI4MS_STATA_LICENSE_CONFIRMED=true
+AI4MS_LOCAL_RUNNER_HOST=0.0.0.0
+AI4MS_LOCAL_RUNNER_PORT=8765
+```
+
+在研究者本机安装并启动连接器：
+
+```powershell
+pip install -e .
+ai4ms-stata-runner
+```
+
+然后启动 Docker 工作台：
+
+```powershell
+docker compose up --build
+```
+
+`0.0.0.0:8765` 是为了让 Docker 虚拟网络访问宿主机服务。必须保留配对令牌，并使用系统防火墙禁止局域网和公网访问该端口。Windows Docker Desktop 通常也可尝试把 `AI4MS_LOCAL_RUNNER_HOST` 改为 `127.0.0.1`；如果容器无法连接，再恢复为 `0.0.0.0`。
+
+运行过程：
+
+1. GUI 上传 `.dta`，工作台保存项目资产、SHA-256、行列数、变量名、标签和格式版本；
+2. G3 通过后，工作台生成包含获批 do-file、输入数据、hash 和运行参数的签名 Run Bundle；
+3. Local Runner 再次检查令牌、许可、文件 hash 和危险命令，在本机 Stata batch 模式执行；
+4. 固定结果脚本导出 `structured_results.csv`、`data_signature.txt`、日志和表图；
+5. Local Runner 生成 `result_bundle.json`，只返回允许的聚合结果、日志和表图，不回传 `.dta`；
+6. 工作台复核 `run_id`、输入 hash 和 do-file hash 后，将结果登记到 S6，供 S7/S8 使用。
 
 没有 Runner 时：
 
 - 分析计划和 do-file 仍可编辑、保存和预检；
 - 正式执行返回 `blocked:no_runner`；
 - GUI 明确显示未执行，不展示伪造日志或结果。
+
+完整契约与故障排查见 [Stata 本机连接器](RUNNER.md)。
 
 ## 7. 提交前验证
 
@@ -97,3 +136,4 @@ docker compose up --build
 - 重启后项目和报告仍存在；
 - 检查镜像历史、日志和导出包中没有密钥或许可证；
 - 保存一个不依赖现场联网的只读演示项目和 HTML 报告。
+- 使用一份无敏感信息的 `.dta` 完成 Docker → Local Runner → Result Bundle → S7/S8 冒烟测试。

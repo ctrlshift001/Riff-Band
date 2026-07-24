@@ -146,6 +146,7 @@ class LiteratureSearchRequest(BaseModel):
 
 
 class AnalysisRunRequest(BaseModel):
+    input_asset_id: str = Field(default="", pattern=r"^(|data_[a-f0-9]{12})$")
     input_artifact_path: str = Field(default="", max_length=500)
     parameters: dict[str, Any] = Field(default_factory=dict)
     seed: int | None = Field(default=None, ge=0)
@@ -163,3 +164,7 @@ class AnalysisRunRequest(BaseModel):
         if len(value) > 50:
             raise ValueError("parameters may contain at most 50 entries")
         return value
+
+
+class AnalysisRerunRequest(BaseModel):
+    timeout_seconds: int | None = Field(default=None, ge=1, le=7200)

@@ -9,6 +9,7 @@ aorchestra.yaml
 workspace/
 
 # Python
+.venv/
 __pycache__/
 .pytest_cache/
 .pytest-*/

@@ -54,6 +54,116 @@ export interface Project extends ProjectSummary {
   stages: ProjectStage[];
   approvals: ApprovalEvent[];
   progress: { approved: number; total: number };
+  data_assets: DataAsset[];
+}
+
+export interface DataAssetColumn {
+  name: string;
+  label: string;
+  storage_type: string;
+  display_format: string;
+  value_label: string;
+}
+
+export interface DataAsset {
+  asset_id: string;
+  project_id: string;
+  original_name: string;
+  stored_path: string;
+  media_type: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+  metadata: {
+    format: "stata_dta";
+    format_version: string;
+    data_label: string;
+    time_stamp: string;
+    row_count: number;
+    column_count: number;
+    columns: DataAssetColumn[];
+    parsed_at: string;
+  };
+}
+
+export interface RunnerStatus {
+  available: boolean;
+  engine: "stata";
+  mode: "batch";
+  transport?: "local_process" | "http_local_runner";
+  executable_name: string;
+  version: string;
+  edition: string;
+  os: string;
+  locale: string;
+  license_mode: string;
+  license_confirmed: boolean;
+  max_concurrency: number;
+  reason: string;
+}
+
+export interface StructuredResult {
+  result_id: string;
+  kind: "estimate" | "diagnostic" | "test" | "summary";
+  specification_id: string;
+  term: string;
+  label: string;
+  estimate: number | null;
+  std_error: number | null;
+  statistic: number | null;
+  p_value: number | null;
+  ci_lower: number | null;
+  ci_upper: number | null;
+  sample_size: number | null;
+  status: "observed" | "passed" | "failed" | "inconclusive";
+  unit: string;
+  source_file: string;
+}
+
+export interface AnalysisRun {
+  run_id: string;
+  status: "blocked" | "failed" | "succeeded" | "canceled";
+  reason_code: string;
+  exit_code: number | null;
+  requested_at: string;
+  input_asset_id: string;
+  input_artifact_path: string;
+  data_signature: string;
+  structured_results: StructuredResult[];
+  output_artifacts: Array<{ path: string; size: number; sha256: string }>;
+  runner_error?: string;
+}
+
+export type AnalysisJobStatus =
+  | "queued"
+  | "running"
+  | "canceling"
+  | "succeeded"
+  | "failed"
+  | "canceled"
+  | "interrupted";
+
+export interface AnalysisJob {
+  run_id: string;
+  project_id: string;
+  status: AnalysisJobStatus;
+  reason_code: string;
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  timeout_seconds: number;
+  cancel_requested: boolean;
+  parent_run_id: string;
+  request: {
+    input_asset_id: string;
+    input_artifact_path: string;
+    parameters: Record<string, unknown>;
+    seed: number | null;
+    timeout_seconds: number;
+    requested_by: "human";
+  };
+  run_manifest_path: string;
+  error?: string;
 }
 
 export interface AnalysisPreflight {
@@ -61,6 +171,12 @@ export interface AnalysisPreflight {
   reason_code: string;
   analysis_plan_revision: number;
   do_file_sha256?: string;
+  input_asset_id: string;
+  input_artifact_path: string;
+  input_sha256: string;
+  input_metadata: DataAsset["metadata"] | Record<string, never>;
+  required_variables: string[];
+  missing_variables: string[];
   checks: Record<string, boolean>;
   issues: Array<{ code: string; line?: number; message: string }>;
 }
@@ -203,18 +319,87 @@ export function searchLiterature(projectId: string): Promise<Project> {
   });
 }
 
-export function preflightAnalysisRun(projectId: string, inputArtifactPath: string): Promise<AnalysisPreflight> {
+export async function getStataRunnerStatus(): Promise<RunnerStatus> {
+  return request<RunnerStatus>("/runners/stata");
+}
+
+export async function uploadDataAsset(projectId: string, file: File): Promise<DataAsset> {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(
+    `${API_ROOT}/projects/${encodeURIComponent(projectId)}/assets/data`,
+    { method: "POST", body, cache: "no-store" },
+  );
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as ApiErrorPayload;
+    throw new ApiError(
+      payload.error?.message || `数据上传失败（${response.status}）`,
+      response.status,
+      payload.error?.code,
+    );
+  }
+  return response.json() as Promise<DataAsset>;
+}
+
+export function preflightAnalysisRun(projectId: string, inputAssetId: string): Promise<AnalysisPreflight> {
   return request<AnalysisPreflight>(`/projects/${encodeURIComponent(projectId)}/stages/analysis/preflight`, {
     method: "POST",
-    body: JSON.stringify({ input_artifact_path: inputArtifactPath }),
+    body: JSON.stringify({ input_asset_id: inputAssetId }),
   });
 }
 
-export function submitAnalysisRun(projectId: string, inputArtifactPath: string): Promise<Project> {
-  return request<Project>(`/projects/${encodeURIComponent(projectId)}/stages/analysis/runs`, {
+export function submitAnalysisRun(
+  projectId: string,
+  inputAssetId: string,
+  timeoutSeconds: number,
+): Promise<AnalysisJob> {
+  return request<AnalysisJob>(`/projects/${encodeURIComponent(projectId)}/stages/analysis/runs`, {
     method: "POST",
-    body: JSON.stringify({ input_artifact_path: inputArtifactPath }),
+    body: JSON.stringify({
+      input_asset_id: inputAssetId,
+      timeout_seconds: timeoutSeconds,
+    }),
   });
+}
+
+export async function listAnalysisJobs(projectId: string): Promise<AnalysisJob[]> {
+  const response = await request<{ items: AnalysisJob[] }>(
+    `/projects/${encodeURIComponent(projectId)}/stages/analysis/runs`,
+  );
+  return response.items;
+}
+
+export function getAnalysisJob(projectId: string, runId: string): Promise<AnalysisJob> {
+  return request<AnalysisJob>(
+    `/projects/${encodeURIComponent(projectId)}/stages/analysis/runs/${encodeURIComponent(runId)}`,
+  );
+}
+
+export function getAnalysisRunResult(projectId: string, runId: string): Promise<AnalysisRun> {
+  return request<AnalysisRun>(
+    `/projects/${encodeURIComponent(projectId)}/stages/analysis/runs/${encodeURIComponent(runId)}/result`,
+  );
+}
+
+export function cancelAnalysisRun(projectId: string, runId: string): Promise<AnalysisJob> {
+  return request<AnalysisJob>(
+    `/projects/${encodeURIComponent(projectId)}/stages/analysis/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function rerunAnalysis(
+  projectId: string,
+  runId: string,
+  timeoutSeconds: number,
+): Promise<AnalysisJob> {
+  return request<AnalysisJob>(
+    `/projects/${encodeURIComponent(projectId)}/stages/analysis/runs/${encodeURIComponent(runId)}/rerun`,
+    {
+      method: "POST",
+      body: JSON.stringify({ timeout_seconds: timeoutSeconds }),
+    },
+  );
 }
 
 export function exportDelivery(projectId: string): Promise<Project> {

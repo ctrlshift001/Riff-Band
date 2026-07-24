@@ -7,6 +7,7 @@ import pytest
 
 from ai4ms.inference.gateway import InferenceResponse
 from ai4ms.inference.structured import extract_json_object
+from ai4ms.orchestration import AORCHESTRA_PAPER, OrchestrationResult
 from ai4ms.prompts.catalog import PromptCatalog
 from ai4ms.services.stage_generation import (
     StageGenerationNotSupportedError,
@@ -66,6 +67,29 @@ class _FakeGateway:
         return self.responses.pop(0)
 
 
+class _FakeOrchestrator:
+    def __init__(self):
+        self.calls: list[tuple[str, str]] = []
+
+    async def analyze(self, project, stage_key, instruction, context):
+        self.calls.append((stage_key, instruction))
+        return OrchestrationResult(
+            run_id="ao_problem_test",
+            stage_key=stage_key,
+            status="complete",
+            summary="两个 SubAgent 分别完成边界审查和反向检索。",
+            report="## 阶段编排结论\n候选空白仍需检索确认。",
+            report_path="agent-runs/ao_problem_test/stage_analysis.md",
+            subagent_runs=2,
+            attempts=4,
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            total_cost=0.01,
+            cost_known=True,
+        )
+
+
 def test_extract_json_object_accepts_fenced_output():
     assert extract_json_object('```json\n{"value": 1}\n```') == {"value": 1}
 
@@ -86,6 +110,29 @@ def test_problem_generation_is_validated_and_preserves_initial_idea():
     assert content["generation"]["model"] == "test-model"
     assert content["generation"]["attempts"] == 1
     assert len(gateway.calls) == 1
+
+
+def test_problem_generation_uses_aorchestra_context_and_records_provenance():
+    response = InferenceResponse(
+        text=json.dumps(_problem_payload(), ensure_ascii=False),
+        model="test-model",
+        usage={},
+    )
+    gateway = _FakeGateway([response])
+    orchestrator = _FakeOrchestrator()
+    service = StageGenerationService(
+        gateway_factory=lambda: gateway,
+        orchestrator=orchestrator,
+    )
+
+    content = asyncio.run(service.generate(_project(), "problem", "优先检查反证"))
+
+    assert orchestrator.calls == [("problem", "优先检查反证")]
+    assert AORCHESTRA_PAPER in gateway.calls[0][1]
+    metadata = content["generation"]["orchestration"]
+    assert metadata["runtime"] == "AOrchestra"
+    assert metadata["subagent_runs"] == 2
+    assert "report" not in metadata
 
 
 def test_invalid_model_json_gets_one_repair_attempt():
@@ -446,6 +493,42 @@ def test_robustness_generation_rejects_claims_without_structured_run_evidence():
     assert content["generation"]["attempts"] == 2
 
 
+def test_s7_accepts_status_only_when_s6_run_has_structured_results():
+    project = _s5_s7_project()
+    context = StageGenerationService._build_context(project, "identification")
+    plan = _analysis_plan_payload(context["formula_candidates"][0]["formula_id"])
+    project["stages"][5].update({"revision": 2, "content_hash": "plan_hash", "content": plan})
+    project["stages"][6]["content"] = {
+        "runs": [
+            {
+                "run_id": "run_blocked",
+                "status": "succeeded",
+                "reason_code": "completed",
+                "structured_results": [
+                    {
+                        "result_id": "RES_1",
+                        "kind": "estimate",
+                        "term": "treatment",
+                        "estimate": 0.2,
+                        "std_error": 0.05,
+                    }
+                ],
+            }
+        ]
+    }
+    payload = _robustness_payload("passed")
+    gateway = _FakeGateway(
+        [InferenceResponse(text=json.dumps(payload, ensure_ascii=False), model="test", usage={})]
+    )
+
+    content = asyncio.run(
+        StageGenerationService(lambda: gateway).generate(project, "robustness")
+    )
+
+    assert content["robustness_matrix"][0]["status"] == "passed"
+    assert content["generation"]["attempts"] == 1
+
+
 def _claim_evidence_payload(confidence: str = "low") -> dict:
     return {
         "claims": [
@@ -553,6 +636,55 @@ def test_evidence_generation_downgrades_claim_when_run_and_robustness_are_blocke
     assert content["claims"][0]["confidence"] == "low"
     assert content["claims"][0]["evidence"][1]["artifact_id"] == "run_blocked"
     assert content["generation"]["attempts"] == 2
+
+
+def test_s8_accepts_structured_s6_run_as_estimate_evidence():
+    project = _s8_project()
+    project["stages"][6]["content"]["runs"][0].update(
+        {
+            "status": "succeeded",
+            "reason_code": "completed",
+            "structured_results": [
+                {
+                    "result_id": "RES_1",
+                    "kind": "estimate",
+                    "term": "treatment",
+                    "estimate": 0.2,
+                    "std_error": 0.05,
+                }
+            ],
+        }
+    )
+    project["stages"][7]["content"]["robustness_matrix"][0]["status"] = "passed"
+    payload = _claim_evidence_payload("medium")
+    claim = payload["claims"][0]
+    claim["claim_text"] = "在当前批准样本与模型中，AI 采用与企业创新结果存在正向估计关系。"
+    claim["status"] = "supported"
+    claim["evidence"][1] = {
+        "evidence_id": "EV2",
+        "evidence_type": "estimate",
+        "artifact_id": "run_blocked",
+        "locator": "structured_results.RES_1",
+        "direction": "supports",
+        "strength": "strong",
+        "run_id": "run_blocked",
+    }
+    claim["counterevidence"] = []
+    claim["scope"]["boundary_conditions"] = ["仅限批准样本、变量口径与主规格"]
+    payload["limitations"] = ["结果仍需结合稳健性矩阵与识别假设解释。"]
+    payload["unknowns"] = []
+    gateway = _FakeGateway(
+        [InferenceResponse(text=json.dumps(payload, ensure_ascii=False), model="test", usage={})]
+    )
+
+    content = asyncio.run(
+        StageGenerationService(lambda: gateway).generate(project, "evidence")
+    )
+
+    run_evidence = content["claims"][0]["evidence"][1]
+    assert run_evidence["evidence_type"] == "estimate"
+    assert run_evidence["artifact_id"] == "run_blocked"
+    assert content["generation"]["attempts"] == 1
 
 
 def _delivery_payload(evidence_id: str = "EV1") -> dict:

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from ai4ms.inference.gateway import InferenceGateway, InferenceResponse, OpenAICompatibleGateway
 from ai4ms.inference.structured import StructuredOutputError, validate_structured_output
 from ai4ms.knowledge import KnowledgeRegistry
+from ai4ms.orchestration import AO_STAGE_KEYS, OrchestrationResult, StageOrchestrator
 from ai4ms.prompts.catalog import PromptCatalog
 from ai4ms.runners.stata import StataPolicyScanner
 
@@ -29,8 +30,10 @@ class StageGenerationService:
     def __init__(
         self,
         gateway_factory: Callable[[], InferenceGateway] | None = None,
+        orchestrator: StageOrchestrator | None = None,
     ) -> None:
         self.gateway_factory = gateway_factory or OpenAICompatibleGateway
+        self.orchestrator = orchestrator
 
     async def generate(
         self,
@@ -39,6 +42,28 @@ class StageGenerationService:
         instruction: str = "",
     ) -> dict[str, Any]:
         context = self._build_context(project, stage_key)
+        orchestration: OrchestrationResult | None = None
+        should_orchestrate = (
+            self.orchestrator is not None
+            and stage_key in AO_STAGE_KEYS
+            and not (
+                stage_key == "literature"
+                and not context.get("current_stage_content", {}).get("papers")
+            )
+        )
+        if should_orchestrate and self.orchestrator is not None:
+            try:
+                orchestration = await self.orchestrator.analyze(
+                    project,
+                    stage_key,
+                    instruction,
+                    context,
+                )
+            except Exception as exc:
+                raise StageGenerationOutputError(
+                    f"AOrchestra failed for stage '{stage_key}': {exc}"
+                ) from exc
+            context["aorchestra_analysis"] = orchestration.prompt_context()
         prompt = PromptCatalog.get(stage_key, context)
         if prompt is None:
             raise StageGenerationNotSupportedError(
@@ -145,6 +170,8 @@ class StageGenerationService:
             "attempts": len(responses),
             "usage": self._merge_usage(responses),
         }
+        if orchestration is not None:
+            content["generation"]["orchestration"] = orchestration.generation_metadata()
         return content
 
     @staticmethod
@@ -220,6 +247,13 @@ class StageGenerationService:
                 "blocking_issues": current.get("blocking_issues", []),
                 "runs": StageGenerationService._compact_runs(current.get("runs", [])),
             }
+            context["data_assets"] = StageGenerationService._compact_data_assets(
+                project.get("data_assets", [])
+            )
+        if stage_key in {"data", "identification"}:
+            context["data_assets"] = StageGenerationService._compact_data_assets(
+                project.get("data_assets", [])
+            )
         if stage_key == "robustness":
             context["analysis_runs"] = StageGenerationService._compact_runs(
                 stages.get("analysis", {}).get("content", {}).get("runs", [])
@@ -322,6 +356,26 @@ class StageGenerationService:
                     "do_file_sha256": run.get("do_file_sha256", ""),
                     "structured_results": run.get("structured_results", []),
                     "output_artifacts": run.get("output_artifacts", []),
+                }
+            )
+        return compact
+
+    @staticmethod
+    def _compact_data_assets(assets: Any) -> list[dict[str, Any]]:
+        compact = []
+        for asset in assets[:20] if isinstance(assets, list) else []:
+            if not isinstance(asset, dict):
+                continue
+            metadata = asset.get("metadata", {})
+            compact.append(
+                {
+                    "asset_id": asset.get("asset_id", ""),
+                    "original_name": asset.get("original_name", ""),
+                    "size_bytes": asset.get("size_bytes", 0),
+                    "sha256": asset.get("sha256", ""),
+                    "row_count": metadata.get("row_count", 0),
+                    "column_count": metadata.get("column_count", 0),
+                    "columns": metadata.get("columns", [])[:100],
                 }
             )
         return compact

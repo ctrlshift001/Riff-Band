@@ -58,6 +58,7 @@ def discover_stata_profile() -> dict[str, Any]:
         "available": bool(executable),
         "engine": "stata",
         "mode": "batch",
+        "transport": "local_process",
         "executable": executable,
         "executable_name": Path(executable).name if executable else "",
         "version": os.environ.get("AI4MS_STATA_VERSION", "unknown").strip() or "unknown",
@@ -76,6 +77,8 @@ class StataPolicyScanner:
         ("external_process", re.compile(r"^\s*(?:shell|winexec)\b|^\s*!", re.I), "禁止启动 shell 或外部进程"),
         ("dynamic_install", re.compile(r"^\s*(?:ssc|net)\s+install\b|^\s*update\s+all\b", re.I), "禁止动态安装或更新 ado"),
         ("embedded_runtime", re.compile(r"^\s*(?:python|python:|java|javacall|plugin)\b", re.I), "禁止未批准的 Python、Java 或插件"),
+        ("early_exit", re.compile(r"^\s*exit\b", re.I), "禁止提前退出并绕过 Result Bundle 生成"),
+        ("delimiter_change", re.compile(r"^\s*#delimit\b", re.I), "禁止改变命令分隔符并绕过逐行策略检查"),
         ("network_access", re.compile(r"https?://|ftp://", re.I), "禁止任意网络访问"),
         ("parent_traversal", re.compile(r"(?:^|[\s\"'\\/])\.\.(?:[\\/]|$)"), "禁止父目录穿越"),
         ("absolute_windows_path", re.compile(r"(?:^|[\s\"'])[A-Za-z]:[\\/]"), "禁止硬编码 Windows 绝对路径"),
@@ -92,8 +95,14 @@ class StataPolicyScanner:
             stripped = line.strip()
             if not stripped or stripped.startswith("*") or stripped.startswith("//"):
                 continue
+            normalized = re.sub(
+                r"^\s*(?:(?:capture|cap|quietly|qui|noisily|noi)\s+)+",
+                "",
+                line,
+                flags=re.I,
+            )
             for code, pattern, message in cls._rules:
-                if pattern.search(line):
+                if pattern.search(normalized):
                     issues.append(
                         {
                             "code": code,
@@ -110,6 +119,16 @@ class StataPolicyScanner:
         checks = (
             ("missing_version", r"(?im)^\s*version\s+\d", "do-file 必须固定 Stata version"),
             ("missing_more_off", r"(?im)^\s*set\s+more\s+off\b", "do-file 必须设置 set more off"),
+            (
+                "missing_runner_args",
+                r"(?im)^\s*args\b[^\r\n]*\binput_dta\b[^\r\n]*\boutput_dir\b",
+                "do-file 必须接收 Runner 的 input_dta 和 output_dir 参数",
+            ),
+            (
+                "missing_bound_input",
+                r"(?im)^\s*(?:capture\s+|cap\s+|quietly\s+|qui\s+|noisily\s+|noi\s+)*use\b[^\r\n]*\binput_dta\b",
+                "do-file 必须从 Runner 绑定的 input_dta 读取数据",
+            ),
         )
         return [
             {"code": code, "line": 0, "message": message, "excerpt": ""}
@@ -119,6 +138,18 @@ class StataPolicyScanner:
 
 
 class StataBatchAdapter:
+    def __init__(self) -> None:
+        self._processes: dict[str, asyncio.subprocess.Process] = {}
+        self._cancel_requested: set[str] = set()
+
+    async def cancel(self, run_id: str) -> bool:
+        self._cancel_requested.add(run_id)
+        process = self._processes.get(run_id)
+        if process is None or process.returncode is not None:
+            return False
+        process.kill()
+        return True
+
     async def execute(
         self,
         profile: dict[str, Any],
@@ -138,10 +169,11 @@ class StataBatchAdapter:
         started_at = datetime.now(UTC)
         process = await asyncio.create_subprocess_exec(
             *command,
-            cwd=str(output_dir),
+            cwd=str(do_file_path.parent),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        self._processes[run_id] = process
         timed_out = False
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
@@ -149,12 +181,16 @@ class StataBatchAdapter:
             timed_out = True
             process.kill()
             stdout, stderr = await process.communicate()
+        finally:
+            self._processes.pop(run_id, None)
         finished_at = datetime.now(UTC)
+        canceled = run_id in self._cancel_requested
+        self._cancel_requested.discard(run_id)
         (output_dir / "runner.stdout.log").write_bytes(stdout)
         (output_dir / "runner.stderr.log").write_bytes(stderr)
         return {
-            "status": "failed" if timed_out or process.returncode else "succeeded",
-            "reason_code": "timeout" if timed_out else "nonzero_exit" if process.returncode else "completed",
+            "status": "canceled" if canceled else "failed" if timed_out or process.returncode else "succeeded",
+            "reason_code": "user_canceled" if canceled else "timeout" if timed_out else "nonzero_exit" if process.returncode else "completed",
             "exit_code": process.returncode,
             "started_at": started_at.isoformat(),
             "finished_at": finished_at.isoformat(),

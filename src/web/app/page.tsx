@@ -3,14 +3,31 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
+  cancelAnalysisRun,
+  createStageDraft as createApiStageDraft,
   createProject as createApiProject,
   decideStage as decideApiStage,
+  exportDelivery as exportApiDelivery,
+  getAnalysisJob,
+  getAnalysisRunResult,
+  getStataRunnerStatus,
   getProject as getApiProject,
   listProjects as listApiProjects,
+  listAnalysisJobs,
+  preflightAnalysisRun,
+  rerunAnalysis,
   saveStageWorkspace as saveApiStageWorkspace,
+  searchLiterature as searchApiLiterature,
+  submitAnalysisRun,
+  uploadDataAsset,
   updateProject as updateApiProject,
+  type AnalysisPreflight,
+  type AnalysisJob,
+  type AnalysisRun,
   type Project as ApiProject,
+  type ProjectStage as ApiProjectStage,
   type ProjectSummary as ApiProjectSummary,
+  type RunnerStatus,
   type StageWorkspacePayload,
 } from "@/lib/api";
 import {
@@ -269,63 +286,6 @@ function projectGateCards(project: ResearchProject, submittedGates: Record<strin
     return gate;
   });
 }
-
-const initialProjects: ResearchProject[] = [
-  {
-    id: "project-ai-innovation",
-    name: "生成式 AI 与企业创新",
-    code: "GENAI-INNO",
-    icon: "企",
-    discipline: "创新与战略管理",
-    question: "生成式 AI 的引入是否显著提升了企业创新产出？其作用机制与边界条件是什么？",
-    objective: "识别生成式 AI 工具采用对企业创新质量的影响，并解释组织互补与研发能力的作用机制。",
-    boundary: "中国 A 股非金融上市公司；排除 ST、关键变量严重缺失和异常处理年份样本。",
-    sampleWindow: "2016—2024",
-    keywords: "生成式 AI, 企业创新, 组织互补, 数字化转型",
-    dataSources: ["CSMAR / Wind", "CNRDS", "WIPO / 国家知识产权局", "上市公司年报"],
-    owner: "当前研究者",
-    reviewers: "导师 + 方法审核者",
-    stageIndex: 3,
-    status: "active",
-    createdAt: "2026/7/17",
-  },
-  {
-    id: "project-low-carbon",
-    name: "低碳物流路径优化",
-    code: "LC-LOGISTICS",
-    icon: "碳",
-    discipline: "运营与供应链",
-    question: "多重不确定性下，低碳物流路径如何实现成本、时效与碳排放的协同优化？",
-    objective: "构建可解释的多目标优化框架，并评估不同政策约束下的路径调整策略。",
-    boundary: "长三角干线与城市配送网络；聚焦道路运输与可获得的企业运营数据。",
-    sampleWindow: "2021—2026",
-    keywords: "低碳物流, 路径优化, 多目标决策",
-    dataSources: ["企业调研或实验", "国家统计局"],
-    owner: "当前研究者",
-    reviewers: "导师 + 领域专家",
-    stageIndex: 1,
-    status: "active",
-    createdAt: "2026/7/12",
-  },
-  {
-    id: "project-platform-governance",
-    name: "平台治理与商家韧性",
-    code: "PLATFORM-RES",
-    icon: "平",
-    discipline: "信息系统",
-    question: "平台规则透明度如何影响中小商家的经营韧性与创新投入？",
-    objective: "识别平台治理机制、商家适应行为与长期韧性之间的关系。",
-    boundary: "中国数字平台上的中小商家，研究范围和可用数据仍待 S0 收敛。",
-    sampleWindow: "待确认",
-    keywords: "平台治理, 中小商家, 经营韧性",
-    dataSources: ["企业调研或实验", "自建网络公开数据"],
-    owner: "当前研究者",
-    reviewers: "导师 + 方法审核者",
-    stageIndex: 0,
-    status: "draft",
-    createdAt: "2026/7/19",
-  },
-];
 
 const newProjectPlaceholder: ResearchProject = {
   id: "local-new-project",
@@ -653,36 +613,60 @@ function AgentChatDrawer({
   );
 }
 
-function ProgressNodes({ activeIndex }: { activeIndex: number }) {
+function ProgressNodes({
+  activeIndex,
+  remoteStages,
+}: {
+  activeIndex: number;
+  remoteStages?: ApiProjectStage[];
+}) {
   return (
     <div className="progress-nodes" aria-label={`研究进度，第 ${activeIndex + 1} 阶段，共 10 阶段`}>
-      {stages.map((stage, index) => (
-        <div className={`progress-node ${index < activeIndex ? "is-done" : ""} ${index === activeIndex ? "is-current" : ""}`} key={stage.id}>
-          <span>{index < activeIndex ? "✓" : ""}</span>
-          <small>{stage.id}</small>
-        </div>
-      ))}
+      {stages.map((stage, index) => {
+        const remote = remoteStages?.find((item) => item.key === stage.key);
+        const done = remote ? remote.status === "approved" : index < activeIndex;
+        return (
+          <div className={`progress-node ${done ? "is-done" : ""} ${index === activeIndex ? "is-current" : ""}`} key={stage.id}>
+            <span>{done ? "✓" : ""}</span>
+            <small>{stage.id}</small>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function StageRail({ activeIndex, onSelect }: { activeIndex: number; onSelect: (index: number) => void }) {
+function StageRail({
+  activeIndex,
+  remoteStages,
+  onSelect,
+}: {
+  activeIndex: number;
+  remoteStages?: ApiProjectStage[];
+  onSelect: (index: number) => void;
+}) {
   return (
     <aside className="stage-rail" aria-label="科研阶段导航">
       <div className="stage-rail-label">科研阶段</div>
       <div className="stage-list">
-        {stages.map((stage, index) => (
-          <button
-            className={`stage-item ${index < activeIndex ? "is-done" : ""} ${index === activeIndex ? "is-active" : ""}`}
-            key={stage.id}
-            onClick={() => onSelect(index)}
-            aria-current={index === activeIndex ? "step" : undefined}
-          >
-            <span className="stage-dot">{index < activeIndex ? "✓" : stage.id.replace("S", "")}</span>
-            <span className="stage-id">{stage.id}</span>
-            <span className="stage-name">{stage.name}</span>
-          </button>
-        ))}
+        {stages.map((stage, index) => {
+          const remote = remoteStages?.find((item) => item.key === stage.key);
+          const done = remote ? remote.status === "approved" : index < activeIndex;
+          const locked = remote?.status === "not_started";
+          return (
+            <button
+              className={`stage-item ${done ? "is-done" : ""} ${locked ? "is-locked" : ""} ${index === activeIndex ? "is-active" : ""}`}
+              key={stage.id}
+              onClick={() => onSelect(index)}
+              aria-current={index === activeIndex ? "step" : undefined}
+              title={locked ? "上游阶段批准后解锁" : remote?.status === "needs_review" ? "阶段资产待人工审阅" : undefined}
+            >
+              <span className="stage-dot">{done ? "✓" : stage.id.replace("S", "")}</span>
+              <span className="stage-id">{stage.id}</span>
+              <span className="stage-name">{stage.name}</span>
+            </button>
+          );
+        })}
       </div>
       <div className="rail-footer">
         <span className="rail-lock">人</span>
@@ -696,16 +680,42 @@ function AgentPanel({
   stageIndex,
   suggestionStates,
   onDecision,
+  onGenerate,
   onSubmit,
   onOpenChat,
+  remoteStage,
+  busy,
 }: {
   stageIndex: number;
   suggestionStates: Record<number, SuggestionState>;
   onDecision: (id: number, state: SuggestionState) => void;
+  onGenerate: () => void;
   onSubmit: () => void;
   onOpenChat: () => void;
+  remoteStage?: ApiProjectStage;
+  busy: boolean;
 }) {
   const stage = stages[stageIndex];
+  const generation = asRecord(remoteStage?.content.generation);
+  const orchestration = asRecord(generation?.orchestration);
+  const orchestrationRuns = typeof orchestration?.subagent_runs === "number"
+    ? orchestration.subagent_runs
+    : 0;
+  const usesAO = ["problem", "literature", "robustness", "evidence"].includes(stage.key);
+  const canGenerate = Boolean(
+    remoteStage
+    && remoteStage.status !== "not_started"
+    && remoteStage.status !== "approved"
+    && !busy,
+  );
+  const canApprove = !remoteStage || remoteStage.status === "needs_review";
+  const generateLabel = stage.key === "literature"
+    ? "检索并生成综述"
+    : stage.key === "delivery"
+      ? "生成报告与研究包"
+      : usesAO
+        ? "AO 生成阶段资产"
+        : "生成阶段资产";
   const stageSuggestions = stageIndex === 3
     ? initialSuggestions
     : [
@@ -724,7 +734,14 @@ function AgentPanel({
         </div>
         <span className="agent-avatar">AI</span>
       </button>
-      <div className="agent-live"><span />正在协作 · 只提交建议，不会替你批准</div>
+      <div className={`agent-live ${busy ? "is-busy" : ""}`}>
+        <span />
+        {busy
+          ? usesAO ? "AOrchestra 正在编排 SubAgent" : "阶段智能体正在生成资产"
+          : orchestration
+            ? `AOrchestra · ${orchestrationRuns} 个 SubAgent · ${String(orchestration.status ?? "complete")}`
+            : `${remoteStage ? `Revision ${remoteStage.revision} · ${remoteStage.status}` : "本地演示"} · 不会替你批准`}
+      </div>
 
       <div className="suggestion-list">
         {stageSuggestions.map((suggestion, index) => {
@@ -756,8 +773,14 @@ function AgentPanel({
         })}
       </div>
       <div className="agent-submit-wrap">
-        <div className="submit-readiness"><span>{Object.values(suggestionStates).filter((s) => s !== "pending").length}</span> 条建议已处理</div>
-        <button className="primary-action" onClick={onSubmit}>提交 {stage.gate} 审批 <span>→</span></button>
+        <div className="submit-readiness">
+          <span>{remoteStage?.revision ?? 0}</span>
+          {remoteStage?.status === "needs_review" ? " 当前 Revision 待审阅" : " 先生成符合契约的阶段资产"}
+        </div>
+        <div className="stage-flow-actions">
+          <button className="generate-stage-action" disabled={!canGenerate} onClick={onGenerate}>{busy ? "处理中…" : generateLabel}</button>
+          <button className="primary-action" disabled={!canApprove || busy} onClick={onSubmit}>提交 {stage.gate} 审批 <span>→</span></button>
+        </div>
       </div>
     </aside>
   );
@@ -923,48 +946,287 @@ function MethodsView({ onOpenMethod, onOpenFormula, onAdd, onToast }: { onOpenMe
   </div>;
 }
 
-function RunsView({ project, onOpenDetail, onOpenGate, onToast }: { project: ResearchProject; onOpenDetail: (detail: DetailPanel) => void; onOpenGate: (gateId: string) => void; onToast: (message: string) => void }) {
+function RunsView({
+  project,
+  apiProject,
+  onProjectUpdated,
+  onOpenGate,
+  onToast,
+}: {
+  project: ResearchProject;
+  apiProject?: ApiProject;
+  onProjectUpdated: (project: ApiProject) => void;
+  onOpenGate: (gateId: string) => void;
+  onToast: (message: string) => void;
+}) {
   const tabs = ["分析计划", "Do-file", "运行前检查", "正式运行", "结果审阅"];
-  const defaultDoFile = [
-    "version 18.0",
-    "set more off",
-    "use \"input/firm_panel.dta\", clear",
-    "datasignature",
-    "xtset firm_id year",
-    "",
-    "* G3-approved main analysis",
-    "xtreg innovation_quality ai_adoption controls i.year, ///",
-    "  fe vce(cluster firm_id)",
-    "",
-    "estimates store baseline_fe",
-    "etable, estimates(baseline_fe) showstars",
-    "collect export \"output/main_results.xlsx\", replace",
-  ].join("\n");
   const [tab, setTab] = useState(2);
-  const [runState, setRunState] = useState<"ready" | "running" | "succeeded">("ready");
-  const [editingCode, setEditingCode] = useState(false);
-  const [doFile, setDoFile] = useState(defaultDoFile);
-  const runLocked = project.stageIndex < 6;
-  function startRun() {
-    if (runLocked) {
-      onToast("需先完成 S5 分析计划并通过 G3 人工审批");
+  const [runner, setRunner] = useState<RunnerStatus | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState("");
+  const [preflight, setPreflight] = useState<AnalysisPreflight | null>(null);
+  const [activeJob, setActiveJob] = useState<AnalysisJob | null>(null);
+  const [jobResult, setJobResult] = useState<AnalysisRun | null>(null);
+  const [timeoutSeconds, setTimeoutSeconds] = useState(3600);
+  const [busy, setBusy] = useState<"upload" | "preflight" | "submit" | "cancel" | "rerun" | "">("");
+  const [error, setError] = useState("");
+  const identification = apiProject?.stages.find((stage) => stage.key === "identification");
+  const analysis = apiProject?.stages.find((stage) => stage.key === "analysis");
+  const plan = identification?.content ?? {};
+  const analysisContent = analysis?.content ?? {};
+  const assets = useMemo(() => apiProject?.data_assets ?? [], [apiProject?.data_assets]);
+  const effectiveAssetId = assets.some((asset) => asset.asset_id === selectedAssetId)
+    ? selectedAssetId
+    : assets[0]?.asset_id ?? "";
+  const activePreflight = preflight?.input_asset_id === effectiveAssetId ? preflight : null;
+  const runs = (Array.isArray(analysisContent.runs) ? analysisContent.runs : []) as AnalysisRun[];
+  const latestRun = jobResult ?? runs.at(-1);
+  const structuredResults = latestRun?.structured_results ?? [];
+  const doFile = typeof analysisContent.do_file === "string"
+    ? analysisContent.do_file
+    : typeof plan.stata_do_file === "string"
+      ? plan.stata_do_file
+      : "";
+  const runLocked = identification?.status !== "approved";
+  const selectedAsset = assets.find((asset) => asset.asset_id === effectiveAssetId);
+  const passedChecks = activePreflight
+    ? Object.values(activePreflight.checks).filter(Boolean).length
+    : 0;
+  const jobActive = Boolean(
+    activeJob && ["queued", "running", "canceling"].includes(activeJob.status),
+  );
+  const canRerun = Boolean(
+    activeJob
+    && ["succeeded", "failed", "canceled", "interrupted"].includes(activeJob.status)
+    && activeJob.request.input_asset_id === effectiveAssetId,
+  );
+  const activeRunId = activeJob?.run_id ?? "";
+  const activeJobStatus = activeJob?.status ?? "";
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([getStataRunnerStatus(), listAnalysisJobs(project.id)])
+      .then(([status, jobs]) => {
+        if (!cancelled) {
+          setRunner(status);
+          setActiveJob(jobs[0] ?? null);
+        }
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "无法读取 Runner 状态");
+      });
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!activeRunId || !["queued", "running", "canceling"].includes(activeJobStatus)) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const job = await getAnalysisJob(project.id, activeRunId);
+        if (!cancelled) setActiveJob(job);
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "无法读取运行状态");
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 1500);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeRunId, activeJobStatus, project.id]);
+
+  useEffect(() => {
+    if (
+      !activeRunId
+      || !["succeeded", "failed", "canceled"].includes(activeJobStatus)
+      || jobResult?.run_id === activeRunId
+    ) return;
+    let cancelled = false;
+    Promise.all([
+      getAnalysisRunResult(project.id, activeRunId),
+      getApiProject(project.id),
+    ])
+      .then(([result, refreshed]) => {
+        if (cancelled) return;
+        setJobResult(result);
+        onProjectUpdated(refreshed);
+        setTab(result.status === "succeeded" ? 4 : 3);
+        onToast(
+          result.status === "succeeded"
+            ? `运行成功，回收 ${result.structured_results.length} 条结构化结果`
+            : `运行结束：${result.reason_code}`,
+        );
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "无法读取运行结果");
+      });
+    return () => { cancelled = true; };
+  }, [activeRunId, activeJobStatus, jobResult?.run_id, onProjectUpdated, onToast, project.id]);
+
+  async function upload(file: File) {
+    if (!apiProject) {
+      onToast("当前项目尚未连接 FastAPI");
       return;
     }
-    setRunState("running");
-    window.setTimeout(() => { setRunState("succeeded"); onToast("Stata 运行完成，14 项产物已回收"); }, 1600);
+    setBusy("upload");
+    setError("");
+    try {
+      const asset = await uploadDataAsset(project.id, file);
+      const refreshed = await getApiProject(project.id);
+      onProjectUpdated(refreshed);
+      setSelectedAssetId(asset.asset_id);
+      setPreflight(null);
+      onToast(`已登记 ${asset.original_name}，SHA-256 与元信息已保存`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "数据上传失败");
+    } finally {
+      setBusy("");
+    }
   }
+
+  async function runPreflight() {
+    if (!effectiveAssetId) {
+      setError("请先上传并选择一个 .dta 数据资产");
+      return;
+    }
+    setBusy("preflight");
+    setError("");
+    try {
+      const result = await preflightAnalysisRun(project.id, effectiveAssetId);
+      setPreflight(result);
+      onToast(result.status === "ready" ? "运行前检查全部通过" : `预检阻塞：${result.reason_code}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "运行前检查失败");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function startRun() {
+    if (runLocked || activePreflight?.status !== "ready") {
+      onToast(runLocked ? "需先完成 S5 并通过 G3 人工审批" : "请先完成运行前检查");
+      return;
+    }
+    setBusy("submit");
+    setError("");
+    try {
+      const job = await submitAnalysisRun(project.id, effectiveAssetId, timeoutSeconds);
+      setActiveJob(job);
+      setJobResult(null);
+      setTab(3);
+      onToast(`已提交后台任务 ${job.run_id}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Stata 运行提交失败");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function cancelRun() {
+    if (!activeJob || !["queued", "running", "canceling"].includes(activeJob.status)) return;
+    setBusy("cancel");
+    setError("");
+    try {
+      const job = await cancelAnalysisRun(project.id, activeJob.run_id);
+      setActiveJob(job);
+      onToast(`已请求取消 ${job.run_id}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "取消运行失败");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function rerun() {
+    if (!activeJob || !["succeeded", "failed", "canceled", "interrupted"].includes(activeJob.status)) return;
+    setBusy("rerun");
+    setError("");
+    try {
+      const job = await rerunAnalysis(project.id, activeJob.run_id, timeoutSeconds);
+      setActiveJob(job);
+      setJobResult(null);
+      setTab(3);
+      onToast(`已从 ${activeJob.run_id} 创建重跑 ${job.run_id}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "创建重跑失败");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const checkLabels: Record<string, string> = {
+    gate_passed: "G3 分析计划已批准",
+    binding_passed: "S6 与批准的 revision/hash 一致",
+    engine_passed: "执行引擎为 Stata",
+    policy_passed: "do-file 代码策略通过",
+    input_passed: "项目数据文件存在且格式正确",
+    asset_hash_passed: "文件 SHA-256 与资产登记一致",
+    variable_mapping_passed: "S5 所需变量在数据中存在",
+    runner_passed: "研究者本机 Local Runner 可连接",
+    license_passed: "本机已确认合法 Stata 许可",
+  };
+
   return (
     <div className="runs-view page-view">
-      <header className="view-header"><div><p className="eyebrow">Stata Workbench</p><h1>可审批、可复现的分析运行</h1><p>在机构已授权环境运行。代码、数据签名、日志与结果保持同一条血缘。</p></div><div className={`runner-status ${runLocked ? "is-waiting" : ""}`}><span /> {runLocked ? "Runner 等待审批" : <>Institution Runner · 在线 <b>1 / 4 席位</b></>}</div></header>
-      <div className={`run-gate-banner ${runLocked ? "is-locked" : ""}`}><div><span>G3</span><div><strong>{runLocked ? "正式运行尚未解锁" : "分析计划与代码已冻结"}</strong><small>{runLocked ? `当前项目位于 S${project.stageIndex}；需完成 S5 分析计划并通过 G3 人工审批` : "AnalysisPlan v3 · analysis.do SHA-256 9f5a…4c21 · 方法审核者已批准"}</small></div></div><button onClick={() => onOpenGate("G3")}>{runLocked ? "查看解锁条件" : "查看审批包"}</button></div>
+      <header className="view-header">
+        <div><p className="eyebrow">Stata Workbench</p><h1>可审批、可复现的分析运行</h1><p>Docker 工作台把签名运行包交给研究者本机 Stata，并回收结构化 Result Bundle。</p></div>
+        <div className={`runner-status ${!runner?.available ? "is-waiting" : ""}`}>
+          <span /> {!runner ? "正在检查 Local Runner" : runner.available
+            ? <>Local Runner 在线 <b>{runner.edition} {runner.version}</b></>
+            : `Local Runner 不可用：${runner.reason || "未连接"}`}
+        </div>
+      </header>
+      <div className={`run-gate-banner ${runLocked ? "is-locked" : ""}`}>
+        <div><span>G3</span><div><strong>{runLocked ? "正式运行尚未解锁" : "分析计划与代码已冻结"}</strong><small>{runLocked ? `当前项目位于 S${project.stageIndex}；需完成 S5 分析计划并通过 G3` : `AnalysisPlan revision ${identification?.revision ?? 0} · ${identification?.content_hash?.slice(0, 12) ?? "无 hash"}`}</small></div></div>
+        <button onClick={() => onOpenGate("G3")}>{runLocked ? "查看解锁条件" : "查看审批包"}</button>
+      </div>
+      {error && <div className="run-error-banner">{error}</div>}
       <div className="workbench-shell">
         <nav className="workbench-tabs" aria-label="Stata 工作台步骤">{tabs.map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}><span>{index + 1}</span>{item}</button>)}</nav>
         <section className="workbench-content">
-          {tab === 0 && <div className="plan-grid"><article><p className="eyebrow">Primary estimand</p><h3>生成式 AI 采用对企业创新质量的平均处理效应</h3><dl><div><dt>样本</dt><dd>2016—2024 中国 A 股上市公司</dd></div><div><dt>固定效应</dt><dd>企业 + 年份</dd></div><div><dt>标准误</dt><dd>企业层级聚类</dd></div><div><dt>主要结果</dt><dd>发明专利授权被引数 ln(1+x)</dd></div></dl></article><article><p className="eyebrow">Robustness matrix</p><ul className="check-list"><li>✓ 替换采用测量</li><li>✓ 排除同期数字化政策</li><li>○ 安慰剂采用年份</li><li>○ 事件窗口敏感性</li></ul></article></div>}
-          {tab === 1 && <div className="code-pane"><div className="code-toolbar"><span>analysis.do · revision 7</span><div><button onClick={() => onOpenDetail({ eyebrow: "Code diff", title: "Revision 6 → 7", description: "当前版本只增加年份固定效应并锁定企业层级聚类标准误。", code: "- xtreg innovation_quality ai_adoption controls, fe\n+ xtreg innovation_quality ai_adoption controls i.year, fe vce(cluster firm_id)", bullets: ["模型变化已映射到 AnalysisPlan v3", "正式运行仍需人工启动"] })}>比较版本</button><button onClick={() => { if (editingCode) onToast("人工编辑已保留在当前草稿，保存 revision 后才会进入审批"); setEditingCode((editing) => !editing); }}>{editingCode ? "完成编辑" : "人工编辑"}</button></div></div>{editingCode ? <textarea className="code-editor" value={doFile} onChange={(event) => setDoFile(event.target.value)} aria-label="编辑 Stata do-file" spellCheck={false} /> : <pre><code>{doFile}</code></pre>}</div>}
-          {tab === 2 && (runLocked ? <div className="locked-workbench-state"><span>G3</span><div><p className="eyebrow">Preflight blocked</p><h3>运行前检查尚不能通过</h3><p>当前项目还没有获批的 AnalysisPlan、do-file 哈希和数据签名。先完成 S5，再由方法审核者批准 G3。</p><ul><li>完成 S4 数据合同与许可审批</li><li>完成 S5 分析计划、公式和失败条件</li><li>冻结 do-file revision 并通过 G3</li></ul></div><button onClick={() => onOpenGate("G3")}>查看 G3 条件</button></div> : <div className="preflight-layout"><div className="preflight-score"><div className="score-circle"><strong>8/8</strong><span>检查通过</span></div><h3>可以提交正式运行</h3><p>输入、许可、审批、路径与代码策略均与获批版本一致。</p></div><div className="preflight-checks">{["G3 revision/hash 有效", "Stata MP 19 · 许可席位可用", "输入数据签名一致", "面板键 firm_id × year 唯一", "所需变量全部存在", "未发现 shell / 网络 / 动态安装", "ado manifest 已锁定", "输出路径与资源上限合规"].map((item) => <div key={item}><span>✓</span>{item}</div>)}</div></div>)}
-          {tab === 3 && <div className={`run-console ${runLocked ? "is-locked" : ""}`}><div className="console-status"><div className={`run-state-icon state-${runLocked ? "locked" : runState}`}>{runLocked ? "锁" : runState === "ready" ? "▶" : runState === "running" ? "…" : "✓"}</div><div><p className="eyebrow">Formal run</p><h3>{runLocked ? "等待 G3 人工批准" : runState === "ready" ? "等待人工启动" : runState === "running" ? "正在机构 Runner 中执行" : "运行成功并完成产物回收"}</h3><p>{runLocked ? "智能体不能绕过审批生成正式结果。" : runState === "ready" ? "AI 无权自行启动正式主分析。" : runState === "running" ? "正在执行 baseline_fe，已完成数据审计。" : "Exit code 0 · 14 项产物 · manifest 已生成"}</p></div></div><button className="primary-action" onClick={startRun} disabled={runLocked || runState === "running"}>{runLocked ? "等待 G3 批准" : runState === "ready" ? "人工确认并启动" : runState === "running" ? "正在运行…" : "创建重跑分支"}</button><div className="run-log"><span>{runLocked ? "[blocked] no approved AnalysisPlan revision" : "[09:42:01] AI4MS_RUN_ID=run_20260719_001"}</span><span>{runLocked ? "[blocked] data signature unavailable" : "[09:42:02] datasignature: 1843:2489(...)"}</span><span>{runLocked ? "[blocked] G3 human approval required" : "[09:42:04] xtset firm_id year · strongly balanced"}</span>{!runLocked && <span className={runState === "succeeded" ? "log-success" : ""}>[{runState === "succeeded" ? "09:42:11" : "--:--:--"}] {runState === "succeeded" ? "AI4MS_COMPLETED · exit 0" : "waiting…"}</span>}</div></div>}
-          {tab === 4 && (runLocked ? <div className="locked-results-state"><span>∅</span><h3>尚无正式运行结果</h3><p>结果页只显示由获批代码和已签名数据生成的产物。探索性草稿不会混入正式结果。</p><button onClick={() => setTab(0)}>返回分析计划</button></div> : <div className="results-grid"><article><p className="eyebrow">Primary result</p><h3>AI 采用与创新质量呈正相关</h3><strong className="result-number">+8.4%</strong><span>95% CI [3.1%, 13.7%]</span><small>解释仍需 G4 人工审批</small></article><article><p className="eyebrow">Diagnostics</p><ul className="check-list"><li>✓ 共同趋势未拒绝</li><li>✓ 聚类标准误已应用</li><li>! 异质性结果待复核</li><li>○ 安慰剂检验待追加</li></ul></article><article><p className="eyebrow">Artifacts</p><ul className="artifact-list"><li>main_results.xlsx <span>已签名</span></li><li>event_study.png <span>已签名</span></li><li>analysis.log <span>原始</span></li><li>run_manifest.json <span>完整</span></li></ul></article></div>)}
+          {tab === 0 && <div className="plan-grid">
+            <article><p className="eyebrow">Approved objective</p><h3>{String(plan.estimand_or_objective || "等待 S5 冻结估计目标")}</h3><dl><div><dt>样本</dt><dd>{String(plan.analysis_sample || "待确认")}</dd></div><div><dt>分析单位</dt><dd>{String(plan.unit_of_analysis || "待确认")}</dd></div><div><dt>执行引擎</dt><dd>{String(plan.execution_engine || "unknown")}</dd></div><div><dt>计划 revision</dt><dd>{identification?.revision ?? 0}</dd></div></dl></article>
+            <article><p className="eyebrow">Expected outputs</p><ul className="check-list">{(Array.isArray(plan.expected_outputs) ? plan.expected_outputs : []).map((item) => <li key={String(item)}>○ {String(item)}</li>)}{!Array.isArray(plan.expected_outputs) && <li>○ 等待 S5 定义输出</li>}</ul></article>
+          </div>}
+          {tab === 1 && <div className="code-pane"><div className="code-toolbar"><span>analysis.do · AnalysisPlan revision {identification?.revision ?? 0}</span><div><button onClick={() => onToast("代码修改必须返回 S5，生成新 revision 并重新通过 G3")}>修改规则</button></div></div><pre><code>{doFile || "* 尚无获批 Stata do-file"}</code></pre></div>}
+          {tab === 2 && <div className="real-preflight">
+            <div className="data-asset-toolbar">
+              <div><p className="eyebrow">Input data asset</p><h3>选择项目内已登记的 `.dta`</h3></div>
+              <label className="data-upload-button">{busy === "upload" ? "正在读取元信息…" : "上传 .dta"}<input type="file" accept=".dta,application/x-stata" disabled={busy !== ""} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ""; }} /></label>
+            </div>
+            {assets.length > 0 ? <div className="asset-selection-row"><select value={effectiveAssetId} onChange={(event) => { setSelectedAssetId(event.target.value); setPreflight(null); }}><option value="">选择数据资产</option>{assets.map((asset) => <option value={asset.asset_id} key={asset.asset_id}>{asset.original_name} · {asset.metadata.row_count} 行 × {asset.metadata.column_count} 列</option>)}</select><button className="primary-action" disabled={busy !== "" || runLocked} onClick={() => void runPreflight()}>{busy === "preflight" ? "正在检查…" : "运行真实 Preflight"}</button></div> : <div className="empty-run-data"><strong>尚无项目数据资产</strong><p>上传后系统会登记文件、计算 SHA-256，并读取行列数、变量名、标签和 Stata 格式版本。</p></div>}
+            {selectedAsset && <div className="asset-facts"><span><b>{selectedAsset.metadata.row_count}</b> 行</span><span><b>{selectedAsset.metadata.column_count}</b> 列</span><span><b>{selectedAsset.metadata.format_version}</b> 格式版本</span><code>SHA-256 {selectedAsset.sha256.slice(0, 16)}…</code></div>}
+            {runLocked ? <div className="locked-workbench-state"><span>G3</span><div><p className="eyebrow">Preflight blocked</p><h3>等待 S5/G3 人工批准</h3><p>数据可以先登记，但只有获批的分析计划和 do-file 才能进入本机 Runner。</p></div><button onClick={() => onOpenGate("G3")}>查看 G3 条件</button></div> : activePreflight && <div className="preflight-layout"><div className="preflight-score"><div className="score-circle"><strong>{passedChecks}/{Object.keys(activePreflight.checks).length}</strong><span>{activePreflight.status === "ready" ? "检查通过" : "存在阻塞"}</span></div><h3>{activePreflight.status === "ready" ? "可以提交正式运行" : activePreflight.reason_code}</h3><p>{activePreflight.status === "ready" ? "审批、代码、资产哈希、变量、Runner 与许可一致。" : activePreflight.issues.map((issue) => issue.message).join("；")}</p></div><div className="preflight-checks">{Object.entries(activePreflight.checks).map(([key, passed]) => <div className={passed ? "" : "is-failed"} key={key}><span>{passed ? "✓" : "!"}</span>{checkLabels[key] ?? key}</div>)}</div></div>}
+          </div>}
+          {tab === 3 && <div className={`run-console ${runLocked ? "is-locked" : ""}`}>
+            <div className="console-status">
+              <div className={`run-state-icon state-${runLocked ? "locked" : activeJob?.status ?? latestRun?.status ?? "ready"}`}>
+                {runLocked ? "锁" : jobActive ? "…" : latestRun?.status === "succeeded" ? "✓" : "▶"}
+              </div>
+              <div>
+                <p className="eyebrow">Formal run</p>
+                <h3>{runLocked ? "等待 G3 人工批准" : activeJob ? `${activeJob.run_id} · ${activeJob.status}` : latestRun ? `${latestRun.run_id} · ${latestRun.status}` : "等待人工启动"}</h3>
+                <p>{runLocked ? "智能体不能绕过审批启动正式分析。" : activeJob ? `${activeJob.reason_code} · 超时 ${activeJob.timeout_seconds} 秒${activeJob.parent_run_id ? ` · rerun of ${activeJob.parent_run_id}` : ""}` : latestRun ? `${latestRun.reason_code} · exit ${latestRun.exit_code ?? "n/a"} · ${latestRun.structured_results.length} 条结构化结果` : "提交签名运行包前必须完成真实 Preflight。"}</p>
+              </div>
+            </div>
+            <div className="run-controls">
+              <label>超时（秒）<input type="number" min={1} max={7200} value={timeoutSeconds} disabled={jobActive} onChange={(event) => setTimeoutSeconds(Math.max(1, Math.min(7200, Number(event.target.value) || 1)))} /></label>
+              {jobActive
+                ? <button className="run-cancel-action" onClick={() => void cancelRun()} disabled={busy !== "" || activeJob?.status === "canceling"}>{busy === "cancel" || activeJob?.status === "canceling" ? "正在取消…" : "取消运行"}</button>
+                : canRerun
+                  ? <button className="primary-action" onClick={() => void rerun()} disabled={runLocked || busy !== "" || activePreflight?.status !== "ready"}>{busy === "rerun" ? "正在创建…" : "按原请求重跑"}</button>
+                  : <button className="primary-action" onClick={() => void startRun()} disabled={runLocked || busy !== "" || activePreflight?.status !== "ready"}>{busy === "submit" ? "正在提交…" : "人工确认并启动"}</button>}
+            </div>
+            <div className="run-log">
+              <span>[asset] {selectedAsset?.asset_id || "not selected"}</span>
+              <span>[preflight] {activePreflight?.status || "not checked"}</span>
+              <span>[runner] {runner?.available ? `${runner.executable_name} ${runner.version}` : "not available"}</span>
+              {activeJob && <span className={activeJob.status === "succeeded" ? "log-success" : ""}>[job] {activeJob.status} · {activeJob.reason_code}</span>}
+              {latestRun && <span className={latestRun.status === "succeeded" ? "log-success" : ""}>[result] {latestRun.status} · {latestRun.reason_code}</span>}
+            </div>
+          </div>}
+          {tab === 4 && (!latestRun || latestRun.status !== "succeeded" ? <div className="locked-results-state"><span>∅</span><h3>尚无符合契约的正式运行结果</h3><p>这里只显示通过 run_id、数据 SHA-256、do-file hash 和 Result Bundle 校验的结果。</p><button onClick={() => setTab(2)}>返回运行前检查</button></div> : <div className="real-results-review"><header><div><p className="eyebrow">Result Bundle 1.0</p><h3>{latestRun.run_id}</h3></div><div><span>数据签名</span><code>{latestRun.data_signature || "未返回"}</code></div></header><div className="result-table"><div className="result-table-head"><span>规格 / 变量</span><span>估计值</span><span>标准误</span><span>p 值</span><span>95% CI</span><span>N</span></div>{structuredResults.map((result) => <div key={result.result_id}><span><b>{result.term || result.label}</b><small>{result.specification_id}</small></span><code>{result.estimate?.toPrecision(5) ?? "—"}</code><code>{result.std_error?.toPrecision(4) ?? "—"}</code><code>{result.p_value?.toPrecision(4) ?? "—"}</code><code>{result.ci_lower?.toPrecision(4) ?? "—"} – {result.ci_upper?.toPrecision(4) ?? "—"}</code><code>{result.sample_size ?? "—"}</code></div>)}</div><footer><strong>{latestRun.output_artifacts.length} 项产物已登记 SHA-256</strong><span>结果解释和科学主张仍需进入 S7、S8 与 G4。</span></footer></div>)}
         </section>
       </div>
     </div>
@@ -1035,11 +1297,11 @@ function ApprovalModal({
 
 export default function Home() {
   const [view, setView] = useState<ViewKey>("journey");
-  const [projects, setProjects] = useState<ResearchProject[]>(initialProjects);
-  const [activeProjectId, setActiveProjectId] = useState(initialProjects[0].id);
+  const [projects, setProjects] = useState<ResearchProject[]>([newProjectPlaceholder]);
+  const [activeProjectId, setActiveProjectId] = useState(newProjectPlaceholder.id);
   const [activeStage, setActiveStage] = useState(3);
   const [selectedDesign, setSelectedDesign] = useState("fe");
-  const [question, setQuestion] = useState(initialProjects[0].question);
+  const [question, setQuestion] = useState(newProjectPlaceholder.question);
   const [deepStack, setDeepStack] = useState<DeepRoute[]>([]);
   const [stageDrafts, setStageDrafts] = useState<Record<string, StageDraft>>({});
   const [resolvedIssues, setResolvedIssues] = useState<Record<string, boolean>>({});
@@ -1182,6 +1444,69 @@ export default function Home() {
       setApiError(readApiError(error));
       showToast(`审批未完成：${readApiError(error)}`);
     }).finally(() => setApiBusy(false));
+  }
+  async function generateActiveStageAssets() {
+    const projectId = activeProject.id;
+    const stageKey = activeStageData.key;
+    if (!apiProjectIds[projectId] || !activeRemoteStage) {
+      showToast("请先连接 FastAPI 项目，再生成正式阶段资产");
+      return;
+    }
+    if (activeRemoteStage.status === "not_started") {
+      showToast("请先批准上游阶段，解锁当前阶段");
+      return;
+    }
+    if (activeRemoteStage.status === "approved") {
+      showToast("当前阶段已批准；如需重开，请先修改上游或当前资产");
+      return;
+    }
+
+    setApiBusy(true);
+    setApiError("");
+    try {
+      let updated: ApiProject;
+      if (stageKey === "literature") {
+        const working = apiProjects[projectId] ?? await getApiProject(projectId);
+        const literature = working.stages.find((item) => item.key === "literature");
+        const queryBlocks = literature?.content.query_blocks;
+        if (!Array.isArray(queryBlocks) || queryBlocks.length === 0) {
+          await createApiStageDraft(
+            projectId,
+            stageKey,
+            "先形成覆盖经典、前沿、相邻概念、争议和反向证据的可执行检索协议。",
+          );
+        }
+        await searchApiLiterature(projectId);
+        updated = await createApiStageDraft(
+          projectId,
+          stageKey,
+          "只基于已保存的检索结果形成可追溯综述，保留争议、反证、候选空白和覆盖限制。",
+        );
+      } else {
+        updated = await createApiStageDraft(
+          projectId,
+          stageKey,
+          `为 ${activeStageData.id} ${activeStageData.name} 生成可审阅、可追溯且符合阶段契约的正式草稿。`,
+        );
+        if (stageKey === "delivery") {
+          updated = await exportApiDelivery(projectId);
+        }
+      }
+      applyApiProject(updated);
+      showToast(
+        stageKey === "delivery"
+          ? "S9 阶段资产、HTML 报告和研究包已生成"
+          : stageKey === "literature"
+            ? "S1 检索、论文入库与 AO 综述已完成"
+            : `${activeStageData.id} 阶段资产已生成，等待人工审阅`,
+      );
+    } catch (error) {
+      const message = readApiError(error);
+      setApiError(message);
+      showToast(`阶段生成未完成：${message}`);
+    } finally {
+      setApiBusy(false);
+    }
   }
   function navigateView(nextView: ViewKey) {
     setView(nextView);
@@ -1470,14 +1795,14 @@ export default function Home() {
       </header>
 
       <main className={`main-shell view-${view} ${deepRoute ? "view-deep" : ""}`}>
-        {view === "journey" && !deepRoute && <StageRail activeIndex={activeStage} onSelect={selectStage} />}
+        {view === "journey" && !deepRoute && <StageRail activeIndex={activeStage} remoteStages={apiProjects[activeProject.id]?.stages} onSelect={selectStage} />}
         <div className="main-content">
           {deepRoute ? renderDeepPage() : <>
           {view === "journey" && (
             <>
               <header className="journey-header">
                 <div><p className="eyebrow">Research Journey · {activeStageData.agent}</p><h1>{activeStageData.name}</h1><p><strong>{activeStage + 1}/10</strong> 阶段 <span>·</span> <b>{activeStageData.gate} {activeStage === 3 && g1Submitted ? "审批中" : "待确认"}</b></p></div>
-                <ProgressNodes activeIndex={activeStage} />
+                <ProgressNodes activeIndex={activeStage} remoteStages={apiProjects[activeProject.id]?.stages} />
               </header>
               <div className="journey-grid">
                 <section className="stage-content">
@@ -1486,13 +1811,22 @@ export default function Home() {
                     ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} onCompareMethods={() => setView("methods")} />
                     : <GenericStage stageIndex={activeStage} onOpenDraft={openStageDraft} onOpenDecision={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })} onRunCheck={runStageCheck} />}
                 </section>
-                <AgentPanel stageIndex={activeStage} suggestionStates={suggestionStates} onDecision={decideSuggestion} onSubmit={() => setApprovalOpen(true)} onOpenChat={() => openAgentChat()} />
+                <AgentPanel
+                  stageIndex={activeStage}
+                  suggestionStates={suggestionStates}
+                  remoteStage={activeRemoteStage}
+                  busy={apiBusy}
+                  onDecision={decideSuggestion}
+                  onGenerate={generateActiveStageAssets}
+                  onSubmit={() => setApprovalOpen(true)}
+                  onOpenChat={() => openAgentChat()}
+                />
               </div>
             </>
           )}
           {view === "evidence" && <EvidenceLibrary onOpenRecord={(title) => openDeep({ kind: "evidence-record", title })} onToast={showToast} />}
           {view === "methods" && <MethodsView onOpenMethod={(methodId) => openDeep({ kind: "method-record", methodId })} onOpenFormula={(formulaId) => openDeep({ kind: "formula-record", formulaId })} onAdd={addMethodToDesign} onToast={showToast} />}
-          {view === "runs" && <RunsView project={activeProject} onOpenDetail={setDetail} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onToast={showToast} />}
+          {view === "runs" && <RunsView project={activeProject} apiProject={apiProjects[activeProject.id]} onProjectUpdated={applyApiProject} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onToast={showToast} />}
           {view === "approvals" && <ApprovalsView project={activeProject} submittedGates={submittedGates} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onOpenDetail={setDetail} />}
           </>}
         </div>

@@ -4,14 +4,17 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from ai4ms.assets import DataAssetService
 from ai4ms.db.store import ProjectStore, RevisionConflictError
 from ai4ms.delivery import DeliveryExportError, DeliveryExportService
 from ai4ms.literature.service import LiteratureSearchService
-from ai4ms.runners import AnalysisRunnerService
+from ai4ms.orchestration import AOrchestraStageService
+from ai4ms.runners import AnalysisJobService, AnalysisRunnerService
 from ai4ms.services.models import (
     STAGE_DEFINITIONS,
     STAGES_BY_KEY,
     ApprovalDecision,
+    AnalysisRerunRequest,
     AnalysisRunRequest,
     CreateProjectRequest,
     DraftRequest,
@@ -71,12 +74,21 @@ class ProjectService:
         self.store = store
         self.data_dir = Path(data_dir)
         self.projects_dir = self.data_dir / "projects"
-        self.stage_generation = stage_generation or StageGenerationService()
+        self.stage_generation = stage_generation or StageGenerationService(
+            orchestrator=AOrchestraStageService(self.projects_dir)
+        )
         self.literature_search = literature_search or LiteratureSearchService(self.projects_dir)
         self.analysis_runner = analysis_runner or AnalysisRunnerService()
         self.delivery_export = delivery_export or DeliveryExportService(self.projects_dir)
+        self.data_assets = DataAssetService(self.store, self.projects_dir)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
+        self.analysis_jobs = AnalysisJobService(
+            self.projects_dir,
+            self.analysis_runner,
+            self.get_project,
+            self._record_analysis_run,
+        )
 
     def stage_definitions(self) -> list[dict[str, Any]]:
         return [stage.model_dump() for stage in STAGE_DEFINITIONS]
@@ -96,6 +108,22 @@ class ProjectService:
             return self._enrich(self.store.get_project(project_id))
         except KeyError as exc:
             raise ProjectNotFoundError(project_id) from exc
+
+    async def upload_data_asset(
+        self,
+        project_id: str,
+        filename: str,
+        media_type: str,
+        read,
+    ) -> dict[str, Any]:
+        self.get_project(project_id)
+        return await self.data_assets.upload(
+            project_id, filename, media_type, read
+        )
+
+    def list_data_assets(self, project_id: str) -> list[dict[str, Any]]:
+        self.get_project(project_id)
+        return self.store.list_data_assets(project_id)
 
     def get_stage(self, project_id: str, stage_key: str) -> dict[str, Any]:
         self._require_stage(stage_key)
@@ -177,14 +205,39 @@ class ProjectService:
     async def submit_analysis_run(self, project_id: str, request: AnalysisRunRequest) -> dict[str, Any]:
         project = self.get_project(project_id)
         self._ensure_unlocked(project, "analysis")
+        return await self.analysis_jobs.submit(project_id, request)
+
+    def list_analysis_runs(self, project_id: str) -> list[dict[str, Any]]:
+        return self.analysis_jobs.list(project_id)
+
+    def get_analysis_run(self, project_id: str, run_id: str) -> dict[str, Any]:
+        return self.analysis_jobs.get(project_id, run_id)
+
+    def get_analysis_run_result(self, project_id: str, run_id: str) -> dict[str, Any]:
+        return self.analysis_jobs.result(project_id, run_id)
+
+    async def cancel_analysis_run(self, project_id: str, run_id: str) -> dict[str, Any]:
+        return await self.analysis_jobs.cancel(project_id, run_id)
+
+    async def rerun_analysis(
+        self,
+        project_id: str,
+        run_id: str,
+        request: AnalysisRerunRequest,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        self._ensure_unlocked(project, "analysis")
+        return await self.analysis_jobs.rerun(
+            project_id,
+            run_id,
+            timeout_seconds=request.timeout_seconds,
+        )
+
+    def _record_analysis_run(self, project_id: str, run: dict[str, Any]) -> dict[str, Any]:
+        project = self.get_project(project_id)
         stage = next(item for item in project["stages"] if item["key"] == "analysis")
         content = deepcopy(STAGE_TEMPLATES["analysis"])
         content.update(stage.get("content") or {})
-        run = await self.analysis_runner.submit(
-            project,
-            self.projects_dir / project_id,
-            request,
-        )
         content.setdefault("runs", []).append(run)
         content["runner_status"] = (
             "available" if run.get("runner_profile", {}).get("available") else "unavailable"
@@ -196,6 +249,8 @@ class ProjectService:
                     "run_id": run["run_id"],
                     "status": run["status"],
                     "exit_code": run.get("exit_code"),
+                    "data_signature": run.get("data_signature", ""),
+                    "structured_results": run.get("structured_results", []),
                     "output_artifacts": run.get("output_artifacts", []),
                 }
             )
@@ -276,9 +331,15 @@ class ProjectService:
         self._require_stage(stage_key)
         project = self.get_project(project_id)
         self._ensure_unlocked(project, stage_key)
-        if request.decision is ApprovalDecision.APPROVE and stage_key in {"evidence", "delivery"}:
+        if request.decision is ApprovalDecision.APPROVE:
             stage = next(item for item in project["stages"] if item["key"] == stage_key)
             StageGenerationService.validate_stage_content(project, stage_key, stage.get("content", {}))
+            if stage_key == "literature":
+                content = stage.get("content", {})
+                if not content.get("search_runs"):
+                    raise StageContentValidationError("S1 批准前必须执行至少一次可追溯文献检索")
+                if not content.get("papers"):
+                    raise StageContentValidationError("S1 检索未形成可追溯论文记录，不能进入下一阶段")
             if stage_key == "delivery":
                 exports = stage.get("content", {}).get("exports", [])
                 if not exports:
@@ -301,12 +362,12 @@ class ProjectService:
             raise ProjectNotFoundError(project_id) from exc
         return self._enrich(result)
 
-    @staticmethod
-    def _enrich(project: dict[str, Any]) -> dict[str, Any]:
+    def _enrich(self, project: dict[str, Any]) -> dict[str, Any]:
         stages = project.get("stages", [])
         approved = sum(1 for stage in stages if stage["status"] == StageStatus.APPROVED.value)
         result = dict(project)
         result["progress"] = {"approved": approved, "total": len(STAGE_DEFINITIONS)}
+        result["data_assets"] = self.store.list_data_assets(str(project["project_id"]))
         return result
 
     @staticmethod

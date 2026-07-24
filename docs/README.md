@@ -1,58 +1,36 @@
-# AI4MS 文档索引
+# AI4MS 文档
 
-本目录是 `ai4ms` 分支的产品与工程文档入口。当前唯一产品定位是：面向管理科学的垂直 AI 科研工作台，产品形态类似 MS 领域的轻量玻尔，并把介绍书的用户任务落到前端 S0-S9 十阶段中。
+这里保存当前产品的正式文档。文档只描述现行产品、代码和交付方式；历史规划、临时审计和已被实现替代的 Starter 不再保留。
 
-## 文档权威顺序
-
-发生冲突时按以下顺序判断：
-
-1. 当前代码与自动化测试决定“已经实现什么”；
-2. `docs/00_*.md` 决定当前分支的产品定位、路线和协作规则；
-3. `docs/refer/AI4MS-DevPack_v0.3/` 提供详细产品规格、调研语料、Schema、API 草案和开发参考；
-4. 外部介绍材料只用于产品沟通，不能覆盖工程契约。
-
-规划中的能力必须写为“目标、计划或待实现”，不能在 README 中描述成已上线功能。
-
-## 核心文档
+## 文档地图
 
 | 文档 | 用途 |
 |---|---|
-| [00_PRODUCT.md](00_PRODUCT.md) | AI4MS 产品定位、用户、核心对象与能力边界 |
-| [00_ROADMAP.md](00_ROADMAP.md) | 7 月 26 日截止的双人六天 DDL、十阶段工作台架构、分工与验收 |
-| [00_GUIDELINE.md](00_GUIDELINE.md) | 当前运行方式与 AI4MS 开发原则 |
-| [00_WORKFLOW.md](00_WORKFLOW.md) | 分支、提交、评审和仓库卫生规则 |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker GUI 部署契约、持久化、配置与验收 |
-| [PROMPT_ENGINEERING.md](PROMPT_ENGINEERING.md) | 阶段提示词、结构化输出契约、失败语义和版本规则 |
-| [ai4ms/BASELINE.md](ai4ms/BASELINE.md) | AI4MS 改造前工程基线 |
+| [PRODUCT.md](PRODUCT.md) | 产品定位、S0-S9 工作流、用户价值、可信边界和验收标准 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 当前代码架构、状态模型、AOrchestra、数据流和 API 边界 |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | 本地开发、目录职责、测试、协作和仓库卫生 |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker GUI 构建、启动、配置、持久化和提交前检查 |
+| [PROMPT_ENGINEERING.md](PROMPT_ENGINEERING.md) | S0-S9 提示词、结构化输出契约和修改规则 |
+| [RUNNER.md](RUNNER.md) | `.dta` 资产、Stata Local Runner、后台任务和 Result Bundle |
+| [reference/AI4MS_非技术产品介绍书.md](reference/AI4MS_非技术产品介绍书.md) | 产品设计的原始业务输入，可搜索版本 |
+| [reference/AI4MS_非技术产品介绍书.docx](reference/AI4MS_非技术产品介绍书.docx) | 队友调研形成的原始文档 |
 
-## AI4MS DevPack v0.3
+## 信息优先级
 
-[AI4MS-DevPack_v0.3](refer/AI4MS-DevPack_v0.3/README.md) 是本轮产品调研和开发设计的完整参考包，主要内容包括：
+出现冲突时按以下顺序判断：
 
-| 目录 | 内容 |
-|---|---|
-| `01_research_corpus` | 10 本期刊、100 篇平衡语料及研究范式分析 |
-| `02_knowledge_bases` | 28 种方法、47 张公式卡、40 个数据源和 6 个 JSON Schema |
-| `03_product` | PRD、Topic Scout、阶段智能体、审批、Stata、治理与技术架构 |
-| `04_riffband_integration` | 当前仓库审计、迁移映射和目标目录 |
-| `05_roadmap` | 24 周路线、三个 14 天 Sprint、验收矩阵和风险登记 |
-| `06_developer_starter` | OpenAPI、PostgreSQL Schema、配置、示例和 Stata 契约 |
-| `07_workbook` | 产品研究工作簿 |
-| `08_nontechnical_intro` | 非技术产品介绍书 Markdown、DOCX 和 PDF |
+1. 当前代码、Pydantic 契约和自动化测试；
+2. 本目录中的正式文档；
+3. `reference/` 中的原始产品输入。
 
-## 当前版本口径
-
-- 工程参考基线：AI4MS DevPack `v0.3`；
-- 当前 Git 分支：`ai4ms`；
-- 当前代码仍保留 RiffBand 兼容入口；
-- 十阶段 Next.js 已与 FastAPI/SQLite 的项目、工作区 revision 和人工批准打通；模型、检索、Runner、证据和导出后端能力仍需逐页替换前端演示交互；Docker 单入口代码已完成，仍需在装有 Docker 的机器完成最终 smoke test；
-- 最终比赛只交付带浏览器 GUI 的 Docker 镜像和部署说明；评委在本机启动并访问 `localhost`，项目没有公网网站；`/api/v1` 仅作为产品内部接口；
-- HTML 可视化报告是保留并升级的现有能力，不属于待删除的旧产品资料。
+原始产品介绍用于解释设计来源，不等于当前代码已经完整实现其中所有设想。
 
 ## 维护规则
 
-- 新的产品决策先更新 `00_PRODUCT.md`，再同步详细 PRD；
-- 新的工程阶段先更新 `00_ROADMAP.md` 和验收编号；
-- Schema、OpenAPI、SQL 和示例必须一起变更并通过校验；
-- 语料、知识库和外部产品快照必须注明来源日期与证据等级；
-- 不再新增与 AI4MS 定位平行、互相冲突的根级产品文档。
+- 产品范围或阶段语义变化：更新 `PRODUCT.md`。
+- API、目录、状态机或数据流变化：更新 `ARCHITECTURE.md`。
+- 命令、测试、分支和协作方式变化：更新 `DEVELOPMENT.md`。
+- Docker、环境变量或持久化变化：更新 `DEPLOYMENT.md`。
+- 提示词 ID、版本或输出契约变化：更新 `PROMPT_ENGINEERING.md`。
+- Stata、Result Bundle 或后台任务变化：更新 `RUNNER.md`。
+- 不为一次性排查、某日测试结果或短期 DDL 新建长期文档；这类信息进入 Issue、PR 或提交记录。

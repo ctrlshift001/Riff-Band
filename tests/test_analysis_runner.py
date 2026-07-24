@@ -4,7 +4,7 @@ import asyncio
 import json
 
 from ai4ms.runners.service import AnalysisRunnerService
-from ai4ms.runners.stata import StataPolicyScanner
+from ai4ms.runners.stata import StataPolicyScanner, sha256_file
 from ai4ms.services.models import AnalysisRunRequest
 
 
@@ -82,6 +82,29 @@ def test_stata_policy_blocks_external_process_install_network_and_traversal():
     }
 
 
+def test_stata_policy_blocks_prefixed_shell_early_exit_and_delimiter_changes():
+    issues = StataPolicyScanner.scan(
+        "version 18\ncapture noisily shell whoami\nexit 0\n#delimit ;\n"
+    )
+
+    assert {item["code"] for item in issues} == {
+        "external_process",
+        "early_exit",
+        "delimiter_change",
+    }
+
+
+def test_stata_structure_requires_runner_bound_input():
+    issues = StataPolicyScanner.required_structure_issues(
+        "version 18\nset more off\nuse \"input/panel.dta\", clear\n"
+    )
+
+    assert {item["code"] for item in issues} == {
+        "missing_runner_args",
+        "missing_bound_input",
+    }
+
+
 def test_preflight_reports_no_runner_without_leaking_executable_path(tmp_path):
     project_dir = tmp_path / "prj_runner"
     project_dir.mkdir()
@@ -119,9 +142,66 @@ def test_preflight_blocks_unapproved_gate_stale_binding_and_path_traversal(tmp_p
     assert any(item["code"] == "invalid_input" for item in stale["issues"])
 
 
+def test_preflight_resolves_registered_asset_and_checks_hash_and_columns(tmp_path):
+    project_dir = tmp_path / "prj_runner"
+    data_dir = project_dir / "artifacts" / "data" / "data_bbbbbbbbbbbb"
+    data_dir.mkdir(parents=True)
+    input_path = data_dir / "panel.dta"
+    input_path.write_bytes(b"registered stata fixture")
+    project = _project()
+    project["data_assets"] = [
+        {
+            "asset_id": "data_bbbbbbbbbbbb",
+            "stored_path": "artifacts/data/data_bbbbbbbbbbbb/panel.dta",
+            "sha256": sha256_file(input_path),
+            "metadata": {
+                "columns": [
+                    {"name": "outcome"},
+                    {"name": "treatment"},
+                ]
+            },
+        }
+    ]
+    service = AnalysisRunnerService(profile_factory=lambda: _profile())
+
+    ready = service.preflight(
+        project,
+        project_dir,
+        AnalysisRunRequest(input_asset_id="data_bbbbbbbbbbbb"),
+    )
+    assert ready["status"] == "ready"
+    assert ready["input_asset_id"] == "data_bbbbbbbbbbbb"
+    assert ready["checks"]["asset_hash_passed"] is True
+    assert ready["missing_variables"] == []
+
+    input_path.write_bytes(b"tampered")
+    tampered = service.preflight(
+        project,
+        project_dir,
+        AnalysisRunRequest(input_asset_id="data_bbbbbbbbbbbb"),
+    )
+    assert tampered["status"] == "blocked"
+    assert tampered["reason_code"] == "asset_hash_mismatch"
+
+    input_path.write_bytes(b"registered stata fixture")
+    project["data_assets"][0]["metadata"]["columns"] = [{"name": "outcome"}]
+    missing = service.preflight(
+        project,
+        project_dir,
+        AnalysisRunRequest(input_asset_id="data_bbbbbbbbbbbb"),
+    )
+    assert missing["status"] == "blocked"
+    assert missing["reason_code"] == "missing_required_variables"
+
+
 class _FakeAdapter:
     async def execute(self, _profile, _do_file, _project_dir, _run_id, _input, output_dir, _timeout):
-        (output_dir / "results.csv").write_text("term,estimate\ntreatment,0.2\n", encoding="utf-8")
+        (output_dir / "structured_results.csv").write_text(
+            "result_id,kind,specification_id,term,label,estimate,std_error,statistic,p_value,ci_lower,ci_upper,sample_size,status,unit\n"
+            "RES_1,estimate,main,treatment,baseline,0.2,0.05,4,0.001,0.102,0.298,100,observed,\n",
+            encoding="utf-8",
+        )
+        (output_dir / "data_signature.txt").write_text("signature-test\n", encoding="utf-8")
         return {
             "status": "succeeded",
             "reason_code": "completed",
@@ -151,6 +231,9 @@ def test_submit_writes_immutable_manifest_and_output_hashes(tmp_path):
     assert run["status"] == "succeeded"
     assert run["analysis_plan_hash"] == "hash_plan"
     assert run["input_artifacts"][0]["sha256"]
-    assert any(item["path"].endswith("results.csv") and len(item["sha256"]) == 64 for item in run["output_artifacts"])
+    assert run["structured_results"][0]["term"] == "treatment"
+    assert run["structured_results"][0]["estimate"] == 0.2
+    assert run["data_signature"] == "signature-test"
+    assert any(item["path"].endswith("structured_results.csv") and len(item["sha256"]) == 64 for item in run["output_artifacts"])
     manifest = project_dir / run["manifest_path"]
     assert json.loads(manifest.read_text(encoding="utf-8"))["run_id"] == run["run_id"]

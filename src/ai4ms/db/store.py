@@ -91,10 +91,26 @@ class ProjectStore:
                     FOREIGN KEY (project_id, stage_key) REFERENCES stage_states(project_id, stage_key) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS data_assets (
+                    asset_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    original_name TEXT NOT NULL,
+                    stored_path TEXT NOT NULL,
+                    media_type TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(project_id, stored_path),
+                    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_stage_revisions_project
                     ON stage_revisions(project_id, stage_key, revision DESC);
                 CREATE INDEX IF NOT EXISTS idx_approval_events_project
                     ON approval_events(project_id, stage_key, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_data_assets_project
+                    ON data_assets(project_id, created_at DESC);
                 """
             )
             self._synchronize_stage_model(conn)
@@ -296,6 +312,73 @@ class ProjectStore:
             if cursor.rowcount == 0:
                 raise KeyError(project_id)
         return self.get_project(project_id)
+
+    def create_data_asset(
+        self,
+        *,
+        project_id: str,
+        asset_id: str,
+        original_name: str,
+        stored_path: str,
+        media_type: str,
+        size_bytes: int,
+        sha256: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        timestamp = _now()
+        with self._connect() as conn:
+            if conn.execute(
+                "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
+            ).fetchone() is None:
+                raise KeyError(project_id)
+            conn.execute(
+                """
+                INSERT INTO data_assets
+                    (asset_id, project_id, original_name, stored_path, media_type,
+                     size_bytes, sha256, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    asset_id,
+                    project_id,
+                    original_name,
+                    stored_path,
+                    media_type,
+                    size_bytes,
+                    sha256,
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                ),
+            )
+            conn.execute(
+                "UPDATE projects SET updated_at = ? WHERE project_id = ?",
+                (timestamp, project_id),
+            )
+        return self.get_data_asset(project_id, asset_id)
+
+    def list_data_assets(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM data_assets WHERE project_id = ? ORDER BY created_at DESC",
+                (project_id,),
+            ).fetchall()
+        return [self._decode_data_asset(row) for row in rows]
+
+    def get_data_asset(self, project_id: str, asset_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM data_assets WHERE project_id = ? AND asset_id = ?",
+                (project_id, asset_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"{project_id}:{asset_id}")
+        return self._decode_data_asset(row)
+
+    @staticmethod
+    def _decode_data_asset(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["metadata"] = json.loads(str(item.pop("metadata_json")))
+        return item
 
     def update_stage(
         self,

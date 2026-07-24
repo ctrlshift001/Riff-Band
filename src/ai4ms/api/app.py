@@ -3,20 +3,27 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
+from ai4ms.assets import DataAssetError
 from ai4ms.db import ProjectStore
 from ai4ms.delivery import DeliveryExportError
 from ai4ms.domains import MANAGEMENT_SCIENCE_PROFILE
 from ai4ms.inference import InferenceUnavailableError, inference_status
 from ai4ms.knowledge import KnowledgeRegistry
 from ai4ms.literature.service import LiteratureSearchInputError, LiteratureSearchService
-from ai4ms.runners import AnalysisRunnerService
+from ai4ms.runners import (
+    AnalysisJobConflictError,
+    AnalysisJobNotFoundError,
+    AnalysisRunnerService,
+    AnalysisRunBlockedError,
+)
 from ai4ms.services.models import (
+    AnalysisRerunRequest,
     AnalysisRunRequest,
     CreateProjectRequest,
     DraftRequest,
@@ -45,15 +52,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(REPO_ROOT / ".env", override=False)
 
 
-def _web_root() -> Path:
+def _web_root() -> Path | None:
     configured = os.environ.get("AI4MS_WEB_ROOT", "").strip()
     candidates = [
         Path(configured) if configured else None,
         REPO_ROOT / "src" / "web" / "dist",
         REPO_ROOT / "src" / "web" / "out",
-        REPO_ROOT / "src" / "web" / "static",
     ]
-    return next((path for path in candidates if path is not None and path.exists()), REPO_ROOT / "src" / "web" / "static")
+    return next((path for path in candidates if path is not None and path.exists()), None)
 
 
 def _default_data_dir() -> Path:
@@ -137,8 +143,37 @@ def create_app(
     async def invalid_delivery_export(_request: Request, exc: DeliveryExportError):
         return _json_error(status.HTTP_409_CONFLICT, "delivery_export_failed", str(exc))
 
+    @app.exception_handler(DataAssetError)
+    async def invalid_data_asset(_request: Request, exc: DataAssetError):
+        return _json_error(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.code, str(exc))
+
+    @app.exception_handler(AnalysisJobNotFoundError)
+    async def analysis_job_not_found(_request: Request, exc: AnalysisJobNotFoundError):
+        return _json_error(status.HTTP_404_NOT_FOUND, "analysis_job_not_found", str(exc))
+
+    @app.exception_handler(AnalysisJobConflictError)
+    async def analysis_job_conflict(_request: Request, exc: AnalysisJobConflictError):
+        return _json_error(status.HTTP_409_CONFLICT, "analysis_job_conflict", str(exc))
+
+    @app.exception_handler(AnalysisRunBlockedError)
+    async def analysis_run_blocked(_request: Request, exc: AnalysisRunBlockedError):
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "error": {
+                    "code": "analysis_preflight_blocked",
+                    "message": str(exc),
+                },
+                "preflight": exc.preflight,
+            },
+        )
+
     @app.get("/", include_in_schema=False)
     async def web_workbench():
+        if web_root is None:
+            raise HTTPException(status_code=503, detail="web workbench assets are unavailable")
         index = web_root / "index.html"
         if not index.exists():
             raise HTTPException(status_code=503, detail="web workbench assets are unavailable")
@@ -188,6 +223,30 @@ def create_app(
     async def get_project(project_id: str, request: Request):
         return get_service(request).get_project(project_id)
 
+    @app.get("/api/v1/projects/{project_id}/assets/data", tags=["data-assets"])
+    async def list_data_assets(project_id: str, request: Request):
+        return {"items": get_service(request).list_data_assets(project_id)}
+
+    @app.post(
+        "/api/v1/projects/{project_id}/assets/data",
+        tags=["data-assets"],
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def upload_data_asset(
+        project_id: str,
+        request: Request,
+        file: UploadFile = File(...),
+    ):
+        try:
+            return await get_service(request).upload_data_asset(
+                project_id,
+                file.filename or "",
+                file.content_type or "application/octet-stream",
+                file.read,
+            )
+        finally:
+            await file.close()
+
     @app.patch("/api/v1/projects/{project_id}", tags=["projects"])
     async def update_project(project_id: str, payload: UpdateProjectRequest, request: Request):
         return get_service(request).update_project(project_id, payload)
@@ -227,9 +286,56 @@ def create_app(
     async def preflight_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):
         return get_service(request).preflight_analysis_run(project_id, payload)
 
-    @app.post("/api/v1/projects/{project_id}/stages/analysis/runs", tags=["runners"])
+    @app.get("/api/v1/projects/{project_id}/stages/analysis/runs", tags=["runners"])
+    async def list_analysis_runs(project_id: str, request: Request, limit: int = 20):
+        return {
+            "items": get_service(request).list_analysis_runs(project_id)[
+                : max(1, min(limit, 100))
+            ]
+        }
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/analysis/runs",
+        tags=["runners"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
     async def submit_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):
         return await get_service(request).submit_analysis_run(project_id, payload)
+
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/analysis/runs/{run_id}",
+        tags=["runners"],
+    )
+    async def get_analysis_run(project_id: str, run_id: str, request: Request):
+        return get_service(request).get_analysis_run(project_id, run_id)
+
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/result",
+        tags=["runners"],
+    )
+    async def get_analysis_run_result(project_id: str, run_id: str, request: Request):
+        return get_service(request).get_analysis_run_result(project_id, run_id)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/cancel",
+        tags=["runners"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def cancel_analysis_run(project_id: str, run_id: str, request: Request):
+        return await get_service(request).cancel_analysis_run(project_id, run_id)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/rerun",
+        tags=["runners"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def rerun_analysis(
+        project_id: str,
+        run_id: str,
+        payload: AnalysisRerunRequest,
+        request: Request,
+    ):
+        return await get_service(request).rerun_analysis(project_id, run_id, payload)
 
     @app.post("/api/v1/projects/{project_id}/stages/delivery/export", tags=["delivery"])
     async def export_delivery(project_id: str, request: Request):
@@ -257,14 +363,9 @@ def create_app(
 
     @app.post("/api/v1/projects/{project_id}/stages/{stage_key}/decisions", tags=["approvals"])
     async def decide_stage(project_id: str, stage_key: str, payload: StageDecisionRequest, request: Request):
-        try:
-            return get_service(request).decide_stage(project_id, stage_key, payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return get_service(request).decide_stage(project_id, stage_key, payload)
 
-    if web_root.name == "static":
-        app.mount("/assets", StaticFiles(directory=web_root), name="legacy-assets")
-    elif web_root.exists():
+    if web_root is not None:
         app.mount("/", StaticFiles(directory=web_root, html=True), name="web")
 
     return app

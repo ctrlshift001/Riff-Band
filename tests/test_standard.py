@@ -211,6 +211,20 @@ class TestStandardFlows(unittest.TestCase):
         self.assertEqual(params["model"], "m1")
         self.assertEqual(params["tools"], ["read_source", "record_finding"])
 
+    def test_main_agent_cannot_expand_worker_tool_allowlist(self):
+        agent = MainOrchestratorAgent(sub_models=["m1"], meta={
+            "default_worker_tools": ["read_source"],
+            "allowed_worker_tools": ["read_source", "read_sources"],
+        })
+
+        params = agent._apply_delegate_defaults({
+            "task_instruction": "Audit existing evidence",
+            "context": "",
+            "tools": ["read_source", "web_search", "write_report_section"],
+        })
+
+        self.assertEqual(params["tools"], ["read_source"])
+
 
 if __name__ == "__main__":
     unittest.main()

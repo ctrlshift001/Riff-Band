@@ -4,7 +4,7 @@
 
 > 当前工程已经提供可运行的 S0-S9 十阶段浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像、Stata BYOL Runner、Claim-Evidence 审核、HTML/ZIP 交付和 Docker 基础文件。现有 CLI、MCP、Agent Runtime 与研究流水线继续作为工程基础。
 
-[文档索引](docs/README.md) | [产品定义](docs/00_PRODUCT.md) | [开发路线](docs/00_ROADMAP.md) | [开发指南](docs/00_GUIDELINE.md)
+[文档索引](docs/README.md) | [产品定义](docs/PRODUCT.md) | [当前架构](docs/ARCHITECTURE.md) | [开发指南](docs/DEVELOPMENT.md)
 
 ## 产品定位
 
@@ -41,7 +41,9 @@ S0-S9 十阶段已经进入同一个项目工作台，当前基础能力包括�
 - 通过 SQLite 在重启后恢复项目；
 - 通过浏览器 GUI 使用完整产品；FastAPI 作为前后端内部服务层。
 
-当前 S0-S9 均支持真实模型生成：S1 可执行多源检索、去重与快照，S2 构建理论，S3-S5 从方法、数据源和公式库形成研究设计、数据合同与分析计划；S6 绑定已批准 S5 代码并提供 Stata BYOL Runner 预检、阻塞记录、运行 manifest 和输出哈希；S7 生成受 Run 证据约束的稳健性矩阵；S8 形成主张、证据、假设、机制、异质性和反证图谱；S9 只从 G4 已批准主张生成结论，并确定性导出 HTML 报告、manifest 和 ZIP 研究包。输出必须经过版本化提示词、严格结构契约和 ID 白名单后才能保存为 agent revision。
+当前 S0-S9 均支持真实模型生成。S0-S1 与 S7-S8 已接入基于论文 **AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration** 的动态 SubAgent 编排：S0-S1 并行执行边界澄清、检索侦察、反向检索和综述，S7-S8 并行执行稳健性、负结果、Claim-Evidence 与过度主张审查。S7-S8 的 SubAgent 只有既有项目资产只读权限，不能联网或启动 Runner；AO 报告还必须经过阶段 Pydantic 契约和 ID 白名单，才能保存为 `needs_review` 的 agent revision。
+
+S1 可执行多源检索、去重与快照，S2 构建理论，S3-S5 从方法、数据源和公式库形成研究设计、数据合同与分析计划；S6 支持 `.dta` 上传、资产登记、SHA-256、元信息读取，并通过 HMAC 签名 Run Bundle 连接研究者本机 Stata Local Runner，回收结构化结果、数据签名、日志和表图；S7 生成受 Run 证据约束的稳健性矩阵；S8 形成主张、证据、假设、机制、异质性和反证图谱；S9 只从 G4 已批准主张生成结论，并确定性导出 HTML 报告、manifest 和 ZIP 研究包。十个阶段批准前都执行结构契约校验，S1 还必须具有真实检索快照和论文记录。
 
 保留的研究引擎已经支持多来源文献检索、结构化研究产物和独立 HTML 可视化报告。Stata Runner 已接入本地/机构 BYOL 批处理边界；Claim-Evidence 审核和成果导出已进入同一项目、revision 与 Gate 状态机。
 
@@ -139,21 +141,20 @@ riffband-mcp --config aorchestra.yaml
 docker compose up --build
 ```
 
-SQLite、项目资产和 HTML 报告通过 Docker volume 持久化。模型与检索 Key 在运行时注入；Stata 使用外部自有许可 Runner，不进入镜像。
+SQLite、`.dta` 项目资产和 HTML 报告通过 Docker volume 持久化。模型与检索 Key 在运行时注入；Stata 不进入镜像，Docker 工作台通过配对令牌连接研究者本机的自有许可 Local Runner。
 
 项目没有公网网站。比赛只提交带 GUI 的 Docker 部署包，评委在本机启动后访问 `http://localhost:8000/`。详细说明见 [Docker 部署说明](docs/DEPLOYMENT.md)。
 
 ## 文档
 
 - [文档索引与版本口径](docs/README.md)
-- [AI4MS 产品定义](docs/00_PRODUCT.md)
-- [AI4MS 开发路线](docs/00_ROADMAP.md)
-- [开发与运行指南](docs/00_GUIDELINE.md)
-- [协作与提交规范](docs/00_WORKFLOW.md)
-- [AI4MS DevPack v0.3](docs/refer/AI4MS-DevPack_v0.3/README.md)
-- [当前工程基线](docs/ai4ms/BASELINE.md)
-- [AI4MS 产品后端目录说明](src/ai4ms/README.md)
-- [前端交接说明](src/web/README.md)
+- [AI4MS 产品定义](docs/PRODUCT.md)
+- [当前工程架构](docs/ARCHITECTURE.md)
+- [开发、测试与协作](docs/DEVELOPMENT.md)
+- [Docker 部署](docs/DEPLOYMENT.md)
+- [提示词工程](docs/PROMPT_ENGINEERING.md)
+- [Stata Local Runner](docs/RUNNER.md)
+- [原始产品介绍](docs/reference/AI4MS_非技术产品介绍书.md)
 
 ## 产品边界
 

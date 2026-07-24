@@ -110,7 +110,7 @@ class PromptCatalog:
             version="1.0.0",
             stage_key="identification",
             contract=AnalysisPlanDraft,
-            task_instruction="""基于已保存的 S3 研究设计和 S4 数据合同生成 S5 分析计划。冻结 estimand/求解目标、样本、变量角色、主次模型、诊断、缺失与多重性处理、分析步骤、稳健性和停止条件。method_id 只能来自已选设计方法，formula_id 只能来自 formula_candidates。按研究泳道选择执行引擎；只有适合 Stata 的计划才生成可审阅 do-file，并固定 version、seed、只读输入和独立输出，不得包含 shell、网络、动态安装、绝对路径或父目录穿越。不得声称数据检查或模型运行已经完成。""",
+            task_instruction="""基于已保存的 S3 研究设计和 S4 数据合同生成 S5 分析计划。冻结 estimand/求解目标、样本、变量角色、主次模型、诊断、缺失与多重性处理、分析步骤、稳健性和停止条件。method_id 只能来自已选设计方法，formula_id 只能来自 formula_candidates。按研究泳道选择执行引擎；只有适合 Stata 的计划才生成可审阅 do-file。Stata do-file 必须固定 version、set more off，以 `args project_dir run_id input_dta output_dir` 接收 Runner 参数，并通过 use 命令引用 input_dta 宏读取只读输入；表图只能写入 output_dir。不得包含 shell、网络、动态安装、exit、#delimit、绝对路径或父目录穿越。不得声称数据检查或模型运行已经完成。""",
         ),
         "analysis": StagePrompt(
             prompt_id="ai4ms.stage.analysis",
