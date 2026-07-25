@@ -69,6 +69,10 @@ class UpdateProjectRequest(CreateProjectRequest):
     pass
 
 
+class UserProfileUpdateRequest(BaseModel):
+    interface_theme: Literal["graphite", "blueprint", "paper"]
+
+
 class StageUpdateRequest(BaseModel):
     content: dict[str, Any]
     change_reason: str = Field(default="", max_length=500)
@@ -114,6 +118,18 @@ class StageWorkspaceUpdateRequest(BaseModel):
     workspace: StageWorkspaceContent
     expected_revision: int = Field(ge=0)
     change_reason: str = Field(default="", max_length=500)
+
+
+class StageAssetSectionPatchRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(max_length=100_000)
+    expected_revision: int = Field(ge=1)
+    change_reason: str = Field(default="", max_length=500)
+
+    @field_validator("title")
+    @classmethod
+    def clean_asset_section_title(cls, value: str) -> str:
+        return value.strip()
 
 
 class StageRestoreRequest(BaseModel):

@@ -47,6 +47,18 @@ class AnalysisJobService:
         self.run_recorder = run_recorder
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._project_locks: dict[str, asyncio.Lock] = {}
+        self._execution_slots = asyncio.Semaphore(
+            max(
+                1,
+                int(
+                    os.environ.get(
+                        "AI4MS_ANALYSIS_MAX_CONCURRENCY",
+                        os.environ.get("AI4MS_STATA_MAX_CONCURRENCY", "1"),
+                    )
+                    or 1
+                ),
+            )
+        )
 
     async def submit(
         self,
@@ -163,23 +175,32 @@ class AnalysisJobService:
     ) -> None:
         run_id = str(job["run_id"])
         project_id = str(job["project_id"])
-        job.update({"status": "running", "reason_code": "running", "started_at": _now()})
-        self._save(job)
         try:
-            run = await self.runner.submit(
-                project,
-                self.projects_dir / project_id,
-                request,
-                run_id=run_id,
-            )
-            await self._record_run(project_id, run, job)
-            job.update(
-                {
-                    "status": _job_status(run.get("status")),
-                    "reason_code": str(run.get("reason_code") or "runner_error"),
-                    "finished_at": str(run.get("finished_at") or _now()),
-                }
-            )
+            async with self._execution_slots:
+                job.update(
+                    {
+                        "status": "running",
+                        "reason_code": "running",
+                        "started_at": _now(),
+                    }
+                )
+                self._save(job)
+                run = await self.runner.submit(
+                    project,
+                    self.projects_dir / project_id,
+                    request,
+                    run_id=run_id,
+                )
+                await self._record_run(project_id, run, job)
+                job.update(
+                    {
+                        "status": _job_status(run.get("status")),
+                        "reason_code": str(
+                            run.get("reason_code") or "runner_error"
+                        ),
+                        "finished_at": str(run.get("finished_at") or _now()),
+                    }
+                )
         except asyncio.CancelledError:
             run = self._fallback_run(job, "canceled", "user_canceled")
             self._write_manifest(project_id, run)
@@ -274,6 +295,7 @@ class AnalysisJobService:
             "data_signature": "",
             "structured_results": [],
             "output_artifacts": [],
+            "logs": [],
             "runner_error": error,
             "manifest_path": job["run_manifest_path"],
         }

@@ -1,6 +1,7 @@
 ﻿# Environment & secrets
 .env
 .env*.local
+.env.stata-runner.local
 
 # Personal config
 aorchestra.yaml

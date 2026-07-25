@@ -20,6 +20,14 @@ const nextConfig: NextConfig = staticExport
             source: "/healthz",
             destination: `${apiOrigin}/healthz`,
           },
+          {
+            source: "/docs",
+            destination: `${apiOrigin}/docs`,
+          },
+          {
+            source: "/openapi.json",
+            destination: `${apiOrigin}/openapi.json`,
+          },
         ];
       },
     };
