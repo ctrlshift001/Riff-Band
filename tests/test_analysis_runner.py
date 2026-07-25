@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+
+import pytest
 
 from ai4ms.runners.service import AnalysisRunnerService
-from ai4ms.runners.stata import StataPolicyScanner, sha256_file
+from ai4ms.runners.stata import StataBatchAdapter, StataPolicyScanner, sha256_file
 from ai4ms.services.models import AnalysisRunRequest
 
 
@@ -237,3 +240,34 @@ def test_submit_writes_immutable_manifest_and_output_hashes(tmp_path):
     assert any(item["path"].endswith("structured_results.csv") and len(item["sha256"]) == 64 for item in run["output_artifacts"])
     manifest = project_dir / run["manifest_path"]
     assert json.loads(manifest.read_text(encoding="utf-8"))["run_id"] == run["run_id"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX fake Stata executable")
+def test_stata_batch_adapter_enforces_timeout_and_writes_process_logs(tmp_path):
+    executable = tmp_path / "fake-stata"
+    executable.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+    executable.chmod(0o755)
+    do_file = tmp_path / "entrypoint.do"
+    do_file.write_text("version 18.0\n", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    input_path = tmp_path / "input.dta"
+    input_path.write_bytes(b"fixture")
+
+    result = asyncio.run(
+        StataBatchAdapter().execute(
+            {"executable": str(executable)},
+            do_file,
+            tmp_path,
+            "run_timeout",
+            input_path,
+            output_dir,
+            0.05,
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert result["reason_code"] == "timeout"
+    assert result["duration_seconds"] < 2
+    assert (output_dir / "runner.stdout.log").is_file()
+    assert (output_dir / "runner.stderr.log").is_file()

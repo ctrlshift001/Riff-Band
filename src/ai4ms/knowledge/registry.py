@@ -20,7 +20,7 @@ def _search_terms(text: str) -> set[str]:
 
 class KnowledgeRegistry:
     @staticmethod
-    @lru_cache(maxsize=3)
+    @lru_cache(maxsize=4)
     def _load(filename: str) -> tuple[dict[str, Any], ...]:
         path = DATA_ROOT / filename
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -39,6 +39,72 @@ class KnowledgeRegistry:
     @classmethod
     def formulas(cls) -> list[dict[str, Any]]:
         return [dict(item) for item in cls._load("formula_library.json")]
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def diagnostic_registry() -> dict[str, Any]:
+        path = DATA_ROOT / "diagnostic_rules.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict) or not isinstance(
+            document.get("rules"), list
+        ):
+            raise ValueError(
+                f"diagnostic registry must contain a rules list: {path}"
+            )
+        rules = [
+            dict(item) for item in document["rules"] if isinstance(item, dict)
+        ]
+        ids = [str(item.get("id") or "") for item in rules]
+        if len(rules) != 36 or len(set(ids)) != 36 or ids != [
+            f"D{index:02d}" for index in range(1, 37)
+        ]:
+            raise ValueError(
+                "diagnostic registry must contain the unique ordered rules D01-D36"
+            )
+        return {
+            "schema_version": str(document.get("schema_version") or ""),
+            "registry_version": str(document.get("registry_version") or ""),
+            "published_at": str(document.get("published_at") or ""),
+            "authority": str(document.get("authority") or ""),
+            "rules": rules,
+        }
+
+    @classmethod
+    def diagnostic_rules(
+        cls,
+        query: str = "",
+        family: str = "",
+        level: str = "",
+        stage: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        normalized_query = str(query or "").strip().lower()
+        result: list[dict[str, Any]] = []
+        for item in cls.diagnostic_registry()["rules"]:
+            if family and item.get("family") != family:
+                continue
+            if level and item.get("level") != level:
+                continue
+            if stage and item.get("stage") != stage:
+                continue
+            if normalized_query:
+                haystack = " ".join(str(value) for value in item.values()).lower()
+                if normalized_query not in haystack:
+                    continue
+            result.append(dict(item))
+        return result[: max(1, min(limit, 100))]
+
+    @classmethod
+    def diagnostic_rule(cls, rule_id: str) -> dict[str, Any] | None:
+        normalized = str(rule_id or "").strip().upper()
+        return next(
+            (
+                dict(item)
+                for item in cls.diagnostic_registry()["rules"]
+                if item.get("id") == normalized
+            ),
+            None,
+        )
 
     @classmethod
     def method_candidates(cls, goal: str = "", query: str = "", limit: int = 10) -> list[dict[str, Any]]:

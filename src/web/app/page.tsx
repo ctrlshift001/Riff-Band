@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
+  analysisRunArtifactUrl,
   cancelAnalysisRun,
   createStageDraft as createApiStageDraft,
   createProject as createApiProject,
@@ -11,13 +12,16 @@ import {
   exportDelivery as exportApiDelivery,
   getAnalysisJob,
   getAnalysisRunResult,
+  getDiagnosticRegistry as getApiDiagnosticRegistry,
   getKnowledgeEvaluation as getApiKnowledgeEvaluation,
   getStataRunnerStatus,
   getProject as getApiProject,
+  getUserProfile as getApiUserProfile,
   listProjects as listApiProjects,
   listAnalysisJobs,
   listStageRevisions as listApiStageRevisions,
   preflightAnalysisRun,
+  patchStageAssetSection as patchApiStageAssetSection,
   rerunAnalysis,
   restoreStageRevision as restoreApiStageRevision,
   saveStageWorkspace as saveApiStageWorkspace,
@@ -25,10 +29,13 @@ import {
   submitAnalysisRun,
   uploadDataAsset,
   updateProject as updateApiProject,
+  updateUserProfile as updateApiUserProfile,
   type AnalysisPreflight,
   type AnalysisJob,
   type AnalysisRun,
   type KnowledgeEvaluation,
+  type DiagnosticRule,
+  type InterfaceTheme,
   type Project as ApiProject,
   type ProjectStage as ApiProjectStage,
   type ProjectSummary as ApiProjectSummary,
@@ -50,6 +57,7 @@ import {
   ProjectWizard,
   StageDecisionsWorkspace,
   StageDraftWorkspace,
+  type AssetVersionSnapshot,
   type DeepRoute,
   type EvidenceRecord,
   type FormulaRecord,
@@ -76,19 +84,6 @@ type ChatMessage = {
 };
 type ChatSyncTarget = "content" | "summary" | "evidenceNote" | "decision";
 type ChatSyncMode = "append" | "replace";
-type InterfaceTheme = "graphite" | "blueprint" | "paper";
-type DiagnosticRule = {
-  id: string;
-  family: string;
-  name: string;
-  appliesTo: string;
-  trigger: string;
-  evidence: string;
-  action: string;
-  level: "阻塞" | "警告" | "记录";
-  stage: "S4" | "S5" | "S6" | "S7";
-  implementation: string;
-};
 
 const stages = [
   { key: "problem", id: "S0", name: "问题识别", agent: "Topic Agent", gate: "G0", status: "done", output: "课题简报与已有研究报告", decision: "确认边界、改写问题或暂停课题", check: "候选空白完成反向检索" },
@@ -202,45 +197,6 @@ const formulas: FormulaRecord[] = [
   { id: "F12", title: "双重机器学习残差式", family: "因果机器学习", methodId: "M16", formula: "Y-ĝ(X) = θ(X)(T-m̂(X)) + ε", purpose: "用正交化与交叉拟合降低高维干扰估计偏差。", symbols: [{ symbol: "ĝ(X)", meaning: "结果条件均值模型" }, { symbol: "m̂(X)", meaning: "处理条件均值模型" }, { symbol: "θ(X)", meaning: "条件处理效应" }], assumptions: ["混杂可由 X 控制", "交叉拟合", "重叠"], diagnostics: ["校准", "样本外稳定性", "策略价值"], stata: "* export approved analytic sample to locked Python runner", source: "EconML / CausalML" },
 ];
 
-const diagnosticRules: DiagnosticRule[] = [
-  { id: "D01", family: "数据质量", name: "关键字段缺失机制", appliesTo: "全部研究设计", trigger: "因变量、处理变量、时间或主键存在缺失", evidence: "按变量和组别报告缺失率、缺失模式及处理前后样本变化", action: "关键字段无法恢复且缺失具有系统性时，阻塞主分析并修改数据合同。", level: "阻塞", stage: "S4", implementation: "misstable summarize; misstable patterns" },
-  { id: "D02", family: "数据质量", name: "主键唯一性与重复记录", appliesTo: "面板、事件与交易数据", trigger: "进入任何合并、面板设定或聚合步骤前", evidence: "报告主键重复数、重复来源和人工处理规则", action: "主键不唯一且无法解释时停止合并与估计。", level: "阻塞", stage: "S4", implementation: "isid firm_id year; duplicates report firm_id year" },
-  { id: "D03", family: "数据质量", name: "单位、币种与时间口径", appliesTo: "多源数据与跨期比较", trigger: "变量来自不同数据库、年度或币种", evidence: "单位表、平减指数、汇率来源、时区和会计期间映射", action: "口径未统一时不得生成跨源指标。", level: "阻塞", stage: "S4", implementation: "assert unit_code != \"\"; codebook fiscal_year" },
-  { id: "D04", family: "数据质量", name: "异常值与影响点", appliesTo: "回归、预测与效率评价", trigger: "连续变量进入估计或求解器参数", evidence: "分位数、箱线范围、影响统计与处理前后结果", action: "保留原始结果；缩尾或删除必须作为有依据的替代规格。", level: "警告", stage: "S4", implementation: "summarize, detail; predict cooksd, cooksd" },
-  { id: "D05", family: "统计与面板", name: "组内有效变异", appliesTo: "固定效应与动态面板", trigger: "核心解释变量由个体固定效应识别", evidence: "组内/组间标准差、变化单位数及处理转换次数", action: "组内变异不足时停止将固定效应系数解释为主要证据。", level: "阻塞", stage: "S5", implementation: "xtsum treatment outcome" },
-  { id: "D06", family: "统计与面板", name: "异方差与稳健标准误", appliesTo: "OLS、GLM 与面板模型", trigger: "误差方差可能随规模、组别或时间变化", evidence: "残差图、BP/White 检验及稳健标准误对照", action: "推断必须使用与数据生成结构匹配的稳健或聚类标准误。", level: "警告", stage: "S6", implementation: "estat hettest; regress y x, vce(robust)" },
-  { id: "D07", family: "统计与面板", name: "聚类层级一致性", appliesTo: "面板、政策与实验数据", trigger: "处理在组、地区、机构或时间层级分配", evidence: "处理分配层级、聚类数和替代聚类结果", action: "聚类层级低于处理分配层级时阻塞显著性结论。", level: "阻塞", stage: "S5", implementation: "reghdfe y d x, absorb(id year) vce(cluster policy_cluster)" },
-  { id: "D08", family: "统计与面板", name: "序列相关", appliesTo: "面板与时间序列回归", trigger: "同一对象跨期重复观测", evidence: "Wooldridge/残差自相关检验与修正规格", action: "存在序列相关时使用适当聚类、动态项或误差结构。", level: "警告", stage: "S6", implementation: "xtserial y x" },
-  { id: "D09", family: "统计与面板", name: "横截面相关", appliesTo: "宏观、行业与大面板", trigger: "对象同时暴露于共同冲击", evidence: "Pesaran CD 或共同因子诊断", action: "显著相关时增加共同因子、时间效应或替代标准误。", level: "警告", stage: "S6", implementation: "xtcsd, pesaran abs" },
-  { id: "D10", family: "统计与面板", name: "多重共线性", appliesTo: "回归、SEM 与预测模型", trigger: "多个高度相关构念或交互项同时进入模型", evidence: "VIF、条件数、相关矩阵与变量定义", action: "共线性影响解释时重构变量或降级单个系数结论。", level: "警告", stage: "S5", implementation: "estat vif" },
-  { id: "D11", family: "统计与面板", name: "固定效应吸收检查", appliesTo: "高维固定效应模型", trigger: "核心变量可能在固定效应内不变化", evidence: "被吸收变量、有效样本与自由度变化", action: "核心变量被吸收后不得更换模型以追求可报告系数。", level: "阻塞", stage: "S5", implementation: "reghdfe y d x, absorb(id year) verbose(1)" },
-  { id: "D12", family: "因果识别", name: "DID 平行趋势", appliesTo: "双重差分与事件研究", trigger: "处理前至少存在两个可比时期", evidence: "处理前动态系数、联合检验、图形与置信区间", action: "实质性预趋势无法解释时停止核心 ATT 表述。", level: "阻塞", stage: "S7", implementation: "estat ptrends; eventstudyinteract y lead* lag*" },
-  { id: "D13", family: "因果识别", name: "提前反应与预期效应", appliesTo: "政策、采用与事件研究", trigger: "主体可能在正式处理前改变行为", evidence: "提前期系数、制度时间线和替代处理时点", action: "发现提前反应时重新定义处理窗口与 estimand。", level: "阻塞", stage: "S7", implementation: "testparm lead*" },
-  { id: "D14", family: "因果识别", name: "分期处理异质性", appliesTo: "错位实施 DID", trigger: "不同组在不同时间首次受处理", evidence: "组时 ATT、队列权重及传统 TWFE 对照", action: "禁止仅用传统 TWFE 作为主结果。", level: "阻塞", stage: "S5", implementation: "csdid y x, ivar(id) time(year) gvar(first_treat)" },
-  { id: "D15", family: "因果识别", name: "干扰与空间溢出", appliesTo: "政策、网络与平台研究", trigger: "对照组可能被邻近或网络处理影响", evidence: "暴露映射、距离/网络窗口和排除样本结果", action: "存在溢出时改写 estimand，不再称为无处理对照。", level: "阻塞", stage: "S5", implementation: "generate exposure = ...; reghdfe y treated exposure x, ..." },
-  { id: "D16", family: "因果识别", name: "工具变量相关性", appliesTo: "IV / 2SLS", trigger: "工具变量进入第一阶段", evidence: "第一阶段系数、partial R²、F 或 Kleibergen–Paap 统计量", action: "弱工具时使用弱工具稳健推断或放弃 IV 主设计。", level: "阻塞", stage: "S6", implementation: "ivreg2 y x (d=z), first weakiv" },
-  { id: "D17", family: "因果识别", name: "排除限制论证", appliesTo: "IV / 2SLS", trigger: "工具可能通过处理之外路径影响结果", evidence: "机制图、制度依据、负向结果与敏感性边界", action: "没有可信论证时仅报告相关性或探索性 IV。", level: "阻塞", stage: "S5", implementation: "* narrative evidence + negative-control specification" },
-  { id: "D18", family: "因果识别", name: "过度识别与工具一致性", appliesTo: "多工具 IV / GMM", trigger: "排除工具数量超过内生变量数量", evidence: "Hansen/Sargan、逐个工具结果与工具来源", action: "检验失败或工具结论分裂时降级主张并调查工具。", level: "警告", stage: "S7", implementation: "estat overid" },
-  { id: "D19", family: "准实验与加权", name: "RDD 密度操纵", appliesTo: "断点回归", trigger: "处理由运行变量阈值决定", evidence: "阈值附近密度图与 McCrary/rddensity 检验", action: "存在精确操纵时停止局部随机或连续性识别。", level: "阻塞", stage: "S6", implementation: "rddensity running, c(cutoff)" },
-  { id: "D20", family: "准实验与加权", name: "RDD 协变量连续性", appliesTo: "断点回归", trigger: "处理前协变量在阈值处应连续", evidence: "每个预定协变量的跳跃估计与多重检验说明", action: "系统性不连续时调查制度共变并停止主解释。", level: "阻塞", stage: "S7", implementation: "rdrobust covariate running, c(cutoff)" },
-  { id: "D21", family: "准实验与加权", name: "RDD 带宽与函数形式", appliesTo: "断点回归", trigger: "局部多项式估计完成后", evidence: "最优带宽、上下带宽、核函数与 donut 规格", action: "结果只在单一任意规格成立时标记为不稳健。", level: "警告", stage: "S7", implementation: "rdrobust y running, c(cutoff) all" },
-  { id: "D22", family: "准实验与加权", name: "倾向得分重叠", appliesTo: "匹配、IPW、DML", trigger: "基于可观测协变量调整选择", evidence: "组别得分分布、共同支持范围与截尾样本", action: "严重无重叠时更改目标总体，不做外推 ATE。", level: "阻塞", stage: "S6", implementation: "teffects overlap" },
-  { id: "D23", family: "准实验与加权", name: "加权后协变量平衡", appliesTo: "匹配、IPW、加权回归", trigger: "权重或匹配样本生成后", evidence: "标准化差异、方差比和平衡图", action: "关键协变量仍不平衡时重新设定处理模型。", level: "阻塞", stage: "S6", implementation: "tebalance summarize; tebalance density" },
-  { id: "D24", family: "准实验与加权", name: "极端权重与有效样本量", appliesTo: "IPW、熵平衡与调查权重", trigger: "个别观测可能获得过大权重", evidence: "权重分位数、最大值、截尾规则和 ESS", action: "ESS 过低时改变目标总体或使用更稳定估计器。", level: "警告", stage: "S7", implementation: "summarize weight, detail; scalar ESS=(sum_w^2)/sum_w2" },
-  { id: "D25", family: "准实验与加权", name: "合成控制处理前拟合", appliesTo: "合成控制", trigger: "供体权重求解完成后", evidence: "处理前 RMSPE、路径图与预测变量平衡", action: "处理前拟合差时不得解释处理后差距为反事实效应。", level: "阻塞", stage: "S6", implementation: "synth y predictors, trunit() trperiod()" },
-  { id: "D26", family: "准实验与加权", name: "合成控制供体敏感性", appliesTo: "合成控制", trigger: "少数供体权重集中或可能受溢出", evidence: "leave-one-out、空间安慰剂和 RMSPE 比率", action: "结论依赖单一不合格供体时撤回主结果。", level: "警告", stage: "S7", implementation: "* loop donor exclusions and placebo units" },
-  { id: "D27", family: "动态模型", name: "GMM 二阶序列相关", appliesTo: "差分/系统 GMM", trigger: "动态面板 GMM 估计后", evidence: "Arellano–Bond AR(1) 与 AR(2) 检验", action: "AR(2) 显著时矩条件无效，阻塞 GMM 主结果。", level: "阻塞", stage: "S6", implementation: "estat abond; xtabond2 ..., robust" },
-  { id: "D28", family: "动态模型", name: "GMM 工具膨胀", appliesTo: "差分/系统 GMM", trigger: "工具数量接近或超过组数", evidence: "工具数量、滞后范围、collapse 前后结果", action: "压缩工具集合；不可用高 Hansen p 值掩盖膨胀。", level: "阻塞", stage: "S6", implementation: "xtabond2 ..., gmm(..., lag(2 3) collapse)" },
-  { id: "D29", family: "机制与测量", name: "测量信度与聚合效度", appliesTo: "SEM、量表与潜变量", trigger: "构念由多个测量题项形成", evidence: "α/ω、因子载荷、AVE 与题项处理记录", action: "测量不成立时停止解释结构路径。", level: "阻塞", stage: "S5", implementation: "sem ...; estat framework, fitted" },
-  { id: "D30", family: "机制与测量", name: "区分效度与竞争模型", appliesTo: "SEM、PLS-SEM", trigger: "多个理论构念高度相关", evidence: "HTMT/Fornell–Larcker、交叉载荷与竞争模型", action: "构念不可区分时合并、重定义或撤回差异化机制。", level: "阻塞", stage: "S7", implementation: "* compare constrained and unconstrained measurement models" },
-  { id: "D31", family: "机制与测量", name: "中介因果顺序", appliesTo: "中介与机制检验", trigger: "间接效应被表述为因果机制", evidence: "时间顺序、DAG、中介—结果混杂和替代顺序", action: "横截面或顺序不明时只表述为机制一致性证据。", level: "阻塞", stage: "S5", implementation: "sem (m <- x c) (y <- m x c); bootstrap" },
-  { id: "D32", family: "优化与运营", name: "可行性与冲突约束", appliesTo: "LP、MILP、路由与调度", trigger: "求解器返回 infeasible 或无解", evidence: "IIS/冲突约束、单位检查和最小可复现实例", action: "不可行时禁止报告最优值，先修复模型或业务规则。", level: "阻塞", stage: "S6", implementation: "solver IIS / conflict refiner; validate units" },
-  { id: "D33", family: "优化与运营", name: "最优性差距与运行时", appliesTo: "MILP、CP-SAT 与组合优化", trigger: "在时间或资源上限内停止求解", evidence: "incumbent、bound、MIP gap、运行时与硬件环境", action: "未证明最优时必须报告为当前最好可行解。", level: "警告", stage: "S6", implementation: "record objective, best_bound, mip_gap, wall_time" },
-  { id: "D34", family: "优化与运营", name: "鲁棒半径与保守成本", appliesTo: "鲁棒与分布鲁棒优化", trigger: "不确定集合或半径由研究者设定", evidence: "半径来源、价格—稳健性曲线和样本外违约率", action: "半径任意或保守成本未披露时不输出政策建议。", level: "阻塞", stage: "S7", implementation: "solve over epsilon grid; out-of-sample stress test" },
-  { id: "D35", family: "优化与运营", name: "随机情景稳定性", appliesTo: "随机规划与仿真优化", trigger: "情景抽样、删减或概率设定完成后", evidence: "不同种子、样本量、VSS/EVPI 与尾部风险", action: "方案随情景剧烈变化时标记不稳定并增加样本外验证。", level: "警告", stage: "S7", implementation: "repeat SAA; report VSS, EVPI, CVaR" },
-  { id: "D36", family: "因果机器学习", name: "交叉拟合、校准与策略外推", appliesTo: "DML、因果森林与 CATE", trigger: "报告平均或异质处理效应前", evidence: "重叠、nuisance 误差、校准、honest split 与 holdout 策略价值", action: "未通过样本外验证时不得把 CATE 排名转成确定性分群政策。", level: "阻塞", stage: "S7", implementation: "cross-fit folds; calibration; policy_value on holdout" },
-];
-
 const interfaceThemes: { id: InterfaceTheme; name: string; description: string; colors: string[]; note: string }[] = [
   { id: "graphite", name: "石墨极简", description: "黑白灰、低阴影、最克制的 Apple 工作台。", colors: ["#101114", "#f5f5f7", "#d2d2d7"], note: "适合长时间阅读与正式汇报" },
   { id: "blueprint", name: "冷蓝研究", description: "低饱和蓝灰、清晰状态色、轻量层次。", colors: ["#315f87", "#eef3f7", "#aebdca"], note: "适合证据、方法和运行监控" },
@@ -336,6 +292,27 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function stageWorkspace(content: Record<string, unknown>): Record<string, unknown> {
   return asRecord(content._workspace) ?? content;
+}
+
+function assetVersionSnapshot(stage?: ApiProjectStage): AssetVersionSnapshot {
+  const assetVersion = stage ? asRecord(stage.content._asset_version) : undefined;
+  const rawSections = assetVersion ? asRecord(assetVersion.sections) : undefined;
+  const sections = Object.fromEntries(
+    Object.entries(rawSections ?? {}).flatMap(([key, value]) => {
+      const section = asRecord(value);
+      return section
+        ? [[key, {
+            title: typeof section.title === "string" ? section.title : undefined,
+            content: typeof section.content === "string" ? section.content : undefined,
+          }]]
+        : [];
+    }),
+  );
+  return {
+    revision: stage?.revision ?? 0,
+    contentHash: stage?.content_hash ?? null,
+    sections,
+  };
 }
 
 function projectEvidenceRecords(project?: ApiProject): EvidenceRecord[] {
@@ -540,7 +517,7 @@ function PreferencesModal({
           <div><p className="eyebrow">Appearance preferences</p><h2 id="preferences-title">界面偏好</h2></div>
           <button className="modal-close" onClick={onClose} aria-label="关闭界面偏好">×</button>
         </header>
-        <p className="detail-lede">选择最适合当前工作方式的颜色与排版。设置只保存在此浏览器，不会影响研究内容或协作者。</p>
+        <p className="detail-lede">选择最适合当前工作方式的颜色与排版。设置会先在本机即时恢复，再同步到用户 profile；不会改变研究内容。</p>
         <div className="theme-choice-grid" role="radiogroup" aria-label="界面风格">
           {interfaceThemes.map((theme) => (
             <button
@@ -559,7 +536,7 @@ function PreferencesModal({
             </button>
           ))}
         </div>
-        <footer className="preferences-actions"><span>当前：{selectedTheme.name} · 已自动保存</span><button className="primary-action" onClick={onClose}>完成</button></footer>
+        <footer className="preferences-actions"><span>当前：{selectedTheme.name} · 本机保存并同步 profile</span><button className="primary-action" onClick={onClose}>完成</button></footer>
       </section>
     </div>
   );
@@ -1005,6 +982,8 @@ function EvidenceLibrary({
 function MethodsView({
   methods,
   formulas,
+  diagnosticRules,
+  diagnosticRegistryVersion,
   evaluation,
   busy,
   onEvaluate,
@@ -1015,6 +994,8 @@ function MethodsView({
 }: {
   methods: MethodRecord[];
   formulas: FormulaRecord[];
+  diagnosticRules: DiagnosticRule[];
+  diagnosticRegistryVersion: string;
   evaluation?: KnowledgeEvaluation;
   busy: boolean;
   onEvaluate: () => Promise<void>;
@@ -1045,7 +1026,7 @@ function MethodsView({
 
     {tab === "formulas" && <section className="formula-library-grid">{filteredFormulas.map((formula) => <article className="formula-library-card" key={formula.id}><header><span>{formula.id}</span><b>{formula.family}</b><small>{formula.fit == null ? "待 AI 评估" : `AI 适配度 ${formula.fit}%`}</small></header><h2>{formula.title}</h2><p>{formula.fitRationale || formula.purpose}</p><pre>{formula.formula}</pre><div className="formula-card-meta"><span>{formula.symbols.length} 个符号</span><span>{formula.assumptions.length} 项假设</span><span>{formula.diagnostics.length} 项诊断</span></div><footer><button onClick={() => { void navigator.clipboard?.writeText(formula.formula); onToast(`${formula.id} 公式已复制`); }}>复制公式</button><button className="primary-action" onClick={() => onOpenFormula(formula.id)}>打开公式卡 →</button></footer></article>)}</section>}
 
-    {tab === "diagnostics" && <section className="diagnostic-registry"><header><div><p className="eyebrow">Diagnostic policy registry · 36 / 36</p><h2>诊断不是附录，是方法的退出条件</h2><p>每条规则都包含适用方法、触发时点、所需证据、失败动作和实现提示。</p></div><div><span>当前显示 <strong>{filteredDiagnostics.length}</strong> / {diagnosticRules.length}</span><button onClick={() => onToast(`${filteredDiagnostics.length} 条诊断规则已加入 S5–S7 分析计划检查清单`)}>加入当前结果</button></div></header><div className="diagnostic-rule-grid">{filteredDiagnostics.map((rule) => { const expanded = expandedDiagnostic === rule.id; return <article className={`diagnostic-rule-card level-${rule.level} ${expanded ? "is-expanded" : ""}`} key={rule.id}><header><span>{rule.id}</span><b>{rule.level}</b><small>{rule.stage}</small></header><div className="diagnostic-rule-family">{rule.family}</div><h3>{rule.name}</h3><p>{rule.appliesTo}</p><dl><div><dt>触发</dt><dd>{rule.trigger}</dd></div>{expanded && <><div><dt>证据</dt><dd>{rule.evidence}</dd></div><div><dt>失败动作</dt><dd>{rule.action}</dd></div></>}</dl>{expanded && <div className="diagnostic-implementation"><span>实现提示</span><code>{rule.implementation}</code></div>}<footer><button onClick={() => onToast(`${rule.id} ${rule.name} 已加入当前分析计划`)}>加入计划</button><button className="primary-action" onClick={() => setExpandedDiagnostic(expanded ? null : rule.id)}>{expanded ? "收起规则" : "查看完整规则"}</button></footer></article>; })}{filteredDiagnostics.length === 0 && <div className="empty-state">没有匹配的诊断规则，请清除筛选或更换关键词。</div>}</div></section>}
+    {tab === "diagnostics" && <section className="diagnostic-registry"><header><div><p className="eyebrow">Diagnostic policy registry · {diagnosticRegistryVersion || "正在加载后端注册表"}</p><h2>诊断不是附录，是方法的退出条件</h2><p>规则由后端权威注册表提供；每条都包含适用方法、触发时点、所需证据、失败动作和实现提示。</p></div><div><span>当前显示 <strong>{filteredDiagnostics.length}</strong> / {diagnosticRules.length}</span><button disabled={!filteredDiagnostics.length} onClick={() => onToast(`${filteredDiagnostics.length} 条诊断规则已加入 S5–S7 分析计划检查清单`)}>加入当前结果</button></div></header><div className="diagnostic-rule-grid">{filteredDiagnostics.map((rule) => { const expanded = expandedDiagnostic === rule.id; return <article className={`diagnostic-rule-card level-${rule.level} ${expanded ? "is-expanded" : ""}`} key={rule.id}><header><span>{rule.id}</span><b>{rule.level}</b><small>{rule.stage}</small></header><div className="diagnostic-rule-family">{rule.family}</div><h3>{rule.name}</h3><p>{rule.appliesTo}</p><dl><div><dt>触发</dt><dd>{rule.trigger}</dd></div>{expanded && <><div><dt>证据</dt><dd>{rule.evidence}</dd></div><div><dt>失败动作</dt><dd>{rule.action}</dd></div></>}</dl>{expanded && <div className="diagnostic-implementation"><span>实现提示</span><code>{rule.implementation}</code></div>}<footer><button onClick={() => onToast(`${rule.id} ${rule.name} 已加入当前分析计划`)}>加入计划</button><button className="primary-action" onClick={() => setExpandedDiagnostic(expanded ? null : rule.id)}>{expanded ? "收起规则" : "查看完整规则"}</button></footer></article>; })}{filteredDiagnostics.length === 0 && <div className="empty-state">{diagnosticRules.length === 0 ? "正在连接后端诊断注册表；加载失败时请检查 FastAPI 服务。" : "没有匹配的诊断规则，请清除筛选或更换关键词。"}</div>}</div></section>}
 
     {tab === "design" && <section className="current-design-board"><header><div><p className="eyebrow">Research design bundle</p><h2>当前候选方法比较</h2><p>最多同时比较 3 个候选；确定主模型前必须记录未采用理由。</p></div><button className="primary-action" disabled={!compare.length} onClick={() => { if (compare[0]) onAdd(compare[0]); }}>将首项设为主方案草稿</button></header><div className="design-compare-grid">{compare.map((methodId, index) => { const method = methods.find((item) => item.id === methodId); if (!method) return null; return <article key={method.id}><div><span>{index === 0 ? "PRIMARY CANDIDATE" : `ALTERNATIVE ${index}`}</span><button onClick={() => toggleCompare(method.id)}>移除</button></div><h2>{method.name}</h2><pre>{method.formula}</pre><dl><div><dt>估计 / 决策目标</dt><dd>{method.estimand}</dd></div><div><dt>数据结构</dt><dd>{method.dataShape}</dd></div><div><dt>失败规则</dt><dd>{method.failureRule}</dd></div></dl><button onClick={() => onOpenMethod(method.id)}>打开方法卡核对</button></article>; })}{!compare.length && <div className="empty-state">从“方法库”加入 1–3 个候选方法进行比较。</div>}</div></section>}
   </div>;
@@ -1072,7 +1053,7 @@ function RunsView({
   const [activeJob, setActiveJob] = useState<AnalysisJob | null>(null);
   const [jobResult, setJobResult] = useState<AnalysisRun | null>(null);
   const [timeoutSeconds, setTimeoutSeconds] = useState(3600);
-  const [busy, setBusy] = useState<"upload" | "preflight" | "submit" | "cancel" | "rerun" | "">("");
+  const [busy, setBusy] = useState<"upload" | "preflight" | "submit" | "cancel" | "rerun" | "runner" | "">("");
   const [error, setError] = useState("");
   const identification = apiProject?.stages.find((stage) => stage.key === "identification");
   const analysis = apiProject?.stages.find((stage) => stage.key === "analysis");
@@ -1190,6 +1171,20 @@ function RunsView({
     }
   }
 
+  async function refreshRunnerStatus() {
+    setBusy("runner");
+    setError("");
+    try {
+      const status = await getStataRunnerStatus();
+      setRunner(status);
+      onToast(status.available ? "Stata Local Runner 已连接" : status.reason || "Stata Local Runner 尚不可用");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "无法读取 Runner 状态");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function runPreflight() {
     if (!effectiveAssetId) {
       setError("请先上传并选择一个 .dta 数据资产");
@@ -1280,8 +1275,10 @@ function RunsView({
           <span /> {!runner ? "正在检查 Local Runner" : runner.available
             ? <>Local Runner 在线 <b>{runner.edition} {runner.version}</b></>
             : `Local Runner 不可用：${runner.reason || "未连接"}`}
+          <button data-testid="refresh-stata-runner" disabled={busy === "runner"} onClick={() => void refreshRunnerStatus()}>{busy === "runner" ? "检查中…" : "重新检查"}</button>
         </div>
       </header>
+      {runner && !runner.available && <div className="runner-setup-hint"><div><strong>先在安装了合法 Stata 的电脑上配置 Local Runner</strong><p>Windows 运行 <code>scripts\stata-runner\SETUP_STATA_RUNNER.bat</code>，再运行 <code>START_STATA_RUNNER.bat</code>；平台不会捆绑 Stata 或许可证。</p></div><button onClick={() => void refreshRunnerStatus()}>配置后重新检查</button></div>}
       <div className={`run-gate-banner ${runLocked ? "is-locked" : ""}`}>
         <div><span>G3</span><div><strong>{runLocked ? "正式运行尚未解锁" : "分析计划与代码已冻结"}</strong><small>{runLocked ? `当前项目位于 S${project.stageIndex}；需完成 S5 分析计划并通过 G3` : `AnalysisPlan revision ${identification?.revision ?? 0} · ${identification?.content_hash?.slice(0, 12) ?? "无 hash"}`}</small></div></div>
         <button onClick={() => onOpenGate("G3")}>{runLocked ? "查看解锁条件" : "查看审批包"}</button>
@@ -1323,12 +1320,13 @@ function RunsView({
                   ? <button className="primary-action" onClick={() => void rerun()} disabled={runLocked || busy !== "" || activePreflight?.status !== "ready"}>{busy === "rerun" ? "正在创建…" : "按原请求重跑"}</button>
                   : <button className="primary-action" onClick={() => void startRun()} disabled={runLocked || busy !== "" || activePreflight?.status !== "ready"}>{busy === "submit" ? "正在提交…" : "人工确认并启动"}</button>}
             </div>
-            <div className="run-log">
+            <div className="run-log" data-testid="stata-run-log">
               <span>[asset] {selectedAsset?.asset_id || "not selected"}</span>
               <span>[preflight] {activePreflight?.status || "not checked"}</span>
               <span>[runner] {runner?.available ? `${runner.executable_name} ${runner.version}` : "not available"}</span>
               {activeJob && <span className={activeJob.status === "succeeded" ? "log-success" : ""}>[job] {activeJob.status} · {activeJob.reason_code}</span>}
               {latestRun && <span className={latestRun.status === "succeeded" ? "log-success" : ""}>[result] {latestRun.status} · {latestRun.reason_code}</span>}
+              {latestRun?.logs?.map((path) => <a href={analysisRunArtifactUrl(project.id, latestRun.run_id, path)} target="_blank" rel="noreferrer" key={path}>[log] {path}</a>)}
             </div>
           </div>}
           {tab === 4 && (!latestRun || latestRun.status !== "succeeded" ? <div className="locked-results-state"><span>∅</span><h3>尚无符合契约的正式运行结果</h3><p>这里只显示通过 run_id、数据 SHA-256、do-file hash 和 Result Bundle 校验的结果。</p><button onClick={() => setTab(2)}>返回运行前检查</button></div> : <div className="real-results-review"><header><div><p className="eyebrow">Result Bundle 1.0</p><h3>{latestRun.run_id}</h3></div><div><span>数据签名</span><code>{latestRun.data_signature || "未返回"}</code></div></header><div className="result-table"><div className="result-table-head"><span>规格 / 变量</span><span>估计值</span><span>标准误</span><span>p 值</span><span>95% CI</span><span>N</span></div>{structuredResults.map((result) => <div key={result.result_id}><span><b>{result.term || result.label}</b><small>{result.specification_id}</small></span><code>{result.estimate?.toPrecision(5) ?? "—"}</code><code>{result.std_error?.toPrecision(4) ?? "—"}</code><code>{result.p_value?.toPrecision(4) ?? "—"}</code><code>{result.ci_lower?.toPrecision(4) ?? "—"} – {result.ci_upper?.toPrecision(4) ?? "—"}</code><code>{result.sample_size ?? "—"}</code></div>)}</div><footer><strong>{latestRun.output_artifacts.length} 项产物已登记 SHA-256</strong><span>结果解释和科学主张仍需进入 S7、S8 与 G4。</span></footer></div>)}
@@ -1416,6 +1414,8 @@ export default function Home() {
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
   const [knowledgeEvaluations, setKnowledgeEvaluations] = useState<Record<string, KnowledgeEvaluation>>({});
   const [knowledgeBusy, setKnowledgeBusy] = useState(false);
+  const [diagnosticRules, setDiagnosticRules] = useState<DiagnosticRule[]>([]);
+  const [diagnosticRegistryVersion, setDiagnosticRegistryVersion] = useState("");
   const [apiProjectIds, setApiProjectIds] = useState<Record<string, boolean>>({});
   const [apiProjects, setApiProjects] = useState<Record<string, ApiProject>>({});
   const [apiMode, setApiMode] = useState<"loading" | "connected" | "fallback">("loading");
@@ -1458,10 +1458,31 @@ export default function Home() {
 
   useEffect(() => {
     const saved = window.localStorage.getItem("ai4ms-interface-theme");
+    let cancelled = false;
     const frame = window.requestAnimationFrame(() => {
       if (saved === "graphite" || saved === "blueprint" || saved === "paper") setInterfaceTheme(saved);
     });
-    return () => window.cancelAnimationFrame(frame);
+    void getApiUserProfile().then((profile) => {
+      if (cancelled) return;
+      setInterfaceTheme(profile.interface_theme);
+      window.localStorage.setItem("ai4ms-interface-theme", profile.interface_theme);
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getApiDiagnosticRegistry().then((registry) => {
+      if (cancelled) return;
+      setDiagnosticRules(registry.items);
+      setDiagnosticRegistryVersion(`v${registry.registry_version} · ${registry.total} / ${registry.total}`);
+    }).catch(() => {
+      if (!cancelled) setDiagnosticRegistryVersion("后端注册表不可用");
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -1551,6 +1572,14 @@ export default function Home() {
   function selectInterfaceTheme(theme: InterfaceTheme) {
     setInterfaceTheme(theme);
     window.localStorage.setItem("ai4ms-interface-theme", theme);
+    void updateApiUserProfile(theme).then((profile) => {
+      window.localStorage.setItem("ai4ms-interface-theme", profile.interface_theme);
+      setApiError("");
+      showToast("界面偏好已同步到用户 profile");
+    }).catch((error) => {
+      setApiError(readApiError(error));
+      showToast("界面偏好已保存在本机，后端 profile 同步待重试");
+    });
   }
   function decideSuggestion(id: number, state: SuggestionState) {
     setSuggestionStates((current) => ({ ...current, [id]: state }));
@@ -1693,6 +1722,47 @@ export default function Home() {
       showToast(`恢复失败：${readApiError(error)}`);
     } finally {
       setRestoringRevision(null);
+    }
+  }
+
+  async function saveAssetSection(
+    stageIndex: number,
+    sectionKey: string,
+    title: string,
+    content: string,
+  ) {
+    const projectId = activeProject.id;
+    const stageKey = stages[stageIndex].key;
+    const remoteStage = apiProjects[projectId]?.stages.find(
+      (item) => item.key === stageKey,
+    );
+    if (!apiProjectIds[projectId] || !remoteStage) {
+      const message = "资产章节必须连接 FastAPI 项目后才能保存";
+      setApiError(message);
+      showToast(message);
+      throw new Error(message);
+    }
+    setApiBusy(true);
+    try {
+      const updated = await patchApiStageAssetSection(
+        projectId,
+        stageKey,
+        sectionKey,
+        title,
+        content,
+        remoteStage.revision,
+      );
+      applyApiProject(updated);
+      await refreshStageRevisions(projectId, stageIndex);
+      setApiError("");
+      showToast(`资产章节「${title}」已保存为新的 FastAPI revision`);
+    } catch (error) {
+      const message = readApiError(error);
+      setApiError(message);
+      showToast(`资产章节保存失败：${message}`);
+      throw error instanceof Error ? error : new Error(message);
+    } finally {
+      setApiBusy(false);
     }
   }
 
@@ -2010,7 +2080,12 @@ export default function Home() {
     if (deepRoute.kind === "asset-version") {
       const cards = projectGateCards(activeProject, activeApiProject);
       const gate = cards.find((item) => item.id === deepRoute.gateId) ?? cards[0];
-      return <AssetVersionPage gate={gate} onBack={backDeep} onSave={showToast} />;
+      const gateStage: Record<string, number> = { G0: 0, G1: 3, G2: 4, G3: 5, G4: 8, G5: 9 };
+      const stageIndex = gateStage[gate.id] ?? activeStage;
+      const remoteStage = activeApiProject?.stages.find(
+        (item) => item.key === stages[stageIndex].key,
+      );
+      return <AssetVersionPage gate={gate} snapshot={assetVersionSnapshot(remoteStage)} onBack={backDeep} onSave={(sectionKey, title, content) => saveAssetSection(stageIndex, sectionKey, title, content)} />;
     }
     return null;
   }
@@ -2078,7 +2153,7 @@ export default function Home() {
             </>
           )}
           {view === "evidence" && <EvidenceLibrary records={activeEvidence} searchRuns={literatureSearchRuns} busy={apiBusy} onSearch={runEvidenceSearch} onOpenRecord={(title) => openDeep({ kind: "evidence-record", title })} onToast={showToast} />}
-          {view === "methods" && <MethodsView methods={evaluatedMethods} formulas={evaluatedFormulas} evaluation={activeKnowledgeEvaluation} busy={knowledgeBusy} onEvaluate={runKnowledgeEvaluation} onOpenMethod={(methodId) => openDeep({ kind: "method-record", methodId })} onOpenFormula={(formulaId) => openDeep({ kind: "formula-record", formulaId })} onAdd={addMethodToDesign} onToast={showToast} />}
+          {view === "methods" && <MethodsView methods={evaluatedMethods} formulas={evaluatedFormulas} diagnosticRules={diagnosticRules} diagnosticRegistryVersion={diagnosticRegistryVersion} evaluation={activeKnowledgeEvaluation} busy={knowledgeBusy} onEvaluate={runKnowledgeEvaluation} onOpenMethod={(methodId) => openDeep({ kind: "method-record", methodId })} onOpenFormula={(formulaId) => openDeep({ kind: "formula-record", formulaId })} onAdd={addMethodToDesign} onToast={showToast} />}
           {view === "runs" && <RunsView project={activeProject} apiProject={apiProjects[activeProject.id]} onProjectUpdated={applyApiProject} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onToast={showToast} />}
           {view === "approvals" && <ApprovalsView project={activeProject} apiProject={activeApiProject} onOpenGate={(gateId) => openDeep({ kind: "approval-gate", gateId })} onOpenDetail={setDetail} />}
           </>}

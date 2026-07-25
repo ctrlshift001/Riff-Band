@@ -138,6 +138,12 @@ export type GateRecord = {
   }[];
 };
 
+export type AssetVersionSnapshot = {
+  revision: number;
+  contentHash: string | null;
+  sections: Record<string, { title?: string; content?: string }>;
+};
+
 export type StageRevisionRecord = {
   revision: number;
   change_reason: string;
@@ -704,11 +710,35 @@ const assetSections = [
   },
 ] as const;
 
-export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; onBack: () => void; onSave: (message: string) => void }) {
-  const editable = gate.status === "draft";
-  const [note, setNote] = useState("本 revision 汇总阶段交付、证据覆盖、人工决定、风险与下游影响。请在提交前完成最终核对。");
+export function AssetVersionPage({
+  gate,
+  snapshot,
+  onBack,
+  onSave,
+}: {
+  gate: GateRecord;
+  snapshot: AssetVersionSnapshot;
+  onBack: () => void;
+  onSave: (
+    sectionKey: string,
+    title: string,
+    content: string,
+  ) => Promise<void>;
+}) {
+  const editable = gate.status === "draft" && snapshot.revision > 0;
+  const [note, setNote] = useState(
+    snapshot.sections.summary?.content
+      || "本 revision 汇总阶段交付、证据覆盖、人工决定、风险与下游影响。请在提交前完成最终核对。",
+  );
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [sectionText, setSectionText] = useState<Record<number, string>>(() => Object.fromEntries(assetSections.map((section, index) => [index, section.content])));
+  const [sectionText, setSectionText] = useState<Record<number, string>>(() => Object.fromEntries(
+    assetSections.map((section, index) => [
+      index,
+      snapshot.sections[`section-${index + 1}`]?.content || section.content,
+    ]),
+  ));
+  const [saving, setSaving] = useState("");
+  const [saveError, setSaveError] = useState("");
   const openSection = expanded === null ? null : assetSections[expanded];
 
   function toggleSection(index: number) {
@@ -716,6 +746,18 @@ export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; o
     setExpanded(next);
     if (next !== null) {
       window.requestAnimationFrame(() => document.getElementById("asset-section-detail")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+    }
+  }
+
+  async function saveSection(sectionKey: string, title: string, content: string) {
+    setSaving(sectionKey);
+    setSaveError("");
+    try {
+      await onSave(sectionKey, title, content);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "资产章节保存失败");
+    } finally {
+      setSaving("");
     }
   }
 
@@ -728,10 +770,10 @@ export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; o
         description="查看审批对象的确定版本、内容哈希、上游依赖和与上一版本的差异。"
         trail={["人工审批中心", gate.title]}
         onBack={onBack}
-        actions={<><span className="hash-chip">SHA-256 · 7c91…ae20</span>{editable && <button className="primary-action" onClick={() => onSave("审批资产说明已保存")}>保存资产说明</button>}</>}
+        actions={<><span className="hash-chip">SHA-256 · {snapshot.contentHash ? `${snapshot.contentHash.slice(0, 7)}…${snapshot.contentHash.slice(-4)}` : "尚未生成"}</span>{editable && <button className="primary-action" disabled={Boolean(saving)} onClick={() => void saveSection("summary", "版本说明", note)}>{saving === "summary" ? "保存中…" : "保存资产说明"}</button>}</>}
       />
       <section className="asset-version-summary">
-        <div><span>Revision</span><strong>4</strong></div>
+        <div><span>Revision</span><strong>{snapshot.revision}</strong></div>
         <div><span>内容状态</span><strong>{editable ? "工作草稿" : "冻结快照"}</strong></div>
         <div><span>生成角色</span><strong>研究者</strong></div>
         <div><span>上游依赖</span><strong>6 项已锁定</strong></div>
@@ -745,7 +787,7 @@ export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; o
               <article className={expanded === index ? "is-open" : ""} key={section.title}>
                 <span>{"0" + (index + 1)}</span>
                 <div><strong>{section.title}</strong><small>{section.status} · {section.source}</small></div>
-                <button aria-expanded={expanded === index} aria-controls="asset-section-detail" onClick={() => toggleSection(index)}>{expanded === index ? "收起" : "展开"}</button>
+                <button data-testid={`asset-section-toggle-${index + 1}`} aria-expanded={expanded === index} aria-controls="asset-section-detail" onClick={() => toggleSection(index)}>{expanded === index ? "收起" : "展开"}</button>
               </article>
             ))}
           </div>
@@ -764,6 +806,7 @@ export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; o
               <label className="asset-section-editor">
                 <span>章节正文</span>
                 <textarea
+                  data-testid="asset-section-editor"
                   rows={15}
                   value={sectionText[expanded]}
                   onChange={(event) => setSectionText((current) => ({ ...current, [expanded]: event.target.value }))}
@@ -772,8 +815,9 @@ export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; o
               </label>
               <footer>
                 <span>{editable ? "保存会形成新的工作草稿记录；提交审批后冻结。" : "这是审批时的确定快照，不能直接修改。"}</span>
-                <div><button onClick={() => setExpanded(null)}>关闭</button>{editable && <button className="primary-action" onClick={() => onSave("资产章节「" + openSection.title + "」已保存")}>保存本章节</button>}</div>
+                <div><button onClick={() => setExpanded(null)}>关闭</button>{editable && <button data-testid="asset-section-save" className="primary-action" disabled={Boolean(saving)} onClick={() => void saveSection(`section-${expanded + 1}`, openSection.title, sectionText[expanded])}>{saving === `section-${expanded + 1}` ? "保存中…" : "保存本章节"}</button>}</div>
               </footer>
+              {saveError && <p className="deep-save-error" role="alert">{saveError}</p>}
             </section>
           )}
         </section>
@@ -781,7 +825,7 @@ export function AssetVersionPage({ gate, onBack, onSave }: { gate: GateRecord; o
           <p className="eyebrow">Provenance</p><h2>版本血缘</h2>
           <div className="provenance-chain">
             <article><span>S0–S2</span><strong>上游批准资产</strong><small>6 个 revision</small></article><i>↓</i>
-            <article><span>{gate.id}</span><strong>{gate.asset}</strong><small>当前 Revision 4</small></article><i>↓</i>
+            <article><span>{gate.id}</span><strong>{gate.asset}</strong><small>当前 Revision {snapshot.revision}</small></article><i>↓</i>
             <article><span>下游</span><strong>等待审批结果</strong><small>尚未解锁</small></article>
           </div>
           <h3>与 Revision 3 的差异</h3>

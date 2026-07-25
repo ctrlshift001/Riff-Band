@@ -222,6 +222,7 @@ class AnalysisRunnerService:
             "package_manifest": [],
             "output_artifacts": [],
             "structured_results": [],
+            "logs": [],
             "data_signature": "",
             "manifest_path": f"artifacts/runs/{run_id}/manifest.json",
         }
@@ -299,6 +300,7 @@ class AnalysisRunnerService:
                         "exit_code": result_bundle["exit_code"],
                         "structured_results": result_bundle["structured_results"],
                         "data_signature": result_bundle["data_signature"],
+                        "logs": result_bundle["logs"],
                         "result_bundle": result_bundle,
                     }
                 )

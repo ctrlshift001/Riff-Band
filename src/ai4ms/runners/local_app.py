@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.background import BackgroundTasks
 from fastapi.responses import FileResponse
+from dotenv import load_dotenv
 
 from ai4ms.runners.bundle import (
     RESULT_ARTIFACT_SUFFIXES,
@@ -28,6 +29,10 @@ from ai4ms.runners.stata import (
     discover_stata_profile,
     sha256_file,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(REPO_ROOT / ".env", override=False)
+load_dotenv(REPO_ROOT / ".env.stata-runner.local", override=True)
 
 
 def create_local_runner_app(
