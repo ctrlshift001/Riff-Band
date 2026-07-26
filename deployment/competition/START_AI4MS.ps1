@@ -76,6 +76,12 @@ foreach ($keyName in $keyNames) {
 if (-not $hasUsableKey) {
     throw "No usable competition LLM API key is configured."
 }
+if (
+    -not $configuration.ContainsKey("SERPER_API_KEY") -or
+    -not (Test-UsableSecret $configuration["SERPER_API_KEY"])
+) {
+    throw "No usable competition Serper API key is configured."
+}
 
 Write-Host "AI4MS competition configuration is valid. Secrets were not printed."
 if ($ValidateOnly) {
@@ -148,7 +154,18 @@ if ($probe.status -ne "ok") {
     throw "The AI4MS service started, but the live LLM probe failed."
 }
 
-Write-Host "AI4MS is ready. Model: $($probe.model)"
+Write-Host "Checking live Serper search connectivity..."
+$searchProbe = Invoke-RestMethod `
+    -Method Post `
+    -Uri "$workbenchUrl/api/v1/meta/search/probe" `
+    -ContentType "application/json" `
+    -Body "{}" `
+    -TimeoutSec 90
+if ($searchProbe.status -ne "ok" -or $searchProbe.provider -ne "serper") {
+    throw "The AI4MS service started, but the live Serper search probe failed."
+}
+
+Write-Host "AI4MS is ready. Model: $($probe.model); search: $($searchProbe.provider)"
 Write-Host "Open $workbenchUrl"
 if (-not $NoBrowser) {
     Start-Process $workbenchUrl

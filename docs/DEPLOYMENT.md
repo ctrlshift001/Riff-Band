@@ -55,7 +55,7 @@ chmod +x START_AI4MS.sh
 ./START_AI4MS.sh
 ```
 
-启动脚本会依次校验比赛配置与镜像 SHA-256、加载镜像、启动 Compose、等待 `/healthz`、调用一次真实 LLM 探针，最后打开 GUI。任一检查失败都会明确停止，不会把“容器已启动”误报为“模型可用”。
+启动脚本会依次校验比赛配置与镜像 SHA-256、加载镜像、启动 Compose、等待 `/healthz`、调用一次真实 LLM 探针和一次容器内 Serper 搜索探针，最后打开 GUI。任一检查失败都会明确停止，不会把“容器已启动”误报为“模型或联网检索可用”。
 
 容器进程监听 `0.0.0.0:8000`，宿主机只把它映射到 `127.0.0.1:8000`。
 
@@ -65,6 +65,7 @@ chmod +x START_AI4MS.sh
 - `/_next/*`、`/favicon.svg`、`/ai4ms-user-guide.html`：前端静态资源；
 - `/api/v1/*`：GUI 使用的内部应用接口；
 - `POST /api/v1/meta/inference/probe`：发起最小真实模型请求的部署探针；
+- `POST /api/v1/meta/search/probe`：从容器内发起真实 Serper 请求的部署探针；
 - `/docs`：开发调试用 OpenAPI；
 - `/healthz`：容器健康检查。
 
@@ -78,7 +79,8 @@ chmod +x START_AI4MS.sh
 
 - 一个可用的 OpenAI-compatible 或 Gemini 模型配置；
 - 至少一个开放学术检索后端可联网访问；
-- 可选的 Serper 配置；
+- 一个比赛专用的 Serper Key，比赛部署脚本会强制校验并实调；
+- 可选的 Google Data Commons MCP key，用于官方统计指标检索；
 - 可选的 Stata BYOL 批处理可执行文件、版本、许可确认和并发配置。
 
 未提供模型或检索配置时，服务可以启动并查看已保存项目，但执行相关阶段必须返回明确的 `blocked`，不能生成伪造结果。

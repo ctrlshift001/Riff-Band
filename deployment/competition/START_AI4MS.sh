@@ -25,6 +25,14 @@ case "$API_KEY" in
 esac
 unset API_KEY
 
+SERPER_API_KEY=$(sed -n 's/^SERPER_API_KEY=//p' "$ENV_FILE" | head -n 1)
+case "$SERPER_API_KEY" in
+  ""|your_*|replace-*|changeme|xxx|"<"*)
+    fail "No usable competition Serper API key is configured."
+    ;;
+esac
+unset SERPER_API_KEY
+
 printf '%s\n' "AI4MS competition configuration is valid. Secrets were not printed."
 [ "${1:-}" = "--validate-only" ] && exit 0
 
@@ -68,6 +76,14 @@ curl --fail --silent --show-error \
   --header "Content-Type: application/json" \
   --data "{}" \
   "$WORKBENCH_URL/api/v1/meta/inference/probe" >/dev/null
+
+printf '%s\n' "Checking live Serper search connectivity..."
+curl --fail --silent --show-error \
+  --max-time 90 \
+  --request POST \
+  --header "Content-Type: application/json" \
+  --data "{}" \
+  "$WORKBENCH_URL/api/v1/meta/search/probe" >/dev/null
 
 printf '%s\n' "AI4MS is ready. Open $WORKBENCH_URL"
 if [ "${1:-}" != "--no-browser" ]; then

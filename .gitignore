@@ -11,6 +11,8 @@ aorchestra.yaml
 
 # Runtime output
 workspace/
+output/
+.playwright-cli/
 
 # Python
 .venv/

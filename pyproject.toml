@@ -10,9 +10,11 @@ requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.13",
     "ddgs>=9.13",
+    "exceptiongroup>=1.2; python_version<'3.11'",
     "fastapi>=0.115",
     "google-genai>=1.73",
     "mistune>=3.1",
+    "mcp>=1.28,<2",
     "openai>=1.99",
     "pandas>=2.2",
     "pydantic>=2.12",

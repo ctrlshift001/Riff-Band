@@ -33,6 +33,8 @@ Docker 交付时，Next.js 静态导出和 FastAPI 使用同一个 `8000` 端口
 | `src/ai4ms/orchestration` | S0-S1、S7-S8 的 AOrchestra 阶段编排 |
 | `src/ai4ms/inference` | 模型配置、调用、超时、重试和 JSON 提取 |
 | `src/ai4ms/literature` | 多源检索、规范化、去重和快照 |
+| `src/ai4ms/search` | Agent 联网意图、查询规划、网页读取、排序、引用与搜索快照 |
+| `src/ai4ms/connectors` | 外部 MCP 客户端和只读科研/官方数据连接器 |
 | `src/ai4ms/knowledge` | 方法、公式和数据源注册表 |
 | `src/ai4ms/prompts` | S0-S9 提示词目录与 Pydantic 输出契约 |
 | `src/ai4ms/assets` | `.dta` 上传、SHA-256 和元信息 |
@@ -84,6 +86,24 @@ POST stage draft
 - 编排报告作为生成元数据保存，不替代阶段规范内容；
 - 编排失败返回明确错误，不保存未经校验的半成品。
 
+### 5.1 Agent 联网研究与 MCP
+
+阶段聊天的联网链路为：
+
+```text
+search_mode(auto/on/off)
+  -> 联网意图判断与查询规划
+  -> Serper + DuckDuckGo + 开放学术源并行检索
+  -> URL 去重、来源分类和相关性排序
+  -> 公网页面/PDF 限量读取
+  -> 编号引用注入模型上下文
+  -> 回答、citations、source_runs 和搜索快照持久化
+```
+
+网页读取拒绝本机、私网和非 HTTP(S) 地址，并限制重定向、响应体和文本长度。外部内容只作为不可信证据输入，不能覆盖系统指令。普通阶段聊天可以由研究者选择联网；AOrchestra 的 S7-S8 审计 SubAgent 仍保持既有项目资产只读、禁止联网的权限边界。
+
+`src/ai4ms/connectors` 使用官方 MCP Python SDK 的 Streamable HTTP 客户端。当前连接 `https://api.datacommons.org/mcp`，只放行 `search_indicators` 与 `get_observations`，并通过 `X-API-Key` 在运行时传入 Data Commons key。连接器未配置时不阻塞普通网页与学术检索。
+
 ## 6. Stata 执行
 
 S6 分为工作台任务和宿主机执行两层：
@@ -104,7 +124,10 @@ GET/POST/PATCH  /api/v1/projects...
 GET/PUT/PATCH   /api/v1/projects/{id}/stages...
 POST            /api/v1/projects/{id}/stages/{stage}/draft
 POST            /api/v1/projects/{id}/stages/{stage}/decisions
+GET/POST        /api/v1/projects/{id}/stages/{stage}/chat
 POST            /api/v1/projects/{id}/stages/literature/search
+GET             /api/v1/connectors
+GET/POST        /api/v1/connectors/datacommons/...
 GET/POST         /api/v1/projects/{id}/assets/data
 POST             /api/v1/projects/{id}/stages/analysis/preflight
 GET/POST         /api/v1/projects/{id}/stages/analysis/runs
@@ -126,6 +149,8 @@ AI4MS_DATA_DIR/
       jobs/
       runs/
       literature/
+      search/
+      chat/
     exports/
 ```
 

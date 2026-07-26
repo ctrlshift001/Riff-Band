@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 from ai4ms.assets import DataAssetError
+from ai4ms.connectors import DataCommonsConnector, MCPConnectorError
 from ai4ms.db import ProjectStore
 from ai4ms.delivery import DeliveryExportError
 from ai4ms.domains import MANAGEMENT_SCIENCE_PROFILE
@@ -31,9 +32,11 @@ from ai4ms.runners import (
     AnalysisRunnerService,
     AnalysisRunBlockedError,
 )
+from ai4ms.search import WebResearchService
 from ai4ms.services.models import (
     AnalysisRerunRequest,
     AnalysisRunRequest,
+    ConnectorToolRequest,
     CreateProjectRequest,
     DraftRequest,
     KnowledgeEvaluationRequest,
@@ -90,9 +93,20 @@ def create_app(
     analysis_runner: AnalysisRunnerService | None = None,
     knowledge_evaluation: KnowledgeEvaluationService | None = None,
     stage_chat: StageChatService | None = None,
+    data_commons: DataCommonsConnector | None = None,
+    research_service: WebResearchService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
     web_root = _web_root()
+    connector = data_commons or DataCommonsConnector()
+    resolved_research_service = research_service or WebResearchService(
+        resolved_data_dir / "projects",
+        data_commons=connector,
+    )
+    resolved_stage_chat = stage_chat or StageChatService(
+        resolved_data_dir / "projects",
+        research_service=resolved_research_service,
+    )
     service = ProjectService(
         ProjectStore(resolved_data_dir / "ai4ms.db"),
         resolved_data_dir,
@@ -100,7 +114,7 @@ def create_app(
         literature_search=literature_search,
         analysis_runner=analysis_runner,
         knowledge_evaluation=knowledge_evaluation,
-        stage_chat=stage_chat,
+        stage_chat=resolved_stage_chat,
     )
 
     app = FastAPI(
@@ -109,6 +123,8 @@ def create_app(
         description="面向管理科学的本地优先 AI 科研工作台。",
     )
     app.state.project_service = service
+    app.state.data_commons = connector
+    app.state.research_service = resolved_research_service
     app.state.web_root = web_root
 
     origins = [item.strip() for item in os.environ.get("AI4MS_CORS_ORIGINS", "*").split(",") if item.strip()]
@@ -138,6 +154,14 @@ def create_app(
     @app.exception_handler(StageRevisionConflictError)
     async def stage_revision_conflict(_request: Request, exc: StageRevisionConflictError):
         return _json_error(status.HTTP_409_CONFLICT, "revision_conflict", str(exc))
+
+    @app.exception_handler(MCPConnectorError)
+    async def mcp_connector_error(_request: Request, exc: MCPConnectorError):
+        return _json_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "mcp_connector_unavailable",
+            str(exc),
+        )
 
     @app.exception_handler(StageGenerationNotSupportedError)
     async def generation_not_supported(_request: Request, exc: StageGenerationNotSupportedError):
@@ -231,6 +255,50 @@ def create_app(
             "model": result.model,
             "usage": result.usage,
         }
+
+    @app.post("/api/v1/meta/search/probe", tags=["meta"])
+    async def probe_web_search(request: Request):
+        research: WebResearchService = request.app.state.research_service
+        result = await research.probe_search()
+        if result["status"] != "ok":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "serper_search_unavailable",
+                    "message": result["error"],
+                },
+            )
+        return result
+
+    @app.get("/api/v1/connectors", tags=["connectors"])
+    async def list_connectors(request: Request):
+        return {"items": [request.app.state.data_commons.status()]}
+
+    @app.get("/api/v1/connectors/datacommons/tools", tags=["connectors"])
+    async def list_datacommons_tools(request: Request):
+        connector_service: DataCommonsConnector = request.app.state.data_commons
+        return {"items": await connector_service.list_tools()}
+
+    @app.post("/api/v1/connectors/datacommons/query", tags=["connectors"])
+    async def query_datacommons(
+        payload: ConnectorToolRequest,
+        request: Request,
+    ):
+        connector_service: DataCommonsConnector = request.app.state.data_commons
+        if payload.arguments:
+            return await connector_service.call_tool(
+                payload.tool_name,
+                payload.arguments,
+            )
+        if payload.tool_name == "search_indicators" and payload.query:
+            return await connector_service.search_indicators(payload.query)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "query is required for search_indicators; "
+                "arguments are required for get_observations"
+            ),
+        )
 
     @app.get("/api/v1/meta/prompts", tags=["meta"])
     async def prompt_registry(response: Response):

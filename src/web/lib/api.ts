@@ -260,6 +260,42 @@ export interface KnowledgeEvaluation {
   usage: Record<string, unknown>;
 }
 
+export type ChatSearchMode = "auto" | "on" | "off";
+
+export interface SearchCitation {
+  citation_id: string;
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+  excerpt: string;
+  provider: string;
+  source_type: "official_data" | "official" | "academic" | "web";
+  is_official: boolean;
+  paper_id: string;
+  retrieved_at: string;
+}
+
+export interface SearchSourceRun {
+  provider: string;
+  query?: string;
+  success: boolean;
+  record_count: number;
+  error: string;
+}
+
+export interface SearchTrace {
+  search_id: string;
+  status: "skipped" | "complete" | "partial" | "failed";
+  mode: ChatSearchMode;
+  searched: boolean;
+  searched_at: string;
+  queries: string[];
+  citations: SearchCitation[];
+  source_runs: SearchSourceRun[];
+  snapshot_path: string;
+}
+
 export interface StageChatMessage {
   message_id: string;
   project_id: string;
@@ -269,6 +305,8 @@ export interface StageChatMessage {
   created_at: string;
   model: string;
   usage: Record<string, unknown>;
+  citations: SearchCitation[];
+  search: SearchTrace | null;
 }
 
 export interface StageChatTurn {
@@ -497,12 +535,13 @@ export function sendStageChat(
   projectId: string,
   stageKey: string,
   message: string,
+  searchMode: ChatSearchMode = "auto",
 ): Promise<StageChatTurn> {
   return request<StageChatTurn>(
     `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/chat`,
     {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, search_mode: searchMode }),
     },
   );
 }

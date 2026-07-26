@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ExternalLink, Globe2, Search, SendHorizontal } from "lucide-react";
 import {
   ApiError,
   analysisRunArtifactUrl,
@@ -36,6 +37,7 @@ import {
   type AnalysisPreflight,
   type AnalysisJob,
   type AnalysisRun,
+  type ChatSearchMode,
   type KnowledgeEvaluation,
   type DiagnosticRule,
   type InterfaceTheme,
@@ -43,6 +45,8 @@ import {
   type ProjectStage as ApiProjectStage,
   type ProjectSummary as ApiProjectSummary,
   type RunnerStatus,
+  type SearchCitation,
+  type SearchTrace,
   type StageRevision,
   type StageChatMessage as ApiStageChatMessage,
   type StageWorkspacePayload,
@@ -87,6 +91,8 @@ type ChatMessage = {
   time: string;
   model?: string;
   totalTokens?: number;
+  citations?: SearchCitation[];
+  search?: SearchTrace | null;
   error?: boolean;
 };
 type ChatSyncTarget = "content" | "summary" | "evidenceNote" | "decision";
@@ -585,7 +591,7 @@ function AgentChatDrawer({
   busy: boolean;
   onClose: () => void;
   onSelectAgent: (index: number) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, searchMode: ChatSearchMode) => void;
   onCapture: (text: string, target: ChatSyncTarget, mode: ChatSyncMode) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -593,6 +599,7 @@ function AgentChatDrawer({
   const [syncTarget, setSyncTarget] = useState<ChatSyncTarget>("content");
   const [syncMode, setSyncMode] = useState<ChatSyncMode>("append");
   const [syncConfirmed, setSyncConfirmed] = useState(false);
+  const [searchMode, setSearchMode] = useState<ChatSearchMode>("auto");
   const unavailable = loading || busy;
   if (!open) return null;
   const stage = stages[agentIndex];
@@ -601,7 +608,7 @@ function AgentChatDrawer({
   const submit = () => {
     const value = draft.trim();
     if (!value || unavailable) return;
-    onSend(value);
+    onSend(value, searchMode);
     setDraft("");
   };
   return (
@@ -637,27 +644,92 @@ function AgentChatDrawer({
                 <article className={`chat-message is-${message.role}${message.error ? " is-error" : ""}`} key={message.id}>
                   <div className="message-role">{message.role === "user" ? "你" : stage.agent}<time>{message.time}</time></div>
                   <p>{message.text}</p>
+                  {message.role === "assistant" && message.citations && message.citations.length > 0 && (
+                    <section className="message-sources" aria-label="本轮联网来源">
+                      <div className="message-source-summary">
+                        <Search size={13} aria-hidden="true" />
+                        <strong>已检索 {message.search?.queries.length ?? 1} 组查询</strong>
+                        <span>{message.citations.length} 个来源</span>
+                      </div>
+                      <div className="message-source-list">
+                        {message.citations.map((citation) => (
+                          <a
+                            href={citation.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={citation.snippet}
+                            key={`${message.id}:${citation.citation_id}`}
+                          >
+                            <span className={`source-kind is-${citation.source_type}`}>
+                              {citation.source_type === "official_data"
+                                ? "官方数据"
+                                : citation.source_type === "official"
+                                  ? "官方"
+                                  : citation.source_type === "academic"
+                                    ? "学术"
+                                    : citation.citation_id}
+                            </span>
+                            <span>
+                              <strong>[{citation.citation_id}] {citation.title}</strong>
+                              <small>{citation.domain || citation.provider}</small>
+                            </span>
+                            <ExternalLink size={13} aria-hidden="true" />
+                          </a>
+                        ))}
+                      </div>
+                    </section>
+                  )}
                   {message.role === "assistant" && message.model && <small>{message.model}{message.totalTokens ? ` · ${message.totalTokens} tokens` : ""}</small>}
                   {message.role === "assistant" && !message.error && <button className="message-capture" onClick={() => { setSyncCandidate(message.text); setSyncTarget("content"); setSyncMode("append"); setSyncConfirmed(false); }}>同步到交付正文</button>}
                 </article>
               ))}
-              {busy && <article className="chat-message is-assistant is-typing"><div className="message-role">{stage.agent}</div><p><span /><span /><span /> 正在整理回答</p></article>}
+              {busy && <article className="chat-message is-assistant is-typing"><div className="message-role">{stage.agent}</div><p><span /><span /><span /> {searchMode === "off" ? "正在整理回答" : "正在搜索、阅读并核对来源"}</p></article>}
             </div>
-            <div className="chat-starters" aria-label="快捷提问">{profile.starters.map((prompt) => <button onClick={() => onSend(prompt)} disabled={unavailable} key={prompt}>{prompt}</button>)}</div>
+            <div className="chat-starters" aria-label="快捷提问">{profile.starters.map((prompt) => <button onClick={() => onSend(prompt, searchMode)} disabled={unavailable} key={prompt}>{prompt}</button>)}</div>
             <div className="chat-composer">
-              <textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    submit();
-                  }
-                }}
-                placeholder={`向 ${stage.agent} 提问，Enter 发送，Shift+Enter 换行`}
-                aria-label="智能体聊天输入"
-              />
-              <button className="primary-action" onClick={submit} disabled={!draft.trim() || unavailable}>发送</button>
+              <div className="chat-composer-field">
+                <div className="search-mode-control" role="group" aria-label="联网搜索模式">
+                  <Globe2 size={14} aria-hidden="true" />
+                  {([
+                    ["auto", "自动"],
+                    ["on", "联网"],
+                    ["off", "关闭"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      type="button"
+                      className={searchMode === value ? "is-active" : ""}
+                      aria-pressed={searchMode === value}
+                      onClick={() => setSearchMode(value)}
+                      disabled={unavailable}
+                      title={value === "auto" ? "由智能体判断是否需要联网" : value === "on" ? "本轮强制联网检索" : "本轮仅使用项目上下文"}
+                      key={value}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      submit();
+                    }
+                  }}
+                  placeholder={`向 ${stage.agent} 提问，Enter 发送，Shift+Enter 换行`}
+                  aria-label="智能体聊天输入"
+                />
+              </div>
+              <button
+                className="primary-action chat-send"
+                onClick={submit}
+                disabled={!draft.trim() || unavailable}
+                aria-label="发送消息"
+                title="发送消息"
+              >
+                <SendHorizontal size={18} aria-hidden="true" />
+              </button>
             </div>
           </section>
           <aside className="chat-context">
@@ -2051,6 +2123,8 @@ export default function Home() {
       time: new Date(message.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
       model: message.model || undefined,
       totalTokens: Number.isFinite(totalTokens) && totalTokens > 0 ? totalTokens : undefined,
+      citations: message.citations ?? [],
+      search: message.search,
     };
   }
   async function loadAgentChat(index: number, projectId = activeProject.id) {
@@ -2081,7 +2155,7 @@ export default function Home() {
     setChatAgent(index);
     void loadAgentChat(index);
   }
-  async function sendAgentMessage(text: string) {
+  async function sendAgentMessage(text: string, searchMode: ChatSearchMode) {
     const index = chatAgent;
     const projectId = activeProject.id;
     const stageKey = stages[index].key;
@@ -2096,7 +2170,7 @@ export default function Home() {
     setChatMessages((current) => ({ ...current, [key]: [...(current[key] ?? []), userMessage] }));
     setChatBusyKey(key);
     try {
-      const turn = await sendApiStageChat(projectId, stageKey, text);
+      const turn = await sendApiStageChat(projectId, stageKey, text, searchMode);
       setChatMessages((current) => ({
         ...current,
         [key]: [
@@ -2397,7 +2471,7 @@ export default function Home() {
       />
       <DetailModal detail={detail} onClose={() => setDetail(null)} />
       <PreferencesModal open={preferencesOpen} value={interfaceTheme} onSelect={selectInterfaceTheme} onClose={() => setPreferencesOpen(false)} />
-      <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[activeChatKey] ?? []} loading={chatLoadingKey === activeChatKey} busy={chatBusyKey === activeChatKey} onClose={() => setChatOpen(false)} onSelectAgent={selectChatAgent} onSend={(text) => void sendAgentMessage(text)} onCapture={syncAgentOutput} />
+      <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[activeChatKey] ?? []} loading={chatLoadingKey === activeChatKey} busy={chatBusyKey === activeChatKey} onClose={() => setChatOpen(false)} onSelectAgent={selectChatAgent} onSend={(text, searchMode) => void sendAgentMessage(text, searchMode)} onCapture={syncAgentOutput} />
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
       <div className="screen-reader-status" aria-live="polite">当前页面：{pageTitle}</div>
     </div>
