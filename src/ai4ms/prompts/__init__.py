@@ -7,10 +7,21 @@ from ai4ms.prompts.contracts import (
     DesignDraft,
     LiteraturePlanDraft,
     LiteratureSynthesisDraft,
+    LogicStepDraft,
     ProblemDraft,
+    ReasoningTraceDraft,
     RobustnessDraft,
     RunPreparationDraft,
     TheoryDraft,
+)
+from ai4ms.prompts.policies import (
+    PROMPT_POLICY_REGISTRY_VERSION,
+    RISK_LEVELS,
+    STAGE_AGENT_POLICIES,
+    StageAgentPolicy,
+    ToolPolicy,
+    get_stage_policy,
+    prompt_policy_registry,
 )
 
 __all__ = [
@@ -21,10 +32,19 @@ __all__ = [
     "DesignDraft",
     "LiteraturePlanDraft",
     "LiteratureSynthesisDraft",
+    "LogicStepDraft",
     "ProblemDraft",
     "PromptCatalog",
+    "PROMPT_POLICY_REGISTRY_VERSION",
+    "RISK_LEVELS",
+    "ReasoningTraceDraft",
     "RobustnessDraft",
     "RunPreparationDraft",
+    "STAGE_AGENT_POLICIES",
+    "StageAgentPolicy",
     "StagePrompt",
     "TheoryDraft",
+    "ToolPolicy",
+    "get_stage_policy",
+    "prompt_policy_registry",
 ]
