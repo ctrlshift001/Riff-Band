@@ -33,6 +33,7 @@ from ai4ms.services.models import (
     DraftRequest,
     KnowledgeEvaluationRequest,
     LiteratureSearchRequest,
+    StageChatRequest,
     StageDecisionRequest,
     StageRestoreRequest,
     StageUpdateRequest,
@@ -52,6 +53,7 @@ from ai4ms.services.stage_generation import (
     StageGenerationOutputError,
     StageGenerationService,
 )
+from ai4ms.services.stage_chat import StageChatService
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -79,6 +81,7 @@ def create_app(
     literature_search: LiteratureSearchService | None = None,
     analysis_runner: AnalysisRunnerService | None = None,
     knowledge_evaluation: KnowledgeEvaluationService | None = None,
+    stage_chat: StageChatService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
     web_root = _web_root()
@@ -89,6 +92,7 @@ def create_app(
         literature_search=literature_search,
         analysis_runner=analysis_runner,
         knowledge_evaluation=knowledge_evaluation,
+        stage_chat=stage_chat,
     )
 
     app = FastAPI(
@@ -312,6 +316,36 @@ def create_app(
     @app.post("/api/v1/projects/{project_id}/stages/{stage_key}/draft", tags=["stages"])
     async def create_stage_draft(project_id: str, stage_key: str, payload: DraftRequest, request: Request):
         return await get_service(request).create_draft(project_id, stage_key, payload)
+
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/chat",
+        tags=["stage-chat"],
+    )
+    async def list_stage_chat(
+        project_id: str,
+        stage_key: str,
+        request: Request,
+        limit: int = 50,
+    ):
+        return {
+            "items": get_service(request).list_stage_chat(
+                project_id,
+                stage_key,
+                max(1, min(limit, 200)),
+            )
+        }
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/chat",
+        tags=["stage-chat"],
+    )
+    async def chat_stage(
+        project_id: str,
+        stage_key: str,
+        payload: StageChatRequest,
+        request: Request,
+    ):
+        return await get_service(request).chat_stage(project_id, stage_key, payload)
 
     @app.post("/api/v1/projects/{project_id}/stages/literature/search", tags=["literature"])
     async def search_literature(project_id: str, payload: LiteratureSearchRequest, request: Request):

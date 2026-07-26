@@ -37,6 +37,22 @@ export interface ProjectStage {
   approved_at: string | null;
   updated_at: string;
   content: Record<string, unknown>;
+  readiness: StageReadiness;
+}
+
+export interface StageReadiness {
+  percent: number;
+  completed: number;
+  total: number;
+  can_submit: boolean;
+  checks: {
+    artifact_saved: boolean;
+    contract_valid: boolean;
+    human_confirmed: boolean;
+    approved: boolean;
+  };
+  missing: string[];
+  validation_issue: string;
 }
 
 export interface StageRevision {
@@ -243,6 +259,22 @@ export interface KnowledgeEvaluation {
   usage: Record<string, unknown>;
 }
 
+export interface StageChatMessage {
+  message_id: string;
+  project_id: string;
+  stage_key: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+  model: string;
+  usage: Record<string, unknown>;
+}
+
+export interface StageChatTurn {
+  user_message: StageChatMessage;
+  assistant_message: StageChatMessage;
+}
+
 interface ApiErrorPayload {
   error?: { code?: string; message?: string };
   detail?: string | Array<{ msg?: string }>;
@@ -377,6 +409,30 @@ export function createStageDraft(
     method: "POST",
     body: JSON.stringify({ instruction, generation_mode: generationMode }),
   });
+}
+
+export async function listStageChat(
+  projectId: string,
+  stageKey: string,
+): Promise<StageChatMessage[]> {
+  const response = await request<{ items: StageChatMessage[] }>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/chat`,
+  );
+  return response.items;
+}
+
+export function sendStageChat(
+  projectId: string,
+  stageKey: string,
+  message: string,
+): Promise<StageChatTurn> {
+  return request<StageChatTurn>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/chat`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    },
+  );
 }
 
 export function searchLiterature(projectId: string, queries: string[] = []): Promise<Project> {

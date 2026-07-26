@@ -164,6 +164,54 @@ export function createStageDraft(stage: StageDescriptor, project: ResearchProjec
   };
 }
 
+export function calculateDraftCompleteness(draft: StageDraft): number {
+  const rules = [
+    { value: draft.title, target: 12 },
+    {
+      value: draft.summary,
+      target: 80,
+      placeholder: /^围绕“.*”形成 .*阶段的可审阅工作资产。$/,
+    },
+    {
+      value: draft.objective,
+      target: 80,
+      placeholder: /^完成 .*，并明确能够进入下一阶段的条件。$/,
+    },
+    {
+      value: draft.content,
+      target: 500,
+      placeholder: /请在此补充主方案|请记录仍需补证/,
+    },
+    {
+      value: draft.scope,
+      target: 100,
+      placeholder: /待研究者确认/,
+    },
+    { value: draft.evidenceNote, target: 120 },
+    {
+      value: draft.decision,
+      target: 120,
+      placeholder: /^请记录研究者最终选择/,
+    },
+    {
+      value: draft.risk,
+      target: 120,
+      placeholder: /^请明确一个可能导致当前方案失效/,
+    },
+    {
+      value: draft.handoff,
+      target: 100,
+      placeholder: /^向下一阶段交付：/,
+    },
+  ];
+  const score = rules.reduce((total, rule) => {
+    const value = rule.value.trim();
+    if (!value || rule.placeholder?.test(value)) return total;
+    return total + Math.min(value.length / rule.target, 1);
+  }, 0);
+  return Math.round(score / rules.length * 100);
+}
+
 export function createCheckIssues(stage: StageDescriptor, draft: StageDraft): CheckIssue[] {
   return [
     {
@@ -302,8 +350,7 @@ export function StageDraftWorkspace({
     setDirty(true);
   };
   const completeness = useMemo(() => {
-    const fields = [form.title, form.summary, form.objective, form.content, form.scope, form.evidenceNote, form.decision, form.risk, form.handoff];
-    return Math.round((fields.filter((item) => item.trim().length > 24).length / fields.length) * 100);
+    return calculateDraftCompleteness(form);
   }, [form]);
   const save = () => {
     const next = { ...form, version: form.version + 1, savedAt: "刚刚由研究者保存" };

@@ -14,13 +14,14 @@
 Copy-Item .env.example .env
 ```
 
-至少配置一个 OpenAI 兼容模型：
+默认使用 DeepSeek V4 Pro，并在请求失败时回退到 V4 Flash：
 
 ```text
-AI4MS_MODEL=your-model-name
+AI4MS_MODEL=deepseek-v4-pro
+AI4MS_FALLBACK_MODELS=deepseek-v4-flash
 AUTOENV_OPENAI_API_KEY=...
-AUTOENV_OPENAI_BASE_URL=...
-AUTOENV_OPENAI_MODELS=your-model-name
+AUTOENV_OPENAI_BASE_URL=https://api.deepseek.com
+AUTOENV_OPENAI_MODELS=deepseek-v4-pro,deepseek-v4-flash
 ```
 
 不要提交 `.env`、API Key、许可证、用户数据或本地 `aorchestra.yaml`。

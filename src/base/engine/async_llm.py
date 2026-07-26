@@ -86,8 +86,6 @@ class LLMsConfig:
                     return data.get("models", data) or {}
 
         api_key = os.getenv("AUTOENV_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            return None
 
         base_url = (
             os.getenv("AUTOENV_OPENAI_BASE_URL")
@@ -123,7 +121,7 @@ class LLMsConfig:
             env_key_name = f"AUTOENV_{normalized}_API_KEY"
             env_base_name = f"AUTOENV_{normalized}_BASE_URL"
 
-            model_api_key = os.getenv(env_key_name, api_key)
+            model_api_key = os.getenv(env_key_name) or api_key
             model_base_url = os.getenv(env_base_name, base_url)
 
             config[model_name] = {
@@ -133,7 +131,7 @@ class LLMsConfig:
                 "top_p": top_p,
             }
 
-        return config
+        return config if any(item.get("api_key") for item in config.values()) else None
     
     def get(self, llm_name: str) -> LLMConfig:
         """Get the configuration for a specific LLM by name"""

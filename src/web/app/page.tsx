@@ -16,12 +16,15 @@ import {
   getProject as getApiProject,
   listProjects as listApiProjects,
   listAnalysisJobs,
+  listStageChat as listApiStageChat,
   listStageRevisions as listApiStageRevisions,
   preflightAnalysisRun,
   rerunAnalysis,
   restoreStageRevision as restoreApiStageRevision,
+  saveStage as saveApiStage,
   saveStageWorkspace as saveApiStageWorkspace,
   searchLiterature as searchApiLiterature,
+  sendStageChat as sendApiStageChat,
   submitAnalysisRun,
   uploadDataAsset,
   updateProject as updateApiProject,
@@ -34,6 +37,7 @@ import {
   type ProjectSummary as ApiProjectSummary,
   type RunnerStatus,
   type StageRevision,
+  type StageChatMessage as ApiStageChatMessage,
   type StageWorkspacePayload,
 } from "@/lib/api";
 import {
@@ -69,10 +73,13 @@ type DetailPanel = {
   code?: string;
 };
 type ChatMessage = {
-  id: number;
+  id: string;
   role: "user" | "assistant";
   text: string;
   time: string;
+  model?: string;
+  totalTokens?: number;
+  error?: boolean;
 };
 type ChatSyncTarget = "content" | "summary" | "evidenceNote" | "decision";
 type ChatSyncMode = "append" | "replace";
@@ -159,13 +166,6 @@ const initialSuggestions = [
     before: "固定效应 · 企业固定效应",
     after: "固定效应 · 企业 + 年份固定效应",
   },
-];
-
-const evidenceRows = [
-  { id: "H1", claim: "生成式 AI 工具采用可提升企业创新产出。", source: "Bessen (2018); Brynjolfsson et al. (2023)", state: "supported", note: "多项实证研究一致支持" },
-  { id: "H2", claim: "工具采用对创新提升的效应具有滞后性。", source: "Aghion et al. (2019)", state: "pending", note: "需进一步检验动态效应" },
-  { id: "H3", claim: "效应在高研发强度企业中更为显著。", source: "Huang & Rust (2021)", state: "pending", note: "异质性证据有限" },
-  { id: "H4", claim: "同时采用其他数字化技术会削弱生成式 AI 的边际效应。", source: "Li et al. (2024)", state: "conflict", note: "存在相反结论" },
 ];
 
 const methods: MethodRecord[] = [
@@ -282,6 +282,8 @@ function projectGateCards(project: ResearchProject, apiProject?: ApiProject) {
       ? "approved"
       : remote?.status === "blocked"
         ? "blocked"
+        : remote?.status === "needs_review" && remote.readiness.can_submit
+          ? "review"
         : apiProject?.current_stage === stageKey || stage === position
           ? "draft"
           : "locked";
@@ -326,6 +328,29 @@ const newProjectPlaceholder: ResearchProject = {
 function apiStageIndex(currentStage: string) {
   const index = stages.findIndex((stage) => stage.key === currentStage || stage.id === currentStage);
   return index >= 0 ? index : 0;
+}
+
+function designSelection(project?: ApiProject): string {
+  const primary = project?.stages.find((stage) => stage.key === "design")?.content.primary_method_id;
+  return methodSelection(primary);
+}
+
+function methodSelection(methodId: unknown): string {
+  return methodId === "M02"
+    ? "did"
+    : methodId === "M01"
+      ? "fe"
+      : typeof methodId === "string" && methodId
+        ? methodId
+        : "fe";
+}
+
+function selectedMethodId(selection: string): string {
+  return selection === "did"
+    ? "M02"
+    : selection === "fe"
+      ? "M01"
+      : selection;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -569,6 +594,7 @@ function AgentChatDrawer({
   open,
   agentIndex,
   messages,
+  loading,
   busy,
   onClose,
   onSelectAgent,
@@ -578,6 +604,7 @@ function AgentChatDrawer({
   open: boolean;
   agentIndex: number;
   messages: ChatMessage[];
+  loading: boolean;
   busy: boolean;
   onClose: () => void;
   onSelectAgent: (index: number) => void;
@@ -589,13 +616,14 @@ function AgentChatDrawer({
   const [syncTarget, setSyncTarget] = useState<ChatSyncTarget>("content");
   const [syncMode, setSyncMode] = useState<ChatSyncMode>("append");
   const [syncConfirmed, setSyncConfirmed] = useState(false);
+  const unavailable = loading || busy;
   if (!open) return null;
   const stage = stages[agentIndex];
   const profile = agentProfiles[agentIndex];
   const toolProfile = agentToolProfiles[agentIndex];
   const submit = () => {
     const value = draft.trim();
-    if (!value || busy) return;
+    if (!value || unavailable) return;
     onSend(value);
     setDraft("");
   };
@@ -625,18 +653,20 @@ function AgentChatDrawer({
             <div className="chat-messages" aria-live="polite">
               <article className="chat-message is-assistant">
                 <div className="message-role">{stage.agent}</div>
-                <p>我已读取当前阶段目标和交付要求。你可以让我解释、比较方案或形成一份可人工修改的草稿。</p>
+                <p>连接模型后，我会读取当前阶段目标和交付要求。你可以让我解释、比较方案或形成一份可人工修改的草稿。</p>
               </article>
-              {messages.map((message) => (
-                <article className={`chat-message is-${message.role}`} key={message.id}>
+              {loading && <article className="chat-message is-assistant is-typing"><div className="message-role">{stage.agent}</div><p><span /><span /><span /> 正在读取历史记录</p></article>}
+              {!loading && messages.map((message) => (
+                <article className={`chat-message is-${message.role}${message.error ? " is-error" : ""}`} key={message.id}>
                   <div className="message-role">{message.role === "user" ? "你" : stage.agent}<time>{message.time}</time></div>
                   <p>{message.text}</p>
-                  {message.role === "assistant" && <button className="message-capture" onClick={() => { setSyncCandidate(message.text); setSyncTarget("content"); setSyncMode("append"); setSyncConfirmed(false); }}>同步到交付正文</button>}
+                  {message.role === "assistant" && message.model && <small>{message.model}{message.totalTokens ? ` · ${message.totalTokens} tokens` : ""}</small>}
+                  {message.role === "assistant" && !message.error && <button className="message-capture" onClick={() => { setSyncCandidate(message.text); setSyncTarget("content"); setSyncMode("append"); setSyncConfirmed(false); }}>同步到交付正文</button>}
                 </article>
               ))}
               {busy && <article className="chat-message is-assistant is-typing"><div className="message-role">{stage.agent}</div><p><span /><span /><span /> 正在整理回答</p></article>}
             </div>
-            <div className="chat-starters" aria-label="快捷提问">{profile.starters.map((prompt) => <button onClick={() => onSend(prompt)} disabled={busy} key={prompt}>{prompt}</button>)}</div>
+            <div className="chat-starters" aria-label="快捷提问">{profile.starters.map((prompt) => <button onClick={() => onSend(prompt)} disabled={unavailable} key={prompt}>{prompt}</button>)}</div>
             <div className="chat-composer">
               <textarea
                 value={draft}
@@ -650,7 +680,7 @@ function AgentChatDrawer({
                 placeholder={`向 ${stage.agent} 提问，Enter 发送，Shift+Enter 换行`}
                 aria-label="智能体聊天输入"
               />
-              <button className="primary-action" onClick={submit} disabled={!draft.trim() || busy}>发送</button>
+              <button className="primary-action" onClick={submit} disabled={!draft.trim() || unavailable}>发送</button>
             </div>
           </section>
           <aside className="chat-context">
@@ -737,6 +767,7 @@ function StageRail({
 
 function AgentPanel({
   stageIndex,
+  suggestionStateKey,
   suggestionStates,
   onDecision,
   onGenerate,
@@ -746,7 +777,8 @@ function AgentPanel({
   busy,
 }: {
   stageIndex: number;
-  suggestionStates: Record<number, SuggestionState>;
+  suggestionStateKey: string;
+  suggestionStates: Record<string, SuggestionState>;
   onDecision: (id: number, state: SuggestionState) => void;
   onGenerate: () => void;
   onSubmit: () => void;
@@ -769,11 +801,7 @@ function AgentPanel({
   );
   const workspace = remoteStage ? stageWorkspace(remoteStage.content) : undefined;
   const humanConfirmed = workspace?.human_confirmed === true;
-  const canApprove = Boolean(
-    remoteStage
-    && remoteStage.status === "needs_review"
-    && humanConfirmed,
-  );
+  const canApprove = remoteStage?.readiness.can_submit === true;
   const generateLabel = stage.key === "literature"
     ? "检索并生成综述"
     : stage.key === "delivery"
@@ -810,7 +838,7 @@ function AgentPanel({
 
       <div className="suggestion-list">
         {stageSuggestions.map((suggestion, index) => {
-          const state = suggestionStates[suggestion.id] ?? "pending";
+          const state = suggestionStates[`${suggestionStateKey}:${suggestion.id}`] ?? "pending";
           return (
             <article className={`suggestion-card suggestion-${state}`} key={suggestion.id}>
               <div className="suggestion-title"><span>{index + 1}</span><strong>{suggestion.title}</strong></div>
@@ -827,9 +855,9 @@ function AgentPanel({
                 </div>
               ) : (
                 <div className={`decision-result result-${state}`}>
-                  {state === "accepted" && "✓ 已接受并生成新版本"}
-                  {state === "modified" && "✎ 已转为人工编辑版本"}
-                  {state === "rejected" && "× 已拒绝，保留决定记录"}
+                  {state === "accepted" && "✓ 已接受，待写入阶段草稿"}
+                  {state === "modified" && "✎ 已转为人工编辑候选"}
+                  {state === "rejected" && "× 已拒绝，本页保留处理状态"}
                   <button onClick={() => onDecision(suggestion.id, "pending")}>撤销</button>
                 </div>
               )}
@@ -842,9 +870,13 @@ function AgentPanel({
           <span>{remoteStage?.revision ?? 0}</span>
           {remoteStage?.status !== "needs_review"
             ? " 先生成符合契约的阶段资产"
-            : humanConfirmed
-              ? " 当前 Revision 已保存人工确认"
-              : " 请先在阶段资产中保存人工确认"}
+            : canApprove
+              ? " 当前 Revision 已满足提交条件"
+              : !remoteStage.readiness.checks.contract_valid
+                ? " 阶段契约尚未通过，请打开草稿补齐"
+                : humanConfirmed
+                  ? " 当前 Revision 已保存人工确认"
+                  : " 请先在阶段资产中保存人工确认"}
         </div>
         <div className="stage-flow-actions">
           <button className="generate-stage-action" disabled={!canGenerate} onClick={onGenerate}>{busy ? "处理中…" : generateLabel}</button>
@@ -861,54 +893,93 @@ function DesignWorkspace({
   selectedDesign,
   setSelectedDesign,
   onCompareMethods,
+  onSave,
+  remoteStage,
+  methodRecords,
+  busy,
 }: {
   question: string;
   setQuestion: (value: string) => void;
   selectedDesign: string;
   setSelectedDesign: (value: string) => void;
   onCompareMethods: () => void;
+  onSave: () => void;
+  remoteStage?: ApiProjectStage;
+  methodRecords: MethodRecord[];
+  busy: boolean;
 }) {
+  const methodOptions = (Array.isArray(remoteStage?.content.method_options)
+    ? remoteStage.content.method_options
+    : [])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== undefined && typeof item.method_id === "string");
+  const assumptions = (Array.isArray(remoteStage?.content.assumptions)
+    ? remoteStage.content.assumptions
+    : [])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => Boolean(item));
+  const unknowns = Array.isArray(remoteStage?.content.unknowns)
+    ? remoteStage.content.unknowns.filter((item): item is string => typeof item === "string")
+    : [];
+
   return (
     <div className="design-workspace">
       <section className="content-card question-card">
-        <div className="card-heading"><h2>研究问题</h2><span className="editable-mark">可人工编辑</span></div>
+        <div className="card-heading"><h2>研究问题</h2><div><span className="editable-mark">可人工编辑</span><button className="text-button" disabled={busy || !remoteStage || remoteStage.status === "approved"} onClick={onSave}>{busy ? "正在保存" : "保存到 Revision"}</button></div></div>
         <textarea aria-label="研究问题" value={question} onChange={(event) => setQuestion(event.target.value)} />
-        <div className="field-meta"><span>版本 v4 · 由研究者最后修改</span><span>已连接 12 条文献证据</span></div>
+        <div className="field-meta"><span>{remoteStage ? `Revision ${remoteStage.revision} · ${remoteStage.author_type ?? "尚未生成"}` : "尚未连接后端阶段"}</span><span>保存后会重新计算契约与交接状态</span></div>
       </section>
 
       <section className="content-card">
         <div className="card-heading"><h2>设计选择</h2><button className="text-button" onClick={onCompareMethods}>比较方法卡</button></div>
         <div className="design-options" role="radiogroup" aria-label="研究设计选择">
-          <label className={`design-option ${selectedDesign === "fe" ? "is-selected" : ""}`}>
-            <input type="radio" name="design" value="fe" checked={selectedDesign === "fe"} onChange={() => setSelectedDesign("fe")} />
-            <span className="radio-ui" />
-            <div className="design-copy">
-              <div><strong>面板固定效应</strong><span className="recommend-mark">当前主设计</span></div>
-              <p><span>单位：企业（上市公司）</span><span>处理：生成式 AI 工具采用</span><span>结果：发明专利授权被引数</span><span>窗口：2016—2024</span></p>
-            </div>
-            <span className="fit-score">适配 92</span>
-          </label>
-          <label className={`design-option ${selectedDesign === "did" ? "is-selected" : ""}`}>
-            <input type="radio" name="design" value="did" checked={selectedDesign === "did"} onChange={() => setSelectedDesign("did")} />
-            <span className="radio-ui" />
-            <div className="design-copy">
-              <div><strong>双重差分</strong><span className="backup-mark">备选设计</span></div>
-              <p><span>单位：企业（上市公司）</span><span>事件：首次实际采用</span><span>结果：创新质量</span><span>关键：共同趋势</span></p>
-            </div>
-            <span className="fit-score">适配 84</span>
-          </label>
+          {methodOptions.map((option) => {
+            const methodId = String(option.method_id);
+            const selection = methodSelection(methodId);
+            const selected = selectedDesign === selection;
+            const method = methodRecords.find((item) => item.id === methodId);
+            const fitConditions = Array.isArray(option.fit_conditions)
+              ? option.fit_conditions.filter((item): item is string => typeof item === "string")
+              : [];
+            const risks = Array.isArray(option.risks)
+              ? option.risks.filter((item): item is string => typeof item === "string")
+              : [];
+            return (
+              <label className={`design-option ${selected ? "is-selected" : ""}`} key={methodId}>
+                <input type="radio" name="design" value={selection} checked={selected} onChange={() => setSelectedDesign(selection)} />
+                <span className="radio-ui" />
+                <div className="design-copy">
+                  <div><strong>{method?.name ?? methodId}</strong><span className={selected ? "recommend-mark" : "backup-mark"}>{selected ? "当前主设计" : option.role === "supporting" ? "支持方法" : "备选设计"}</span></div>
+                  <p>
+                    <span>{typeof option.rationale === "string" ? option.rationale : "尚未生成方法选择理由"}</span>
+                    {fitConditions[0] && <span>条件：{fitConditions[0]}</span>}
+                    {risks[0] && <span>风险：{risks[0]}</span>}
+                  </p>
+                </div>
+                <span className="fit-score">{method?.fit == null ? "待 AI 评估" : `适配 ${method.fit}`}</span>
+              </label>
+            );
+          })}
+          {methodOptions.length === 0 && <div className="empty-state">尚无后端方法候选。请先生成 S3 阶段资产。</div>}
         </div>
       </section>
 
       <section className="content-card evidence-card">
-        <div className="card-heading"><h2>关键假设与证据状态</h2><span className="evidence-count">4 条假设 · 1 条冲突</span></div>
+        <div className="card-heading"><h2>关键假设与检查状态</h2><span className="evidence-count">{assumptions.length} 条假设 · {unknowns.length} 项未知</span></div>
         <div className="evidence-table-wrap">
           <table className="evidence-table">
-            <thead><tr><th>编号</th><th>假设</th><th>证据来源</th><th>状态</th><th>备注</th></tr></thead>
+            <thead><tr><th>编号</th><th>假设</th><th>计划检查</th><th>可检验性</th><th>类别</th></tr></thead>
             <tbody>
-              {evidenceRows.map((row) => (
-                <tr key={row.id}><td>{row.id}</td><td>{row.claim}</td><td>{row.source}</td><td><StateBadge state={row.state} /></td><td>{row.note}</td></tr>
+              {assumptions.map((assumption, index) => (
+                <tr key={String(assumption.assumption_id ?? index)}>
+                  <td>{String(assumption.assumption_id ?? `A${index + 1}`)}</td>
+                  <td>{String(assumption.statement ?? "待补充")}</td>
+                  <td>{String(assumption.planned_check ?? "待补充")}</td>
+                  <td>{assumption.testability === "testable" ? "可检验" : assumption.testability === "partially_testable" ? "部分可检验" : "不可直接检验"}</td>
+                  <td>{String(assumption.category ?? "未分类")}</td>
+                </tr>
               ))}
+              {assumptions.length === 0 && <tr><td colSpan={5}>尚无后端假设记录。请先生成 S3 阶段资产。</td></tr>}
             </tbody>
           </table>
         </div>
@@ -919,16 +990,29 @@ function DesignWorkspace({
 
 function GenericStage({
   stageIndex,
+  remoteStage,
   onOpenDraft,
   onOpenDecision,
   onRunCheck,
 }: {
   stageIndex: number;
+  remoteStage?: ApiProjectStage;
   onOpenDraft: () => void;
   onOpenDecision: () => void;
   onRunCheck: () => void;
 }) {
   const stage = stages[stageIndex];
+  const readiness = remoteStage?.readiness;
+  const handoffTitle = !remoteStage
+    ? "连接 FastAPI 后计算交接就绪度"
+    : remoteStage.status === "approved"
+      ? "当前阶段已批准，下一阶段已解锁"
+      : remoteStage.status === "not_started"
+        ? "等待前置阶段批准后解锁"
+        : readiness?.can_submit
+          ? "已满足提交条件，等待人工审批"
+          : `进入下一阶段还缺 ${readiness?.missing.length ?? 0} 项`;
+  const readinessPercent = readiness?.percent ?? 0;
   return (
     <div className="generic-stage">
       <section className="stage-hero-card">
@@ -941,9 +1025,9 @@ function GenericStage({
         <article><span>03</span><p className="eyebrow">退出检查</p><h3>{stage.check}</h3><button onClick={onRunCheck}>运行一致性检查 →</button></article>
       </div>
       <section className="stage-handoff-card">
-        <div><p className="eyebrow">Handoff readiness</p><h3>进入下一阶段还缺 2 项人工确认</h3></div>
-        <div className="readiness-track"><span style={{ width: `${42 + stageIndex * 4}%` }} /></div>
-        <strong>{42 + stageIndex * 4}%</strong>
+        <div><p className="eyebrow">Handoff readiness</p><h3>{handoffTitle}</h3>{readiness && readiness.missing.length > 0 && <small>{readiness.missing.join(" · ")}</small>}</div>
+        <div className="readiness-track"><span style={{ width: `${readinessPercent}%` }} /></div>
+        <strong>{readinessPercent}%</strong>
       </section>
     </div>
   );
@@ -1045,7 +1129,7 @@ function MethodsView({
 
     {tab === "formulas" && <section className="formula-library-grid">{filteredFormulas.map((formula) => <article className="formula-library-card" key={formula.id}><header><span>{formula.id}</span><b>{formula.family}</b><small>{formula.fit == null ? "待 AI 评估" : `AI 适配度 ${formula.fit}%`}</small></header><h2>{formula.title}</h2><p>{formula.fitRationale || formula.purpose}</p><pre>{formula.formula}</pre><div className="formula-card-meta"><span>{formula.symbols.length} 个符号</span><span>{formula.assumptions.length} 项假设</span><span>{formula.diagnostics.length} 项诊断</span></div><footer><button onClick={() => { void navigator.clipboard?.writeText(formula.formula); onToast(`${formula.id} 公式已复制`); }}>复制公式</button><button className="primary-action" onClick={() => onOpenFormula(formula.id)}>打开公式卡 →</button></footer></article>)}</section>}
 
-    {tab === "diagnostics" && <section className="diagnostic-registry"><header><div><p className="eyebrow">Diagnostic policy registry · 36 / 36</p><h2>诊断不是附录，是方法的退出条件</h2><p>每条规则都包含适用方法、触发时点、所需证据、失败动作和实现提示。</p></div><div><span>当前显示 <strong>{filteredDiagnostics.length}</strong> / {diagnosticRules.length}</span><button onClick={() => onToast(`${filteredDiagnostics.length} 条诊断规则已加入 S5–S7 分析计划检查清单`)}>加入当前结果</button></div></header><div className="diagnostic-rule-grid">{filteredDiagnostics.map((rule) => { const expanded = expandedDiagnostic === rule.id; return <article className={`diagnostic-rule-card level-${rule.level} ${expanded ? "is-expanded" : ""}`} key={rule.id}><header><span>{rule.id}</span><b>{rule.level}</b><small>{rule.stage}</small></header><div className="diagnostic-rule-family">{rule.family}</div><h3>{rule.name}</h3><p>{rule.appliesTo}</p><dl><div><dt>触发</dt><dd>{rule.trigger}</dd></div>{expanded && <><div><dt>证据</dt><dd>{rule.evidence}</dd></div><div><dt>失败动作</dt><dd>{rule.action}</dd></div></>}</dl>{expanded && <div className="diagnostic-implementation"><span>实现提示</span><code>{rule.implementation}</code></div>}<footer><button onClick={() => onToast(`${rule.id} ${rule.name} 已加入当前分析计划`)}>加入计划</button><button className="primary-action" onClick={() => setExpandedDiagnostic(expanded ? null : rule.id)}>{expanded ? "收起规则" : "查看完整规则"}</button></footer></article>; })}{filteredDiagnostics.length === 0 && <div className="empty-state">没有匹配的诊断规则，请清除筛选或更换关键词。</div>}</div></section>}
+    {tab === "diagnostics" && <section className="diagnostic-registry"><header><div><p className="eyebrow">Diagnostic policy registry · 36 / 36</p><h2>诊断不是附录，是方法的退出条件</h2><p>每条规则都包含适用方法、触发时点、所需证据、失败动作和实现提示。</p></div><div><span>当前显示 <strong>{filteredDiagnostics.length}</strong> / {diagnosticRules.length}</span><button onClick={() => onToast(`已在当前页选中 ${filteredDiagnostics.length} 条候选规则；请到 S5 草稿保存正式 revision`)}>标记当前结果</button></div></header><div className="diagnostic-rule-grid">{filteredDiagnostics.map((rule) => { const expanded = expandedDiagnostic === rule.id; return <article className={`diagnostic-rule-card level-${rule.level} ${expanded ? "is-expanded" : ""}`} key={rule.id}><header><span>{rule.id}</span><b>{rule.level}</b><small>{rule.stage}</small></header><div className="diagnostic-rule-family">{rule.family}</div><h3>{rule.name}</h3><p>{rule.appliesTo}</p><dl><div><dt>触发</dt><dd>{rule.trigger}</dd></div>{expanded && <><div><dt>证据</dt><dd>{rule.evidence}</dd></div><div><dt>失败动作</dt><dd>{rule.action}</dd></div></>}</dl>{expanded && <div className="diagnostic-implementation"><span>实现提示</span><code>{rule.implementation}</code></div>}<footer><button onClick={() => onToast(`${rule.id} ${rule.name} 仅标记为候选；尚未写入后端分析计划`)}>标记候选</button><button className="primary-action" onClick={() => setExpandedDiagnostic(expanded ? null : rule.id)}>{expanded ? "收起规则" : "查看完整规则"}</button></footer></article>; })}{filteredDiagnostics.length === 0 && <div className="empty-state">没有匹配的诊断规则，请清除筛选或更换关键词。</div>}</div></section>}
 
     {tab === "design" && <section className="current-design-board"><header><div><p className="eyebrow">Research design bundle</p><h2>当前候选方法比较</h2><p>最多同时比较 3 个候选；确定主模型前必须记录未采用理由。</p></div><button className="primary-action" disabled={!compare.length} onClick={() => { if (compare[0]) onAdd(compare[0]); }}>将首项设为主方案草稿</button></header><div className="design-compare-grid">{compare.map((methodId, index) => { const method = methods.find((item) => item.id === methodId); if (!method) return null; return <article key={method.id}><div><span>{index === 0 ? "PRIMARY CANDIDATE" : `ALTERNATIVE ${index}`}</span><button onClick={() => toggleCompare(method.id)}>移除</button></div><h2>{method.name}</h2><pre>{method.formula}</pre><dl><div><dt>估计 / 决策目标</dt><dd>{method.estimand}</dd></div><div><dt>数据结构</dt><dd>{method.dataShape}</dd></div><div><dt>失败规则</dt><dd>{method.failureRule}</dd></div></dl><button onClick={() => onOpenMethod(method.id)}>打开方法卡核对</button></article>; })}{!compare.length && <div className="empty-state">从“方法库”加入 1–3 个候选方法进行比较。</div>}</div></section>}
   </div>;
@@ -1082,7 +1166,10 @@ function RunsView({
   const effectiveAssetId = assets.some((asset) => asset.asset_id === selectedAssetId)
     ? selectedAssetId
     : assets[0]?.asset_id ?? "";
-  const activePreflight = preflight?.input_asset_id === effectiveAssetId ? preflight : null;
+  const activePreflight = (
+    preflight?.input_asset_id === effectiveAssetId
+    && preflight.analysis_plan_revision === (identification?.revision ?? 0)
+  ) ? preflight : null;
   const runs = (Array.isArray(analysisContent.runs) ? analysisContent.runs : []) as AnalysisRun[];
   const latestRun = jobResult ?? runs.at(-1);
   const structuredResults = latestRun?.structured_results ?? [];
@@ -1106,20 +1193,32 @@ function RunsView({
   );
   const activeRunId = activeJob?.run_id ?? "";
   const activeJobStatus = activeJob?.status ?? "";
+  const displayedError = error || (
+    activeJobStatus === "interrupted"
+      ? "后台曾重启，此任务已中断；请检查输入与审批状态后重跑。"
+      : ""
+  );
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getStataRunnerStatus(), listAnalysisJobs(project.id)])
-      .then(([status, jobs]) => {
-        if (!cancelled) {
-          setRunner(status);
-          setActiveJob(jobs[0] ?? null);
-        }
-      })
-      .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : "无法读取 Runner 状态");
-      });
-    return () => { cancelled = true; };
+    const refresh = () => {
+      Promise.all([getStataRunnerStatus(), listAnalysisJobs(project.id)])
+        .then(([status, jobs]) => {
+          if (!cancelled) {
+            setRunner(status);
+            setActiveJob(jobs[0] ?? null);
+          }
+        })
+        .catch((cause) => {
+          if (!cancelled) setError(cause instanceof Error ? cause.message : "无法读取 Runner 状态");
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [project.id]);
 
   useEffect(() => {
@@ -1128,7 +1227,9 @@ function RunsView({
     const poll = async () => {
       try {
         const job = await getAnalysisJob(project.id, activeRunId);
-        if (!cancelled) setActiveJob(job);
+        if (!cancelled) {
+          setActiveJob(job);
+        }
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : "无法读取运行状态");
       }
@@ -1286,7 +1387,7 @@ function RunsView({
         <div><span>G3</span><div><strong>{runLocked ? "正式运行尚未解锁" : "分析计划与代码已冻结"}</strong><small>{runLocked ? `当前项目位于 S${project.stageIndex}；需完成 S5 分析计划并通过 G3` : `AnalysisPlan revision ${identification?.revision ?? 0} · ${identification?.content_hash?.slice(0, 12) ?? "无 hash"}`}</small></div></div>
         <button onClick={() => onOpenGate("G3")}>{runLocked ? "查看解锁条件" : "查看审批包"}</button>
       </div>
-      {error && <div className="run-error-banner">{error}</div>}
+      {displayedError && <div className="run-error-banner">{displayedError}</div>}
       <div className="workbench-shell">
         <nav className="workbench-tabs" aria-label="Stata 工作台步骤">{tabs.map((item, index) => <button className={tab === index ? "is-active" : ""} onClick={() => setTab(index)} key={item}><span>{index + 1}</span>{item}</button>)}</nav>
         <section className="workbench-content">
@@ -1341,10 +1442,14 @@ function RunsView({
 function ApprovalsView({ project, apiProject, onOpenGate, onOpenDetail }: { project: ResearchProject; apiProject?: ApiProject; onOpenGate: (gateId: string) => void; onOpenDetail: (detail: DetailPanel) => void }) {
   const cards = projectGateCards(project, apiProject);
   const countByStatus = (status: string) => cards.filter((gate) => gate.status === status).length;
+  const invalidatedCount = cards.filter((gate) => (
+    gate.status !== "approved"
+    && gate.history?.some((event) => event.decision === "approve")
+  )).length;
   return (
     <div className="approvals-view page-view">
       <header className="view-header"><div><p className="eyebrow">Human Approval Center</p><h1>人工审批中心</h1><p>批准的是确定版本和哈希。上游语义变化会使受影响的下游审批自动失效。</p></div><button className="outline-compact" onClick={() => onOpenDetail({ eyebrow: "Approval policy", title: "人工审批与失效规则", description: "智能体不能成为批准人。平台冻结 revision 和内容哈希，并在上游语义变化时使受影响的下游审批失效。", rows: [{ label: "G0", value: "选题价值与已有研究" }, { label: "G1", value: "理论与研究设计" }, { label: "G2", value: "数据、伦理与许可" }, { label: "G3", value: "分析计划与代码" }, { label: "G4", value: "结果与核心主张" }, { label: "G5", value: "成稿与发布" }], bullets: ["课题边界变化：G0–G5 失效", "主设计变化：G1–G5 失效", "主模型或 do-file 变化：G3–G5 失效", "纯排版变化：仅重查 G5 输出"] })}>查看审批规则</button></header>
-      <div className="approval-summary"><div><strong>{countByStatus("approved")}</strong><span>已批准</span></div><div><strong>{countByStatus("review")}</strong><span>待审批</span></div><div><strong>{countByStatus("blocked")}</strong><span>前置阻塞</span></div><div><strong>0</strong><span>失效待复核</span></div></div>
+      <div className="approval-summary"><div><strong>{countByStatus("approved")}</strong><span>已批准</span></div><div><strong>{countByStatus("review")}</strong><span>待审批</span></div><div><strong>{countByStatus("blocked")}</strong><span>前置阻塞</span></div><div><strong>{invalidatedCount}</strong><span>失效待复核</span></div></div>
       <div className="approval-layout">
         <section className="gate-list">{cards.map((gate) => <button className={`gate-card gate-${gate.status}`} onClick={() => onOpenGate(gate.id)} key={gate.id}><span className="gate-code">{gate.id}</span><div><h2>{gate.title}</h2><p>{gate.asset}</p><small>批准人：{gate.owner}</small></div><div className="gate-state"><StateBadge state={gate.status} /><small>{gate.time}</small></div><span className="gate-arrow">→</span></button>)}</section>
         <aside className="approval-rule-card"><p className="eyebrow">Four-eyes policy</p><h2>关键决定至少经过两种角色</h2><div className="reviewer-stack"><span>研</span><span>导</span><span>法</span></div><p>研究者提交，导师或 PI 与方法审核者分别确认价值和方法。Agent 永远不能成为批准人。</p><hr /><h3>上游变化会发生什么？</h3><ul><li>课题边界变化 → G0–G5 失效</li><li>主设计变化 → G1–G5 失效</li><li>主模型或 do-file 变化 → G3–G5 失效</li><li>纯排版变化 → 仅重查 G5 输出</li></ul></aside>
@@ -1410,7 +1515,7 @@ export default function Home() {
   const [deepStack, setDeepStack] = useState<DeepRoute[]>([]);
   const [stageDrafts, setStageDrafts] = useState<Record<string, StageDraft>>({});
   const [resolvedIssues, setResolvedIssues] = useState<Record<string, boolean>>({});
-  const [suggestionStates, setSuggestionStates] = useState<Record<number, SuggestionState>>({});
+  const [suggestionStates, setSuggestionStates] = useState<Record<string, SuggestionState>>({});
   const [approvalStageIndex, setApprovalStageIndex] = useState<number | null>(null);
   const [stageRevisions, setStageRevisions] = useState<Record<string, StageRevision[]>>({});
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
@@ -1428,10 +1533,12 @@ export default function Home() {
   const [detail, setDetail] = useState<DetailPanel | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatAgent, setChatAgent] = useState(3);
-  const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
-  const [chatBusy, setChatBusy] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Record<string, ChatMessage[]>>({});
+  const [chatLoadingKey, setChatLoadingKey] = useState("");
+  const [chatBusyKey, setChatBusyKey] = useState("");
   const [toast, setToast] = useState("");
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
+  const activeChatKey = `${activeProject.id}:${stages[chatAgent].key}`;
   const activeApiProject = apiProjects[activeProject.id];
   const activeStageData = stages[activeStage];
   const activeRemoteStage = activeApiProject?.stages.find((stage) => stage.key === activeStageData.key);
@@ -1465,7 +1572,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!apiProjectIds[activeProject.id]) return;
+    if (!activeApiProject) return;
     let cancelled = false;
     void getApiKnowledgeEvaluation(activeProject.id).then((evaluation) => {
       if (!cancelled) {
@@ -1476,7 +1583,7 @@ export default function Home() {
       }
     }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [activeProject.id, apiProjectIds]);
+  }, [activeApiProject, activeProject.id]);
 
   useEffect(() => {
     if (deepStageDraftIndex === null || !apiProjectIds[activeProject.id]) return;
@@ -1525,6 +1632,7 @@ export default function Home() {
           setStageDrafts((current) => ({ ...current, ...mapApiDrafts(full, hydrated) }));
           setActiveStage(hydrated.stageIndex);
           setQuestion(hydrated.question);
+          setSelectedDesign(designSelection(full));
         } catch (error) {
           if (!cancelled) setApiError(readApiError(error));
         }
@@ -1553,9 +1661,10 @@ export default function Home() {
     window.localStorage.setItem("ai4ms-interface-theme", theme);
   }
   function decideSuggestion(id: number, state: SuggestionState) {
-    setSuggestionStates((current) => ({ ...current, [id]: state }));
+    const key = `${activeProject.id}:${activeStageData.key}:${id}`;
+    setSuggestionStates((current) => ({ ...current, [key]: state }));
     const verb = state === "accepted" ? "接受" : state === "modified" ? "转为人工修改" : state === "rejected" ? "拒绝" : "撤销处理";
-    showToast(`已${verb}建议，决定记录已保存`);
+    showToast(`已${verb}建议；正式内容仍需写入阶段草稿并保存 revision`);
   }
   function applyApiProject(updated: ApiProject, preferred?: ResearchProject) {
     const existing = preferred ?? projects.find((item) => item.id === updated.project_id);
@@ -1572,6 +1681,7 @@ export default function Home() {
     if (activeProjectId === updated.project_id) {
       setActiveStage(hydrated.stageIndex);
       setQuestion(hydrated.question);
+      setSelectedDesign(designSelection(updated));
     }
     return hydrated;
   }
@@ -1759,6 +1869,64 @@ export default function Home() {
       setApiBusy(false);
     }
   }
+  async function saveDesignPanel() {
+    const projectId = activeProject.id;
+    const remote = apiProjects[projectId]?.stages.find((stage) => stage.key === "design");
+    if (!remote) {
+      showToast("S3 后端阶段尚未加载");
+      return;
+    }
+    if (remote.status === "not_started" || remote.status === "approved") {
+      showToast(remote.status === "approved" ? "S3 已批准，不能直接覆盖当前 revision" : "请先批准上游阶段并生成 S3 资产");
+      return;
+    }
+    if (question.trim().length < 5) {
+      showToast("研究问题至少需要 5 个字符");
+      return;
+    }
+    const methodId = selectedMethodId(selectedDesign);
+    const options = (Array.isArray(remote.content.method_options)
+      ? remote.content.method_options
+      : [])
+      .map(asRecord)
+      .filter((item): item is Record<string, unknown> => Boolean(item));
+    if (!options.some((item) => item.method_id === methodId)) {
+      showToast(`当前 S3 资产还没有候选方法 ${methodId}；请先生成阶段资产或让智能体补充候选`);
+      return;
+    }
+    const methodOptions = options.map((item) => ({
+      ...item,
+      role: item.method_id === methodId
+        ? "primary"
+        : item.role === "primary"
+          ? "alternative"
+          : item.role,
+    }));
+    setApiBusy(true);
+    setApiError("");
+    try {
+      const updated = await saveApiStage(
+        projectId,
+        "design",
+        {
+          ...remote.content,
+          research_question: question.trim(),
+          method_options: methodOptions,
+          primary_method_id: methodId,
+        },
+        "研究者从 S3 设计面板更新研究问题与主方案",
+      );
+      applyApiProject(updated);
+      await refreshStageRevisions(projectId, 3);
+      const revision = updated.stages.find((stage) => stage.key === "design")?.revision;
+      showToast(`S3 已保存 Revision ${revision ?? ""}`);
+    } catch (error) {
+      setApiError(readApiError(error));
+      showToast(`S3 保存失败：${readApiError(error)}`);
+    } finally {
+      setApiBusy(false);
+    }
+  }
   function navigateView(nextView: ViewKey) {
     setView(nextView);
     setDeepStack([]);
@@ -1799,32 +1967,88 @@ export default function Home() {
         setStageDrafts((current) => ({ ...current, ...mapApiDrafts(full, hydrated) }));
         setActiveStage(hydrated.stageIndex);
         setQuestion(hydrated.question);
+        setSelectedDesign(designSelection(full));
         setApiError("");
       }).catch((error) => setApiError(readApiError(error))).finally(() => setApiBusy(false));
+    }
+  }
+  function mapChatMessage(message: ApiStageChatMessage): ChatMessage {
+    const totalTokens = Number(message.usage.total_tokens ?? 0);
+    return {
+      id: message.message_id,
+      role: message.role,
+      text: message.content,
+      time: new Date(message.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+      model: message.model || undefined,
+      totalTokens: Number.isFinite(totalTokens) && totalTokens > 0 ? totalTokens : undefined,
+    };
+  }
+  async function loadAgentChat(index: number, projectId = activeProject.id) {
+    const key = `${projectId}:${stages[index].key}`;
+    if (!apiProjectIds[projectId]) {
+      setChatMessages((current) => ({ ...current, [key]: [] }));
+      return;
+    }
+    setChatLoadingKey(key);
+    try {
+      const messages = await listApiStageChat(projectId, stages[index].key);
+      setChatMessages((current) => ({
+        ...current,
+        [key]: messages.map(mapChatMessage),
+      }));
+    } catch (error) {
+      showToast(`对话历史读取失败：${readApiError(error)}`);
+    } finally {
+      setChatLoadingKey((current) => current === key ? "" : current);
     }
   }
   function openAgentChat(index = activeStage) {
     setChatAgent(index);
     setChatOpen(true);
+    void loadAgentChat(index);
   }
-  function sendAgentMessage(text: string) {
+  function selectChatAgent(index: number) {
+    setChatAgent(index);
+    void loadAgentChat(index);
+  }
+  async function sendAgentMessage(text: string) {
     const index = chatAgent;
+    const projectId = activeProject.id;
+    const stageKey = stages[index].key;
+    const key = `${projectId}:${stageKey}`;
+    if (!apiProjectIds[projectId]) {
+      showToast("请先连接 FastAPI 项目，再使用真实智能体");
+      return;
+    }
     const time = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-    const userMessage: ChatMessage = { id: Date.now(), role: "user", text, time };
-    setChatMessages((current) => ({ ...current, [index]: [...(current[index] ?? []), userMessage] }));
-    setChatBusy(true);
-    window.setTimeout(() => {
-      const stage = stages[index];
-      const profile = agentProfiles[index];
+    const optimisticId = `pending-${Date.now()}`;
+    const userMessage: ChatMessage = { id: optimisticId, role: "user", text, time };
+    setChatMessages((current) => ({ ...current, [key]: [...(current[key] ?? []), userMessage] }));
+    setChatBusyKey(key);
+    try {
+      const turn = await sendApiStageChat(projectId, stageKey, text);
+      setChatMessages((current) => ({
+        ...current,
+        [key]: [
+          ...(current[key] ?? []).filter((message) => message.id !== optimisticId),
+          mapChatMessage(turn.user_message),
+          mapChatMessage(turn.assistant_message),
+        ],
+      }));
+    } catch (error) {
+      const message = readApiError(error);
       const reply: ChatMessage = {
-        id: Date.now() + 1,
+        id: `error-${Date.now()}`,
         role: "assistant",
         time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        text: `围绕“${text.slice(0, 48)}${text.length > 48 ? "…" : ""}”，我建议先确认 ${profile.skills[0]} 与 ${profile.skills[1]}，再形成“候选方案—证据依据—失败条件—需要人工决定”四部分记录。本阶段输出应落到：${stage.output}。`,
+        text: `模型调用失败：${message}`,
+        error: true,
       };
-      setChatMessages((current) => ({ ...current, [index]: [...(current[index] ?? []), reply] }));
-      setChatBusy(false);
-    }, 520);
+      setChatMessages((current) => ({ ...current, [key]: [...(current[key] ?? []), reply] }));
+      showToast(`智能体调用失败：${message}`);
+    } finally {
+      setChatBusyKey((current) => current === key ? "" : current);
+    }
   }
   function syncAgentOutput(text: string, target: ChatSyncTarget, mode: ChatSyncMode) {
     const stageIndex = chatAgent;
@@ -1838,11 +2062,11 @@ export default function Home() {
     saveDraft(stageIndex, { ...draft, [target]: nextValue, savedAt: "刚刚由研究者确认同步", syncHistory: [`${stamp} · ${stage.agent} → ${targetLabels[target]}（${mode === "replace" ? "替换" : "追加"}）`, ...draft.syncHistory] }, `已同步到 ${stage.id} ${targetLabels[target]}，可继续人工修改`);
   }
   function addMethodToDesign(methodId: string) {
-    setSelectedDesign(methodId === "M02" ? "did" : methodId === "M01" ? "fe" : methodId);
+    setSelectedDesign(methodSelection(methodId));
     setActiveStage(3);
     setView("journey");
     setDeepStack([]);
-    showToast("方法已加入研究设计草稿，请人工检查假设后保存");
+    showToast("已选择候选方法；请在 S3 阶段资产中写入并保存正式 revision");
   }
   function draftKey(stageIndex: number) {
     return `${activeProject.id}:${stageIndex}`;
@@ -1929,6 +2153,7 @@ export default function Home() {
         setActiveProjectId(updated.project_id);
         setActiveStage(hydrated.stageIndex);
         setQuestion(hydrated.question);
+        setSelectedDesign(designSelection(updated));
         setView("journey");
         replaceDeep({ kind: "project-overview", projectId: updated.project_id });
         setApiError("");
@@ -1968,7 +2193,7 @@ export default function Home() {
       const stage = stages[deepRoute.stageIndex];
       const issues = createCheckIssues(stage, getDraft(deepRoute.stageIndex));
       const resolved = Object.fromEntries(issues.map((issue) => [issue.id, Boolean(resolvedIssues[`${draftKey(deepRoute.stageIndex)}:${issue.id}`])]));
-      return <ConsistencyCheckWorkspace stage={stage} project={activeProject} issues={issues} resolved={resolved} onBack={backDeep} onOpenIssue={(issueId) => openDeep({ kind: "stage-issue", stageIndex: deepRoute.stageIndex, issueId })} onOpenDraft={() => openDeep({ kind: "stage-draft", stageIndex: deepRoute.stageIndex })} onRunAgain={() => showToast("一致性检查已重新运行，结果已更新")} />;
+      return <ConsistencyCheckWorkspace stage={stage} project={activeProject} issues={issues} resolved={resolved} onBack={backDeep} onOpenIssue={(issueId) => openDeep({ kind: "stage-issue", stageIndex: deepRoute.stageIndex, issueId })} onOpenDraft={() => openDeep({ kind: "stage-draft", stageIndex: deepRoute.stageIndex })} onRunAgain={() => showToast("已按当前草稿重新计算本页检查项；审批仍以后端阶段契约为准")} />;
     }
     if (deepRoute.kind === "stage-issue") {
       const stage = stages[deepRoute.stageIndex];
@@ -1991,15 +2216,15 @@ export default function Home() {
     }
     if (deepRoute.kind === "evidence-record") {
       const record = activeEvidence.find((item) => item.title === deepRoute.title);
-      return record ? <EvidenceRecordPage record={record} onBack={backDeep} onSave={showToast} /> : null;
+      return record ? <EvidenceRecordPage record={record} onBack={backDeep} onSave={() => showToast("本页编辑仅临时保留；请写入 S1/S8 阶段草稿并保存正式 revision")} /> : null;
     }
     if (deepRoute.kind === "method-record") {
       const method = evaluatedMethods.find((item) => item.id === deepRoute.methodId) ?? evaluatedMethods[0];
-      return <MethodRecordWorkspace method={method} onBack={backDeep} onAdd={() => addMethodToDesign(method.id)} onSave={showToast} />;
+      return <MethodRecordWorkspace method={method} onBack={backDeep} onAdd={() => addMethodToDesign(method.id)} onSave={() => showToast("本页备注仅临时保留；请写入 S3/S5 阶段草稿并保存正式 revision")} />;
     }
     if (deepRoute.kind === "formula-record") {
       const formula = evaluatedFormulas.find((item) => item.id === deepRoute.formulaId) ?? evaluatedFormulas[0];
-      return <FormulaRecordPage formula={formula} onBack={backDeep} onAdd={() => addMethodToDesign(formula.methodId)} onSave={showToast} />;
+      return <FormulaRecordPage formula={formula} onBack={backDeep} onAdd={() => addMethodToDesign(formula.methodId)} onSave={() => showToast("本页说明仅临时保留；请写入 S5 阶段草稿并保存正式 revision")} />;
     }
     if (deepRoute.kind === "approval-gate") {
       const cards = projectGateCards(activeProject, activeApiProject);
@@ -2010,7 +2235,7 @@ export default function Home() {
     if (deepRoute.kind === "asset-version") {
       const cards = projectGateCards(activeProject, activeApiProject);
       const gate = cards.find((item) => item.id === deepRoute.gateId) ?? cards[0];
-      return <AssetVersionPage gate={gate} onBack={backDeep} onSave={showToast} />;
+      return <AssetVersionPage gate={gate} onBack={backDeep} onSave={() => showToast("此汇总页未单独持久化；请回到对应阶段资产保存正式 revision")} />;
     }
     return null;
   }
@@ -2061,11 +2286,12 @@ export default function Home() {
                 <section className="stage-content">
                   <nav className="stage-action-strip" aria-label="阶段工作入口"><div><span>{activeStageData.id}</span><strong>阶段工作资产</strong><small>草稿、人工决定与检查结果均可继续修改</small></div><button onClick={openStageDraft}>打开当前草稿</button><button onClick={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })}>待决定项</button><button className="is-primary" onClick={runStageCheck}>一致性检查</button></nav>
                   {activeStage === 3
-                    ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} onCompareMethods={() => setView("methods")} />
-                    : <GenericStage stageIndex={activeStage} onOpenDraft={openStageDraft} onOpenDecision={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })} onRunCheck={runStageCheck} />}
+                    ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} onCompareMethods={() => setView("methods")} onSave={() => void saveDesignPanel()} remoteStage={activeRemoteStage} methodRecords={evaluatedMethods} busy={apiBusy} />
+                    : <GenericStage stageIndex={activeStage} remoteStage={activeRemoteStage} onOpenDraft={openStageDraft} onOpenDecision={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })} onRunCheck={runStageCheck} />}
                 </section>
                 <AgentPanel
                   stageIndex={activeStage}
+                  suggestionStateKey={`${activeProject.id}:${activeStageData.key}`}
                   suggestionStates={suggestionStates}
                   remoteStage={activeRemoteStage}
                   busy={apiBusy}
@@ -2096,7 +2322,7 @@ export default function Home() {
       />
       <DetailModal detail={detail} onClose={() => setDetail(null)} />
       <PreferencesModal open={preferencesOpen} value={interfaceTheme} onSelect={selectInterfaceTheme} onClose={() => setPreferencesOpen(false)} />
-      <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[chatAgent] ?? []} busy={chatBusy} onClose={() => setChatOpen(false)} onSelectAgent={setChatAgent} onSend={sendAgentMessage} onCapture={syncAgentOutput} />
+      <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[activeChatKey] ?? []} loading={chatLoadingKey === activeChatKey} busy={chatBusyKey === activeChatKey} onClose={() => setChatOpen(false)} onSelectAgent={selectChatAgent} onSend={(text) => void sendAgentMessage(text)} onCapture={syncAgentOutput} />
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
       <div className="screen-reader-status" aria-live="polite">当前页面：{pageTitle}</div>
     </div>

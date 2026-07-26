@@ -343,6 +343,7 @@ h1, .journey-header h1, .view-header h1 { font-family: var(--font-serif); letter
 .design-workspace { display: grid; gap: 16px; }
 .content-card { border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.94); box-shadow: 0 3px 12px rgba(23,46,67,.025); }
 .card-heading { min-height: 48px; padding: 13px 18px 8px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.card-heading > div { display: flex; align-items: center; gap: 8px; }
 .card-heading h2 { margin: 0; font-family: var(--font-serif); font-size: 17px; font-weight: 800; }
 .editable-mark { padding: 4px 8px; border: 1px dashed #a6bdc8; border-radius: 3px; color: #6c7f8d; font-family: var(--font-serif); font-size: 10px; }
 .text-button { border: 0; background: transparent; color: var(--teal-dark); font-weight: 700; cursor: pointer; }
@@ -430,6 +431,12 @@ h1, .journey-header h1, .view-header h1 { font-family: var(--font-serif); letter
 .stage-handoff-card h3 { margin: 0; font-family: var(--font-serif); font-size: 14px; }
 .readiness-track { height: 7px; overflow: hidden; border-radius: 4px; background: #e8edef; }
 .readiness-track span { display: block; height: 100%; border-radius: 4px; background: var(--teal); }
+.stage-handoff-card > div:first-child small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 9px;
+}
 .stage-handoff-card > strong { color: var(--teal-dark); }
 
 .page-view { padding: 28px 32px 50px; max-width: 1480px; margin: 0 auto; }
@@ -2331,6 +2338,16 @@ button:disabled {
   margin: 5px 0 0;
   white-space: pre-wrap;
   line-height: 1.65;
+}
+.chat-message > small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.chat-message.is-error {
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
 }
 .message-role {
   display: flex;

@@ -133,6 +133,18 @@ class DraftRequest(BaseModel):
     generation_mode: Literal["template", "model"] = "template"
 
 
+class StageChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=12_000)
+
+    @field_validator("message")
+    @classmethod
+    def strip_message(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("message must not be blank")
+        return cleaned
+
+
 class LiteratureSearchRequest(BaseModel):
     queries: list[str] = Field(default_factory=list, max_length=12)
     backends: list[Literal["openalex", "crossref", "semantic_scholar", "arxiv"]] = Field(

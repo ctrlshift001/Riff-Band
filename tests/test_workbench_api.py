@@ -440,6 +440,14 @@ def test_gate_requires_saved_confirmation_for_the_current_revision(tmp_path):
     )
     assert prepared.status_code == 200
     prepared_stage = prepared.json()["stages"][0]
+    assert prepared_stage["readiness"]["percent"] == 50
+    assert prepared_stage["readiness"]["checks"] == {
+        "artifact_saved": True,
+        "contract_valid": True,
+        "human_confirmed": False,
+        "approved": False,
+    }
+    assert prepared_stage["readiness"]["can_submit"] is False
 
     missing_confirmation = client.post(
         f"/api/v1/projects/{project_id}/stages/problem/decisions",
@@ -459,12 +467,18 @@ def test_gate_requires_saved_confirmation_for_the_current_revision(tmp_path):
     assert confirmed.status_code == 200
     confirmed_stage = confirmed.json()["stages"][0]
     assert confirmed_stage["content"]["_workspace"]["human_confirmed"] is True
+    assert confirmed_stage["readiness"]["percent"] == 75
+    assert confirmed_stage["readiness"]["can_submit"] is True
+    assert confirmed_stage["readiness"]["missing"] == ["提交并通过人工审批"]
 
     approved = client.post(
         f"/api/v1/projects/{project_id}/stages/problem/decisions",
         json={"decision": "approve", "reason": "Reviewed", "actor_type": "human"},
     )
     assert approved.status_code == 200
+    approved_stage = approved.json()["stages"][0]
+    assert approved_stage["readiness"]["percent"] == 100
+    assert approved_stage["readiness"]["missing"] == []
 
     changed_content = dict(confirmed_stage["content"])
     changed_content["problem_boundary"] = "修改后的研究边界"

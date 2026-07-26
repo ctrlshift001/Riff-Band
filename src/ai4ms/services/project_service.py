@@ -21,6 +21,7 @@ from ai4ms.services.models import (
     DraftRequest,
     KnowledgeEvaluationRequest,
     LiteratureSearchRequest,
+    StageChatRequest,
     StageDecisionRequest,
     StageRestoreRequest,
     StageStatus,
@@ -32,6 +33,7 @@ from ai4ms.services.stage_generation import (
     StageContentValidationError,
     StageGenerationService,
 )
+from ai4ms.services.stage_chat import StageChatService
 
 
 class ProjectNotFoundError(LookupError):
@@ -74,6 +76,7 @@ class ProjectService:
         analysis_runner: AnalysisRunnerService | None = None,
         delivery_export: DeliveryExportService | None = None,
         knowledge_evaluation: KnowledgeEvaluationService | None = None,
+        stage_chat: StageChatService | None = None,
     ):
         self.store = store
         self.data_dir = Path(data_dir)
@@ -88,6 +91,7 @@ class ProjectService:
         self.knowledge_evaluation = knowledge_evaluation or KnowledgeEvaluationService(
             self.projects_dir
         )
+        self.stage_chat = stage_chat or StageChatService(self.projects_dir)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
         self.analysis_jobs = AnalysisJobService(
@@ -240,6 +244,29 @@ class ProjectService:
             author_type="agent",
         )
         return self.update_stage(project_id, stage_key, update)
+
+    def list_stage_chat(
+        self,
+        project_id: str,
+        stage_key: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        self._require_stage(stage_key)
+        self.get_project(project_id)
+        return self.stage_chat.list_messages(project_id, stage_key, limit)
+
+    async def chat_stage(
+        self,
+        project_id: str,
+        stage_key: str,
+        request: StageChatRequest,
+    ) -> dict[str, Any]:
+        self._require_stage(stage_key)
+        return await self.stage_chat.chat(
+            self.get_project(project_id),
+            stage_key,
+            request,
+        )
 
     async def search_literature(self, project_id: str, request: LiteratureSearchRequest) -> dict[str, Any]:
         project = self.get_project(project_id)
@@ -407,21 +434,16 @@ class ProjectService:
                 raise StageContentValidationError(
                     "当前 revision 的人工确认尚未保存；请在阶段资产中勾选人工确认并保存新 revision"
                 )
-            StageGenerationService.validate_stage_content(project, stage_key, stage.get("content", {}))
-            if stage_key == "literature":
-                content = stage.get("content", {})
-                if not content.get("search_runs"):
-                    raise StageContentValidationError("S1 批准前必须执行至少一次可追溯文献检索")
-                if not content.get("papers"):
-                    raise StageContentValidationError("S1 检索未形成可追溯论文记录，不能进入下一阶段")
+            validation_issue = self._stage_validation_issue(
+                project,
+                stage_key,
+                stage.get("content", {}),
+            )
+            if validation_issue:
+                raise StageContentValidationError(validation_issue)
             if stage_key == "delivery":
                 exports = stage.get("content", {}).get("exports", [])
-                if not exports:
-                    raise StageContentValidationError("G5 批准前必须生成 HTML 报告与研究包")
                 latest = exports[-1]
-                fingerprint = self.delivery_export.delivery_fingerprint(stage.get("content", {}))
-                if latest.get("source_content_fingerprint") != fingerprint:
-                    raise StageContentValidationError("S9 内容在最近一次导出后已变化，请重新生成交付包")
                 self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "report")
                 self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "package")
         try:
@@ -440,9 +462,97 @@ class ProjectService:
         stages = project.get("stages", [])
         approved = sum(1 for stage in stages if stage["status"] == StageStatus.APPROVED.value)
         result = dict(project)
+        result["stages"] = [
+            {
+                **stage,
+                "readiness": self._stage_readiness(project, stage),
+            }
+            for stage in stages
+        ]
         result["progress"] = {"approved": approved, "total": len(STAGE_DEFINITIONS)}
         result["data_assets"] = self.store.list_data_assets(str(project["project_id"]))
         return result
+
+    def _stage_readiness(
+        self,
+        project: dict[str, Any],
+        stage: dict[str, Any],
+    ) -> dict[str, Any]:
+        content = stage.get("content", {})
+        workspace = content.get("_workspace", {}) if isinstance(content, dict) else {}
+        artifact_saved = int(stage.get("revision", 0) or 0) > 0
+        validation_issue = (
+            self._stage_validation_issue(project, str(stage["key"]), content)
+            if artifact_saved and isinstance(content, dict)
+            else "阶段尚无已保存资产"
+        )
+        checks = {
+            "artifact_saved": artifact_saved,
+            "contract_valid": artifact_saved and not validation_issue,
+            "human_confirmed": (
+                isinstance(workspace, dict)
+                and workspace.get("human_confirmed") is True
+            ),
+            "approved": stage.get("status") == StageStatus.APPROVED.value,
+        }
+        missing_labels = {
+            "artifact_saved": "保存阶段资产",
+            "contract_valid": "补齐阶段契约内容",
+            "human_confirmed": "保存人工确认",
+            "approved": "提交并通过人工审批",
+        }
+        completed = sum(1 for passed in checks.values() if passed)
+        return {
+            "percent": round(completed / len(checks) * 100),
+            "completed": completed,
+            "total": len(checks),
+            "can_submit": (
+                stage.get("status") == StageStatus.NEEDS_REVIEW.value
+                and all(checks[key] for key in ("artifact_saved", "contract_valid", "human_confirmed"))
+            ),
+            "checks": checks,
+            "missing": [
+                label
+                for key, label in missing_labels.items()
+                if not checks[key]
+            ],
+            "validation_issue": validation_issue[:500],
+        }
+
+    def _stage_validation_issue(
+        self,
+        project: dict[str, Any],
+        stage_key: str,
+        content: dict[str, Any],
+    ) -> str:
+        try:
+            StageGenerationService.validate_stage_content(project, stage_key, content)
+            if stage_key == "literature":
+                if not content.get("search_runs"):
+                    raise StageContentValidationError(
+                        "S1 批准前必须执行至少一次可追溯文献检索"
+                    )
+                if not content.get("papers"):
+                    raise StageContentValidationError(
+                        "S1 检索未形成可追溯论文记录，不能进入下一阶段"
+                    )
+            if stage_key == "delivery":
+                exports = content.get("exports", [])
+                if not exports:
+                    raise StageContentValidationError(
+                        "G5 批准前必须生成 HTML 报告与研究包"
+                    )
+                latest = exports[-1]
+                if not isinstance(latest, dict):
+                    raise StageContentValidationError("G5 最新导出记录格式无效")
+                fingerprint = self.delivery_export.delivery_fingerprint(content)
+                if latest.get("source_content_fingerprint") != fingerprint:
+                    raise StageContentValidationError(
+                        "S9 内容在最近一次导出后已变化，请重新生成交付包"
+                    )
+        except (StageContentValidationError, DeliveryExportError) as exc:
+            return str(exc)
+        return ""
 
     @staticmethod
     def _require_stage(stage_key: str) -> None:

@@ -23,12 +23,33 @@ class InferenceGateway(Protocol):
     async def generate(self, system_prompt: str, user_prompt: str) -> InferenceResponse: ...
 
 
+def configured_model_names(primary: str | None = None) -> tuple[str, ...]:
+    configured = [
+        item.strip()
+        for item in os.getenv("AUTOENV_OPENAI_MODELS", "").split(",")
+        if item.strip()
+    ]
+    primary_name = (
+        primary.strip()
+        if primary is not None
+        else os.getenv("AI4MS_MODEL", "").strip()
+    )
+    if not primary_name and configured:
+        primary_name = configured[0]
+
+    candidates = [primary_name]
+    candidates.extend(
+        item.strip()
+        for item in os.getenv("AI4MS_FALLBACK_MODELS", "").split(",")
+        if item.strip()
+    )
+    candidates.extend(configured)
+    return tuple(dict.fromkeys(item for item in candidates if item))
+
+
 def configured_model_name() -> str:
-    explicit = os.getenv("AI4MS_MODEL", "").strip()
-    if explicit:
-        return explicit
-    configured = os.getenv("AUTOENV_OPENAI_MODELS", "").split(",")
-    return next((item.strip() for item in configured if item.strip()), "")
+    models = configured_model_names()
+    return models[0] if models else ""
 
 
 def _configured_number(name: str, explicit: float | int | None, default: str, cast: type[float] | type[int]):
@@ -65,17 +86,34 @@ class OpenAICompatibleGateway:
         max_attempts: int | None = None,
         max_tokens: int | None = None,
     ) -> None:
-        self.model = (model or configured_model_name()).strip()
-        if not self.model:
+        self.model_names = configured_model_names(model)
+        if not self.model_names:
             raise InferenceUnavailableError("No model is configured for AI4MS stage generation")
+        self.configs = []
+        configuration_errors: list[str] = []
         try:
-            self.config = LLMsConfig.default().get(self.model)
-        except (FileNotFoundError, ValueError) as exc:
+            manager = LLMsConfig.default()
+        except FileNotFoundError as exc:
             raise InferenceUnavailableError(str(exc)) from exc
-        if not self.config.key or not self.config.base_url:
-            raise InferenceUnavailableError(f"Model '{self.model}' is missing its API key or base URL")
-        self.config.temperature = 0.2
-        self.config.top_p = 0.9
+        for model_name in self.model_names:
+            try:
+                config = manager.get(model_name)
+            except (FileNotFoundError, ValueError) as exc:
+                configuration_errors.append(f"{model_name}: {exc}")
+                continue
+            if not config.key or not config.base_url:
+                configuration_errors.append(
+                    f"{model_name}: model API key or base URL is missing"
+                )
+                continue
+            config.temperature = 0.2
+            config.top_p = 0.9
+            self.configs.append(config)
+        if not self.configs:
+            detail = "; ".join(configuration_errors) or "no usable model configuration"
+            raise InferenceUnavailableError(detail)
+        self.model = self.configs[0].model
+        self.config = self.configs[0]
         self.timeout_seconds = max(
             1.0,
             _configured_number("AI4MS_INFERENCE_TIMEOUT_SECONDS", timeout_seconds, "90", float),
@@ -92,7 +130,8 @@ class OpenAICompatibleGateway:
     async def generate(self, system_prompt: str, user_prompt: str) -> InferenceResponse:
         last_error: Exception | None = None
         for attempt in range(self.max_attempts):
-            llm = AsyncLLM(self.config, system_msg=system_prompt, max_completion_tokens=self.max_tokens)
+            config = self.configs[min(attempt, len(self.configs) - 1)]
+            llm = AsyncLLM(config, system_msg=system_prompt, max_completion_tokens=self.max_tokens)
             try:
                 text = await asyncio.wait_for(llm(user_prompt), timeout=self.timeout_seconds)
                 if not isinstance(text, str) or not text.strip():
@@ -104,13 +143,20 @@ class OpenAICompatibleGateway:
                     "total_tokens": summary.get("total_tokens", 0),
                     "call_count": summary.get("call_count", 0),
                 }
-                return InferenceResponse(text=text.strip(), model=self.model, usage=usage)
+                return InferenceResponse(text=text.strip(), model=config.model, usage=usage)
             except Exception as exc:
                 last_error = exc
                 if attempt + 1 < self.max_attempts:
                     await asyncio.sleep(min(2**attempt, 4))
 
         reason = str(last_error or "unknown inference error")
-        if self.config.key:
-            reason = reason.replace(self.config.key, "***")
-        raise InferenceUnavailableError(f"Model '{self.model}' request failed: {reason[:500]}") from last_error
+        for config in self.configs:
+            if config.key:
+                reason = reason.replace(config.key, "***")
+        attempted = ", ".join(
+            self.configs[min(index, len(self.configs) - 1)].model
+            for index in range(self.max_attempts)
+        )
+        raise InferenceUnavailableError(
+            f"Model request failed after trying [{attempted}]: {reason[:500]}"
+        ) from last_error

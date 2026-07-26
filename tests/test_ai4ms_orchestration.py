@@ -52,6 +52,7 @@ def test_aorchestra_adapter_isolates_artifacts_and_limits_audit_tools(tmp_path):
         tmp_path / "projects",
         project_builder=builder,
         model_name_factory=lambda: "test-model",
+        model_names_factory=lambda _primary: ("test-model", "fallback-model"),
     )
     result = asyncio.run(
         service.analyze(_project(), "robustness", "审查失败项", {"analysis_runs": []})
@@ -62,6 +63,7 @@ def test_aorchestra_adapter_isolates_artifacts_and_limits_audit_tools(tmp_path):
     assert "web_search" not in allowed
     assert "write_report_section" in allowed
     assert captured["max_parallel_subtasks"] >= 2
+    assert captured["sub_models"] == ["test-model", "fallback-model"]
     assert result.subagent_runs == 1
     assert result.status == "complete"
     project_dir = tmp_path / "projects" / "prj_orchestration"

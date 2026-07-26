@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
-from ai4ms.inference.gateway import configured_model_name
+from ai4ms.inference.gateway import configured_model_name, configured_model_names
 from project.build_project import build_agent_project
 
 
@@ -107,10 +107,12 @@ class AOrchestraStageService:
         *,
         project_builder: Callable[..., Any] = build_agent_project,
         model_name_factory: Callable[[], str] = configured_model_name,
+        model_names_factory: Callable[[str | None], tuple[str, ...]] = configured_model_names,
     ) -> None:
         self.projects_dir = Path(projects_dir)
         self.project_builder = project_builder
         self.model_name_factory = model_name_factory
+        self.model_names_factory = model_names_factory
 
     async def analyze(
         self,
@@ -125,6 +127,7 @@ class AOrchestraStageService:
         model = self.model_name_factory().strip()
         if not model:
             raise RuntimeError("AOrchestra requires AI4MS_MODEL or AUTOENV_OPENAI_MODELS")
+        model_pool = list(self.model_names_factory(model)) or [model]
 
         project_id = str(project["project_id"])
         run_id = f"ao_{stage_key}_{uuid4().hex[:12]}"
@@ -155,7 +158,7 @@ class AOrchestraStageService:
         )
         runtime = self.project_builder(
             main_model=model,
-            sub_models=[model],
+            sub_models=model_pool,
             brief_text=self._brief(stage_key, instruction, context),
             sources_dir=sources_dir,
             output_dir=run_dir,
