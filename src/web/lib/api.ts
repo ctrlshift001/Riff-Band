@@ -40,6 +40,39 @@ export interface ProjectStage {
   readiness: StageReadiness;
 }
 
+export interface StageToolPolicy {
+  tool_id: string;
+  purpose: string;
+  risk_level: "R0" | "R1" | "R2" | "R3" | "R4" | "R5";
+  call_when: string[];
+  preconditions: string[];
+  allowed_actions: string[];
+  forbidden_actions: string[];
+  failure_action: string;
+  requires_human_confirmation: boolean;
+}
+
+export interface StageDefinition {
+  key: string;
+  code: string;
+  position: number;
+  title: string;
+  short_title: string;
+  description: string;
+  artifact_type: string;
+  gate: string | null;
+  agent_policy: {
+    stage_id: string;
+    stage_key: string;
+    title: string;
+    principal_agent: string;
+    mission: string;
+    tools: StageToolPolicy[];
+    human_decisions: string[];
+    stop_conditions: string[];
+  };
+}
+
 export interface StageReadiness {
   percent: number;
   completed: number;
@@ -82,6 +115,25 @@ export interface Project extends ProjectSummary {
   approvals: ApprovalEvent[];
   progress: { approved: number; total: number };
   data_assets: DataAsset[];
+}
+
+export interface DeliveryExportRecord {
+  export_id: string;
+  generated_at: string;
+  source_delivery_revision: number;
+  source_delivery_hash: string;
+  source_content_fingerprint: string;
+  visual_report_path: string;
+  word_report_path: string;
+  pdf_report_path: string;
+  stata_package_path: string;
+  research_package_path: string;
+  manifest_path: string;
+  file_count: number;
+  word_sha256: string;
+  pdf_sha256: string;
+  stata_package_sha256: string;
+  package_sha256: string;
 }
 
 export interface DataAssetColumn {
@@ -260,6 +312,96 @@ export interface KnowledgeEvaluation {
   usage: Record<string, unknown>;
 }
 
+export interface KnowledgeEvaluationJob {
+  job_id: string;
+  project_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  error: string;
+  result: KnowledgeEvaluation | null;
+}
+
+export type SuggestionDecision = "pending" | "accepted" | "modified" | "rejected";
+
+export interface StageSuggestion {
+  suggestion_id: string;
+  title: string;
+  reason: string;
+  before: string;
+  after: string;
+  target: "summary" | "objective" | "content" | "scope" | "evidence_note" | "decision" | "risk" | "handoff";
+  tool_id: string;
+  state: SuggestionDecision;
+  decision_note?: string;
+  decided_at: string;
+}
+
+export interface StageSuggestionSet {
+  suggestion_set_id: string;
+  project_id: string;
+  stage_key: string;
+  stage_revision: number;
+  status: "not_generated" | "current" | "stale" | "invalid";
+  context_hash: string;
+  model: string;
+  generated_at: string;
+  summary: string;
+  suggestions: StageSuggestion[];
+  usage: Record<string, unknown>;
+}
+
+export interface StageToolRun {
+  tool_run_id: string;
+  project_id: string;
+  stage_key: string;
+  stage_revision: number;
+  tool_id: string;
+  risk_level: StageToolPolicy["risk_level"];
+  status: "completed" | "failed" | "confirmation_required";
+  summary: string;
+  result: Record<string, unknown>;
+  started_at: string;
+  finished_at: string;
+}
+
+export type ChatSearchMode = "auto" | "on" | "off";
+
+export interface SearchCitation {
+  citation_id: string;
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+  excerpt: string;
+  provider: string;
+  source_type: "official_data" | "official" | "academic" | "web";
+  is_official: boolean;
+  paper_id: string;
+  retrieved_at: string;
+}
+
+export interface SearchSourceRun {
+  provider: string;
+  query?: string;
+  success: boolean;
+  record_count: number;
+  error: string;
+}
+
+export interface SearchTrace {
+  search_id: string;
+  status: "skipped" | "complete" | "partial" | "failed";
+  mode: ChatSearchMode;
+  searched: boolean;
+  searched_at: string;
+  queries: string[];
+  citations: SearchCitation[];
+  source_runs: SearchSourceRun[];
+  snapshot_path: string;
+}
+
 export interface StageChatMessage {
   message_id: string;
   project_id: string;
@@ -269,6 +411,8 @@ export interface StageChatMessage {
   created_at: string;
   model: string;
   usage: Record<string, unknown>;
+  citations: SearchCitation[];
+  search: SearchTrace | null;
 }
 
 export interface StageChatTurn {
@@ -497,12 +641,13 @@ export function sendStageChat(
   projectId: string,
   stageKey: string,
   message: string,
+  searchMode: ChatSearchMode = "auto",
 ): Promise<StageChatTurn> {
   return request<StageChatTurn>(
     `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/chat`,
     {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, search_mode: searchMode }),
     },
   );
 }
@@ -512,6 +657,66 @@ export function searchLiterature(projectId: string, queries: string[] = []): Pro
     method: "POST",
     body: JSON.stringify({ queries }),
   });
+}
+
+export async function getStageDefinitions(): Promise<StageDefinition[]> {
+  const payload = await request<{ items: StageDefinition[] }>("/meta/stages");
+  return payload.items;
+}
+
+export function invokeStageTool(
+  projectId: string,
+  stageKey: string,
+  toolId: string,
+  query = "",
+  instruction = "",
+): Promise<StageToolRun> {
+  return request<StageToolRun>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/tools/invoke`,
+    {
+      method: "POST",
+      body: JSON.stringify({ tool_id: toolId, query, instruction }),
+    },
+  );
+}
+
+export function getStageSuggestions(
+  projectId: string,
+  stageKey: string,
+): Promise<StageSuggestionSet> {
+  return request<StageSuggestionSet>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/suggestions`,
+  );
+}
+
+export function generateStageSuggestions(
+  projectId: string,
+  stageKey: string,
+  instruction = "",
+): Promise<StageSuggestionSet> {
+  return request<StageSuggestionSet>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/suggestions`,
+    {
+      method: "POST",
+      body: JSON.stringify({ instruction }),
+    },
+  );
+}
+
+export function decideStageSuggestion(
+  projectId: string,
+  stageKey: string,
+  suggestionId: string,
+  state: SuggestionDecision,
+  note = "",
+): Promise<StageSuggestionSet> {
+  return request<StageSuggestionSet>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/suggestions/${encodeURIComponent(suggestionId)}/decision`,
+    {
+      method: "POST",
+      body: JSON.stringify({ state, note }),
+    },
+  );
 }
 
 export function getKnowledgeEvaluation(projectId: string): Promise<KnowledgeEvaluation> {
@@ -531,6 +736,29 @@ export function evaluateKnowledge(
       method: "POST",
       body: JSON.stringify({ methods, formulas }),
     },
+  );
+}
+
+export function submitKnowledgeEvaluation(
+  projectId: string,
+  methods: KnowledgeCandidate[],
+  formulas: KnowledgeCandidate[],
+): Promise<KnowledgeEvaluationJob> {
+  return request<KnowledgeEvaluationJob>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/evaluation/jobs`,
+    {
+      method: "POST",
+      body: JSON.stringify({ methods, formulas }),
+    },
+  );
+}
+
+export function getKnowledgeEvaluationJob(
+  projectId: string,
+  jobId: string,
+): Promise<KnowledgeEvaluationJob> {
+  return request<KnowledgeEvaluationJob>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/evaluation/jobs/${encodeURIComponent(jobId)}`,
   );
 }
 
@@ -640,7 +868,7 @@ export function exportDelivery(projectId: string): Promise<Project> {
 export function deliveryArtifactUrl(
   projectId: string,
   exportId: string,
-  kind: "report" | "package" | "manifest",
+  kind: "report" | "word" | "pdf" | "stata" | "package" | "manifest",
 ): string {
   return `${API_ROOT}/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(exportId)}/${kind}`;
 }

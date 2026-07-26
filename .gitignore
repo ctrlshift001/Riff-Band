@@ -1,33 +1,30 @@
-﻿# Environment files with secrets
+﻿# Environment & secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
+.env*.local
+.env.stata-runner.local
 
-# Dependencies
-node_modules/
+# Personal config
+aorchestra.yaml
+
+# Runtime output
+workspace/
+output/
+.playwright-cli/
+
+# Python
+.venv/
 __pycache__/
+.pytest_cache/
+.pytest-*/
 *.pyc
 *.pyo
-
-# Build output
-.next/
+*.egg-info/
 dist/
 build/
-egg-info/
 
-# Temporary files
-.clone-new/
-.clone-tmp/
-.backup-*/
-*.log
-
-# Workspace data (user data)
-workspace/
-
-# OS files
+# OS
 .DS_Store
 Thumbs.db
-
-# IDE
-.vscode/
-.idea/

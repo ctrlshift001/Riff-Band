@@ -10,10 +10,15 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 from ai4ms.assets import DataAssetError
+from ai4ms.connectors import DataCommonsConnector, MCPConnectorError
 from ai4ms.db import ProjectStore
 from ai4ms.delivery import DeliveryExportError
 from ai4ms.domains import MANAGEMENT_SCIENCE_PROFILE
-from ai4ms.inference import InferenceUnavailableError, inference_status
+from ai4ms.inference import (
+    InferenceUnavailableError,
+    OpenAICompatibleGateway,
+    inference_status,
+)
 from ai4ms.knowledge import (
     KnowledgeEvaluationOutputError,
     KnowledgeEvaluationService,
@@ -27,9 +32,11 @@ from ai4ms.runners import (
     AnalysisRunnerService,
     AnalysisRunBlockedError,
 )
+from ai4ms.search import WebResearchService
 from ai4ms.services.models import (
     AnalysisRerunRequest,
     AnalysisRunRequest,
+    ConnectorToolRequest,
     CreateProjectRequest,
     DraftRequest,
     KnowledgeEvaluationRequest,
@@ -38,6 +45,9 @@ from ai4ms.services.models import (
     StageAssetSectionPatchRequest,
     StageDecisionRequest,
     StageRestoreRequest,
+    StageSuggestionDecisionRequest,
+    StageSuggestionGenerateRequest,
+    StageToolInvokeRequest,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
     UpdateProjectRequest,
@@ -57,6 +67,12 @@ from ai4ms.services.stage_generation import (
     StageGenerationService,
 )
 from ai4ms.services.stage_chat import StageChatService
+from ai4ms.services.stage_assistant import (
+    StageAssistantError,
+    StageAssistantService,
+    StageSuggestionOutputError,
+)
+from ai4ms.services.knowledge_jobs import KnowledgeEvaluationJobNotFoundError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -86,9 +102,21 @@ def create_app(
     analysis_runner: AnalysisRunnerService | None = None,
     knowledge_evaluation: KnowledgeEvaluationService | None = None,
     stage_chat: StageChatService | None = None,
+    data_commons: DataCommonsConnector | None = None,
+    research_service: WebResearchService | None = None,
+    stage_assistant: StageAssistantService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
     web_root = _web_root()
+    connector = data_commons or DataCommonsConnector()
+    resolved_research_service = research_service or WebResearchService(
+        resolved_data_dir / "projects",
+        data_commons=connector,
+    )
+    resolved_stage_chat = stage_chat or StageChatService(
+        resolved_data_dir / "projects",
+        research_service=resolved_research_service,
+    )
     service = ProjectService(
         ProjectStore(resolved_data_dir / "ai4ms.db"),
         resolved_data_dir,
@@ -96,7 +124,8 @@ def create_app(
         literature_search=literature_search,
         analysis_runner=analysis_runner,
         knowledge_evaluation=knowledge_evaluation,
-        stage_chat=stage_chat,
+        stage_chat=resolved_stage_chat,
+        stage_assistant=stage_assistant,
     )
 
     app = FastAPI(
@@ -105,6 +134,8 @@ def create_app(
         description="面向管理科学的本地优先 AI 科研工作台。",
     )
     app.state.project_service = service
+    app.state.data_commons = connector
+    app.state.research_service = resolved_research_service
     app.state.web_root = web_root
 
     origins = [item.strip() for item in os.environ.get("AI4MS_CORS_ORIGINS", "*").split(",") if item.strip()]
@@ -135,6 +166,14 @@ def create_app(
     async def stage_revision_conflict(_request: Request, exc: StageRevisionConflictError):
         return _json_error(status.HTTP_409_CONFLICT, "revision_conflict", str(exc))
 
+    @app.exception_handler(MCPConnectorError)
+    async def mcp_connector_error(_request: Request, exc: MCPConnectorError):
+        return _json_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "mcp_connector_unavailable",
+            str(exc),
+        )
+
     @app.exception_handler(StageGenerationNotSupportedError)
     async def generation_not_supported(_request: Request, exc: StageGenerationNotSupportedError):
         return _json_error(status.HTTP_409_CONFLICT, "model_generation_not_supported", str(exc))
@@ -150,6 +189,34 @@ def create_app(
     @app.exception_handler(KnowledgeEvaluationOutputError)
     async def invalid_knowledge_evaluation(_request: Request, exc: KnowledgeEvaluationOutputError):
         return _json_error(status.HTTP_502_BAD_GATEWAY, "invalid_knowledge_evaluation", str(exc))
+
+    @app.exception_handler(StageSuggestionOutputError)
+    async def invalid_stage_suggestions(_request: Request, exc: StageSuggestionOutputError):
+        return _json_error(
+            status.HTTP_502_BAD_GATEWAY,
+            "invalid_stage_suggestions",
+            str(exc),
+        )
+
+    @app.exception_handler(StageAssistantError)
+    async def stage_assistant_error(_request: Request, exc: StageAssistantError):
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code in {"stage_not_found", "suggestion_not_found"}
+            else status.HTTP_409_CONFLICT
+        )
+        return _json_error(code, exc.code, str(exc))
+
+    @app.exception_handler(KnowledgeEvaluationJobNotFoundError)
+    async def knowledge_job_not_found(
+        _request: Request,
+        exc: KnowledgeEvaluationJobNotFoundError,
+    ):
+        return _json_error(
+            status.HTTP_404_NOT_FOUND,
+            "knowledge_evaluation_job_not_found",
+            str(exc),
+        )
 
     @app.exception_handler(LiteratureSearchInputError)
     async def invalid_literature_search(_request: Request, exc: LiteratureSearchInputError):
@@ -214,6 +281,63 @@ def create_app(
     @app.get("/api/v1/meta/inference", tags=["meta"])
     async def model_inference_status():
         return inference_status()
+
+    @app.post("/api/v1/meta/inference/probe", tags=["meta"])
+    async def probe_model_inference():
+        result = await OpenAICompatibleGateway(max_tokens=256).generate(
+            "You are a connectivity probe for the AI4MS research workbench.",
+            "Reply with AI4MS_READY and nothing else.",
+        )
+        return {
+            "status": "ok",
+            "configured": True,
+            "model": result.model,
+            "usage": result.usage,
+        }
+
+    @app.post("/api/v1/meta/search/probe", tags=["meta"])
+    async def probe_web_search(request: Request):
+        research: WebResearchService = request.app.state.research_service
+        result = await research.probe_search()
+        if result["status"] != "ok":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "serper_search_unavailable",
+                    "message": result["error"],
+                },
+            )
+        return result
+
+    @app.get("/api/v1/connectors", tags=["connectors"])
+    async def list_connectors(request: Request):
+        return {"items": [request.app.state.data_commons.status()]}
+
+    @app.get("/api/v1/connectors/datacommons/tools", tags=["connectors"])
+    async def list_datacommons_tools(request: Request):
+        connector_service: DataCommonsConnector = request.app.state.data_commons
+        return {"items": await connector_service.list_tools()}
+
+    @app.post("/api/v1/connectors/datacommons/query", tags=["connectors"])
+    async def query_datacommons(
+        payload: ConnectorToolRequest,
+        request: Request,
+    ):
+        connector_service: DataCommonsConnector = request.app.state.data_commons
+        if payload.arguments:
+            return await connector_service.call_tool(
+                payload.tool_name,
+                payload.arguments,
+            )
+        if payload.tool_name == "search_indicators" and payload.query:
+            return await connector_service.search_indicators(payload.query)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "query is required for search_indicators; "
+                "arguments are required for get_observations"
+            ),
+        )
 
     @app.get("/api/v1/meta/prompts", tags=["meta"])
     async def prompt_registry(response: Response):
@@ -428,6 +552,67 @@ def create_app(
     ):
         return await get_service(request).chat_stage(project_id, stage_key, payload)
 
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/tools/invoke",
+        tags=["stage-tools"],
+    )
+    async def invoke_stage_tool(
+        project_id: str,
+        stage_key: str,
+        payload: StageToolInvokeRequest,
+        request: Request,
+    ):
+        return await get_service(request).invoke_stage_tool(
+            project_id,
+            stage_key,
+            payload,
+        )
+
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions",
+        tags=["stage-suggestions"],
+    )
+    async def get_stage_suggestions(
+        project_id: str,
+        stage_key: str,
+        request: Request,
+    ):
+        return get_service(request).get_stage_suggestions(project_id, stage_key)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions",
+        tags=["stage-suggestions"],
+    )
+    async def generate_stage_suggestions(
+        project_id: str,
+        stage_key: str,
+        payload: StageSuggestionGenerateRequest,
+        request: Request,
+    ):
+        return await get_service(request).generate_stage_suggestions(
+            project_id,
+            stage_key,
+            payload,
+        )
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions/{suggestion_id}/decision",
+        tags=["stage-suggestions"],
+    )
+    async def decide_stage_suggestion(
+        project_id: str,
+        stage_key: str,
+        suggestion_id: str,
+        payload: StageSuggestionDecisionRequest,
+        request: Request,
+    ):
+        return get_service(request).decide_stage_suggestion(
+            project_id,
+            stage_key,
+            suggestion_id,
+            payload,
+        )
+
     @app.post("/api/v1/projects/{project_id}/stages/literature/search", tags=["literature"])
     async def search_literature(project_id: str, payload: LiteratureSearchRequest, request: Request):
         return await get_service(request).search_literature(project_id, payload)
@@ -449,6 +634,35 @@ def create_app(
         request: Request,
     ):
         return await get_service(request).evaluate_knowledge(project_id, payload)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/knowledge/evaluation/jobs",
+        tags=["knowledge"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def submit_knowledge_evaluation(
+        project_id: str,
+        payload: KnowledgeEvaluationRequest,
+        request: Request,
+    ):
+        return await get_service(request).submit_knowledge_evaluation(
+            project_id,
+            payload,
+        )
+
+    @app.get(
+        "/api/v1/projects/{project_id}/knowledge/evaluation/jobs/{job_id}",
+        tags=["knowledge"],
+    )
+    async def get_knowledge_evaluation_job(
+        project_id: str,
+        job_id: str,
+        request: Request,
+    ):
+        return get_service(request).get_knowledge_evaluation_job(
+            project_id,
+            job_id,
+        )
 
     @app.post("/api/v1/projects/{project_id}/stages/analysis/preflight", tags=["runners"])
     async def preflight_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):
@@ -542,6 +756,33 @@ def create_app(
             media_type="text/html; charset=utf-8",
             filename=path.name,
             content_disposition_type="inline",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/word", tags=["delivery"])
+    async def download_word_report(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "word")
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=f"{project_id}-{export_id}.docx",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/pdf", tags=["delivery"])
+    async def download_pdf_report(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "pdf")
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=f"{project_id}-{export_id}.pdf",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/stata", tags=["delivery"])
+    async def download_stata_package(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "stata")
+        return FileResponse(
+            path,
+            media_type="application/zip",
+            filename=f"{project_id}-{export_id}-stata.zip",
         )
 
     @app.get("/api/v1/projects/{project_id}/exports/{export_id}/package", tags=["delivery"])
