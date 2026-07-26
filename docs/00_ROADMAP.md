@@ -21,7 +21,7 @@
 | S6 结果分析 | Runner、日志、表图、结果和复现信息 | `RunArtifact` | 批准运行和选择重跑 |
 | S7 稳健性检验 | 替代口径、模型、样本、安慰剂与失败检查 | `RobustnessReport` | 追加检验或接受影响 |
 | S8 机制与异质性 | Claim-Evidence、机制、异质性、反证和限制 | `ClaimEvidence` | G4 确认解释边界 |
-| S9 结论与政策含义 | 大纲、结论、政策含义、HTML 报告和研究包 | `ResearchPackage` | G5 确认发布与导出 |
+| S9 结论与政策含义 | 大纲、结论、政策含义、HTML、Word、PDF、图表、Mermaid 和 Stata 复现包 | `ResearchPackage` | G5 确认发布与导出 |
 
 每一步必须支持“生成草稿、人工编辑、批准/退回、查看依据、进入下一步”。AI 不能替用户批准自己的输出。
 
@@ -44,7 +44,7 @@
 - `KnowledgeService` 加载 DevPack 的方法、公式和数据源 Registry；
 - `ApprovalService` 实现本地单人 G0-G5 决定与审计；
 - `RunnerService` 提供 Stata BYOL preflight/submit/collect 和明确 blocked 状态；
-- `ExportService` 生成 HTML、Markdown、JSON 和研究包。
+- `ExportService` 生成 HTML、DOCX、PDF、图表、Mermaid、manifest、Stata 复现包和综合研究包。
 
 ### 数据与资产
 

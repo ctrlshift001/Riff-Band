@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Globe2, Search, SendHorizontal } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  FileText,
+  FileType2,
+  Globe2,
+  PackageCheck,
+  RefreshCw,
+  Search,
+  SendHorizontal,
+} from "lucide-react";
 import {
   ApiError,
   analysisRunArtifactUrl,
@@ -10,6 +20,7 @@ import {
   createProject as createApiProject,
   decideStageSuggestion as decideApiStageSuggestion,
   decideStage as decideApiStage,
+  deliveryArtifactUrl,
   exportDelivery as exportApiDelivery,
   getAnalysisJob,
   getAnalysisRunResult,
@@ -46,6 +57,7 @@ import {
   type ChatSearchMode,
   type KnowledgeEvaluation,
   type DiagnosticRule,
+  type DeliveryExportRecord,
   type InterfaceTheme,
   type Project as ApiProject,
   type ProjectStage as ApiProjectStage,
@@ -1129,6 +1141,110 @@ function GenericStage({
   );
 }
 
+function DeliveryCenter({
+  projectId,
+  remoteStage,
+  busy,
+  onExport,
+}: {
+  projectId: string;
+  remoteStage?: ApiProjectStage;
+  busy: boolean;
+  onExport: () => void;
+}) {
+  const exports = Array.isArray(remoteStage?.content.exports)
+    ? remoteStage.content.exports
+        .map(asRecord)
+        .filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
+  const latestRaw = exports.at(-1);
+  const latest = latestRaw as unknown as DeliveryExportRecord | undefined;
+  const complete = Boolean(
+    latest?.export_id
+    && latest.word_report_path
+    && latest.pdf_report_path
+    && latest.stata_package_path,
+  );
+  const reportUrl = latest?.export_id
+    ? deliveryArtifactUrl(projectId, latest.export_id, "report")
+    : "";
+
+  return (
+    <div className="delivery-center">
+      <section className="delivery-heading">
+        <div>
+          <p className="eyebrow">Research delivery center</p>
+          <h2>研究报告与复现交付</h2>
+          <p>同一份获批研究资产生成可交互 HTML、可编辑 Word、固定版 PDF 和完整 Stata 复现包。</p>
+        </div>
+        <button
+          className="delivery-refresh"
+          type="button"
+          disabled={busy || !remoteStage || remoteStage.revision < 1 || remoteStage.status === "not_started"}
+          onClick={onExport}
+        >
+          <RefreshCw size={17} />
+          {busy ? "正在生成" : latest ? "重新导出" : "生成交付物"}
+        </button>
+      </section>
+
+      {!latest && (
+        <section className="delivery-empty">
+          <FileText size={30} />
+          <div><h3>尚无正式导出</h3><p>先生成并保存 S9 草稿，再生成统一报告和 Stata 复现包。</p></div>
+        </section>
+      )}
+
+      {latest && !complete && (
+        <section className="delivery-empty delivery-upgrade">
+          <RefreshCw size={28} />
+          <div><h3>这是旧版交付记录</h3><p>重新导出后即可获得 Word、PDF、图表、Mermaid 和独立 Stata 复现包。</p></div>
+        </section>
+      )}
+
+      {latest && complete && (
+        <>
+          <section className="delivery-actions" aria-label="报告下载">
+            <a href={reportUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={18} />
+              <span><strong>打开 HTML</strong><small>交互图表与关系图</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "word")} download>
+              <FileType2 size={18} />
+              <span><strong>下载 Word</strong><small>可继续编辑的 DOCX</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "pdf")} download>
+              <FileText size={18} />
+              <span><strong>下载 PDF</strong><small>固定版本与归档</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "stata")} download>
+              <PackageCheck size={18} />
+              <span><strong>Stata 复现包</strong><small>代码、结果、日志与签名</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "package")} download>
+              <Download size={18} />
+              <span><strong>完整研究包</strong><small>全部报告与可视资产</small></span>
+            </a>
+          </section>
+
+          <section className="delivery-preview">
+            <header>
+              <div><p className="eyebrow">Interactive HTML preview</p><h3>{String(remoteStage?.content.title || "AI4MS 研究报告")}</h3></div>
+              <div><span>{latest.file_count} 个文件</span><code>{latest.package_sha256.slice(0, 12)}</code></div>
+            </header>
+            <iframe src={reportUrl} title="AI4MS 可交互研究报告预览" />
+            <footer>
+              <span>Export {latest.export_id}</span>
+              <span>{new Date(latest.generated_at).toLocaleString("zh-CN")}</span>
+              <span>Source S9 revision {latest.source_delivery_revision}</span>
+            </footer>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
 function EvidenceLibrary({
   records,
   searchRuns,
@@ -2125,6 +2241,29 @@ export default function Home() {
       setApiBusy(false);
     }
   }
+
+  async function refreshDeliveryExport() {
+    const projectId = activeProject.id;
+    const delivery = apiProjects[projectId]?.stages.find((stage) => stage.key === "delivery");
+    if (!delivery || delivery.revision < 1 || delivery.status === "not_started") {
+      showToast("请先生成并保存 S9 阶段草稿");
+      return;
+    }
+    setApiBusy(true);
+    setApiError("");
+    try {
+      const updated = await exportApiDelivery(projectId);
+      applyApiProject(updated);
+      showToast("HTML、Word、PDF、图表、Mermaid 与 Stata 复现包已更新");
+    } catch (error) {
+      const message = readApiError(error);
+      setApiError(message);
+      showToast(`交付物生成失败：${message}`);
+    } finally {
+      setApiBusy(false);
+    }
+  }
+
   async function saveDesignPanel() {
     const projectId = activeProject.id;
     const remote = apiProjects[projectId]?.stages.find((stage) => stage.key === "design");
@@ -2591,7 +2730,9 @@ export default function Home() {
                   <nav className="stage-action-strip" aria-label="阶段工作入口"><div><span>{activeStageData.id}</span><strong>阶段工作资产</strong><small>草稿、人工决定与检查结果均可继续修改</small></div><button onClick={openStageDraft}>打开当前草稿</button><button onClick={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })}>待决定项</button><button className="is-primary" onClick={runStageCheck}>一致性检查</button></nav>
                   {activeStage === 3
                     ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} onCompareMethods={() => setView("methods")} onSave={() => void saveDesignPanel()} remoteStage={activeRemoteStage} methodRecords={evaluatedMethods} busy={apiBusy} />
-                    : <GenericStage stageIndex={activeStage} remoteStage={activeRemoteStage} onOpenDraft={openStageDraft} onOpenDecision={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })} onRunCheck={runStageCheck} />}
+                    : activeStage === 9
+                      ? <DeliveryCenter projectId={activeProject.id} remoteStage={activeRemoteStage} busy={apiBusy} onExport={() => void refreshDeliveryExport()} />
+                      : <GenericStage stageIndex={activeStage} remoteStage={activeRemoteStage} onOpenDraft={openStageDraft} onOpenDecision={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })} onRunCheck={runStageCheck} />}
                 </section>
                 <AgentPanel
                   stageIndex={activeStage}

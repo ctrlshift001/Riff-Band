@@ -758,6 +758,33 @@ def create_app(
             content_disposition_type="inline",
         )
 
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/word", tags=["delivery"])
+    async def download_word_report(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "word")
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=f"{project_id}-{export_id}.docx",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/pdf", tags=["delivery"])
+    async def download_pdf_report(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "pdf")
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=f"{project_id}-{export_id}.pdf",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/stata", tags=["delivery"])
+    async def download_stata_package(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "stata")
+        return FileResponse(
+            path,
+            media_type="application/zip",
+            filename=f"{project_id}-{export_id}-stata.zip",
+        )
+
     @app.get("/api/v1/projects/{project_id}/exports/{export_id}/package", tags=["delivery"])
     async def download_research_package(project_id: str, export_id: str, request: Request):
         path = get_service(request).delivery_artifact(project_id, export_id, "package")

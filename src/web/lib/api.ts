@@ -117,6 +117,25 @@ export interface Project extends ProjectSummary {
   data_assets: DataAsset[];
 }
 
+export interface DeliveryExportRecord {
+  export_id: string;
+  generated_at: string;
+  source_delivery_revision: number;
+  source_delivery_hash: string;
+  source_content_fingerprint: string;
+  visual_report_path: string;
+  word_report_path: string;
+  pdf_report_path: string;
+  stata_package_path: string;
+  research_package_path: string;
+  manifest_path: string;
+  file_count: number;
+  word_sha256: string;
+  pdf_sha256: string;
+  stata_package_sha256: string;
+  package_sha256: string;
+}
+
 export interface DataAssetColumn {
   name: string;
   label: string;
@@ -849,7 +868,7 @@ export function exportDelivery(projectId: string): Promise<Project> {
 export function deliveryArtifactUrl(
   projectId: string,
   exportId: string,
-  kind: "report" | "package" | "manifest",
+  kind: "report" | "word" | "pdf" | "stata" | "package" | "manifest",
 ): string {
   return `${API_ROOT}/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(exportId)}/${kind}`;
 }

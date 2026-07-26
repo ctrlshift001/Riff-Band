@@ -10,7 +10,7 @@ AI4MS 是面向管理科学研究的本地优先 AI 科研工作台。它把问�
 - AI 只生成草稿和建议，关键阶段由人批准；
 - 文献、数据、代码、运行结果、主张和报告通过 ID、revision 与 hash 关联；
 - 失败、反证、限制和未知必须保留，不能由写作模型隐藏；
-- 最终交付包含浏览器 GUI、HTML 可视化报告和可复现研究包。
+- 最终交付包含浏览器 GUI、可交互 HTML、可编辑 Word、固定版 PDF 和 Stata 可复现研究包。
 
 ## 2. 目标用户
 
@@ -31,7 +31,7 @@ AI4MS 是面向管理科学研究的本地优先 AI 科研工作台。它把问�
 | S6 结果分析 | Runner、日志、表图、结构化结果和复现信息 | `RunArtifact` | 人工启动、取消和重跑 |
 | S7 稳健性检验 | 替代口径、样本、模型、安慰剂与失败检验 | `RobustnessReport` | 接受影响或追加检验 |
 | S8 机制与异质性 | Claim-Evidence、机制、异质性、反证和限制 | `ClaimEvidence` | G4 批准解释边界 |
-| S9 结论与政策含义 | 结论、政策含义、引用、报告和发布包 | `ResearchPackage` | G5 批准发布 |
+| S9 结论与政策含义 | 结论、政策含义、引用、多格式报告和复现包 | `ResearchPackage` | G5 批准发布 |
 
 阶段状态统一为 `not_started / in_progress / needs_review / approved / blocked`。上游关键内容变化会使下游批准失效；AI 和 service account 不能成为批准人。
 
@@ -69,9 +69,9 @@ S0-S1 与 S7-S8 接入基于论文 **AOrchestra: Automating Sub-Agent Creation f
 - Result Bundle 回收机器可读结果、日志、数据签名、表图和 artifact hash；
 - `.dta`、Stata 安装文件和许可证不进入返回包或 Docker 镜像。
 
-### HTML 可视化报告
+### 多格式研究报告
 
-HTML 报告是正式产品输出，不是装饰性导出。报告应让审核者从结论回到论文、数据、Run、Claim-Evidence 和审批记录。当前 S9 可确定性生成 HTML 报告、manifest 和 ZIP 研究包。
+S9 以同一份版本化研究资产确定性生成可交互 HTML、DOCX、PDF、图表、Mermaid 源码、manifest、独立 Stata 复现包和综合 ZIP。HTML 允许审核者从结论回到 Run、Claim-Evidence 和审批记录；DOCX 用于继续编辑；PDF 用于固定版本；Stata 包包含 do-file、结构化结果、日志、签名和复现说明。
 
 ## 5. 多学科泛用性
 
@@ -94,7 +94,7 @@ HTML 报告是正式产品输出，不是装饰性导出。报告应让审核者
 
 ## 7. 当前实现与已知缺口
 
-当前已经具备 FastAPI、SQLite、S0-S9 状态机、revision/approval、阶段模型生成、多源检索、知识注册表、AOrchestra、Stata BYOL Runner、Claim-Evidence 约束、HTML/ZIP 导出、Next.js GUI 和 Docker 单入口。
+当前已经具备 FastAPI、SQLite、S0-S9 状态机、revision/approval、阶段模型生成、多源检索、知识注册表、AOrchestra、Stata BYOL Runner、Claim-Evidence 约束、HTML/Word/PDF/Stata ZIP 导出、Next.js GUI 和 Docker 单入口。
 
 仍需继续收口的部分：
 
@@ -109,5 +109,5 @@ HTML 报告是正式产品输出，不是装饰性导出。报告应让审核者
 - 一个项目可从 S0 流转到 S9，并在重启后恢复；
 - 文献、数据、Run、Claim 和报告具有真实来源或明确未知状态；
 - 无模型、无网络或无 Stata 时准确显示阻塞，不伪装成功；
-- HTML 报告和 ZIP 研究包可下载；
+- HTML 可在线预览，Word、PDF、Stata 复现包和综合研究包可下载；
 - 镜像和日志不包含 API Key、Stata 许可证或受限数据。

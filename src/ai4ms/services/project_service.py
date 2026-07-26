@@ -75,7 +75,7 @@ STAGE_TEMPLATES: dict[str, dict[str, Any]] = {
     "analysis": {"execution_engine": "unknown", "readiness_summary": "", "expected_outputs": [], "preflight_checks": [], "result_review_checks": [], "runner_status": "not_checked", "approved_analysis_plan_revision": 0, "approved_analysis_plan_hash": "", "do_file": "", "runs": [], "results": [], "blocking_issues": [], "unknowns": []},
     "robustness": {"robustness_matrix": [], "failed_checks": [], "interpretation_limits": [], "next_runs": [], "reproducibility_report": "", "unknowns": []},
     "evidence": {"claims": [], "mechanisms": [], "heterogeneity": [], "limitations": [], "interpretation": "", "unknowns": []},
-    "delivery": {"title": "", "executive_summary": "", "conclusions": [], "policy_implications": [], "outline": [], "reference_paper_ids": [], "approved_claims": [], "references": [], "limitations": [], "reproducibility_notes": [], "disclosure": "", "release_notes": "", "unknowns": [], "exports": [], "visual_report_path": "", "research_package_path": ""},
+    "delivery": {"title": "", "executive_summary": "", "conclusions": [], "policy_implications": [], "outline": [], "reference_paper_ids": [], "approved_claims": [], "references": [], "limitations": [], "reproducibility_notes": [], "disclosure": "", "release_notes": "", "unknowns": [], "exports": [], "visual_report_path": "", "word_report_path": "", "pdf_report_path": "", "stata_package_path": "", "research_package_path": "", "manifest_path": ""},
 }
 
 
@@ -515,6 +515,9 @@ class ProjectService:
         content.update(stage.get("content") or {})
         content.setdefault("exports", []).append(export_record)
         content["visual_report_path"] = export_record["visual_report_path"]
+        content["word_report_path"] = export_record["word_report_path"]
+        content["pdf_report_path"] = export_record["pdf_report_path"]
+        content["stata_package_path"] = export_record["stata_package_path"]
         content["research_package_path"] = export_record["research_package_path"]
         content["manifest_path"] = export_record["manifest_path"]
         return self.update_stage(
@@ -653,6 +656,9 @@ class ProjectService:
                 exports = stage.get("content", {}).get("exports", [])
                 latest = exports[-1]
                 self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "report")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "word")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "pdf")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "stata")
                 self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "package")
         try:
             result = self.store.decide_stage(
@@ -748,7 +754,7 @@ class ProjectService:
                 exports = content.get("exports", [])
                 if not exports:
                     raise StageContentValidationError(
-                        "G5 批准前必须生成 HTML 报告与研究包"
+                        "G5 批准前必须生成 HTML、Word、PDF 与 Stata 复现包"
                     )
                 latest = exports[-1]
                 if not isinstance(latest, dict):

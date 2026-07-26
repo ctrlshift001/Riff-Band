@@ -39,7 +39,7 @@ Docker 交付时，Next.js 静态导出和 FastAPI 使用同一个 `8000` 端口
 | `src/ai4ms/prompts` | S0-S9 提示词目录与 Pydantic 输出契约 |
 | `src/ai4ms/assets` | `.dta` 上传、SHA-256 和元信息 |
 | `src/ai4ms/runners` | Stata 策略检查、后台任务、Local Runner 和 Result Bundle |
-| `src/ai4ms/delivery` | HTML 报告、manifest 和 ZIP 研究包 |
+| `src/ai4ms/delivery` | HTML、DOCX、PDF、图表、Mermaid、manifest 和 Stata/综合研究包 |
 | `src/web` | Next.js/React/TypeScript 工作台 |
 | `src/base`、`src/agents`、`src/orchestration_tools` | 保留的通用 Agent Runtime |
 | `src/project`、`src/research` | 文献工具、研究流水线和 HTML 导出兼容能力 |
@@ -135,6 +135,8 @@ GET/POST         /api/v1/projects/{id}/stages/analysis/runs/{run_id}/...
 POST             /api/v1/projects/{id}/stages/delivery/export
 GET              /api/v1/projects/{id}/exports/{export_id}/...
 ```
+
+S9 导出记录统一保存 HTML、DOCX、PDF、Stata 复现包、综合研究包和 manifest 的项目内相对路径。图表同时输出 JSON、SVG、PNG；研究流程和 Claim-Evidence 图同时输出 Mermaid `.mmd`、SVG、PNG。所有下载路径都通过 export record 白名单解析，不能直接读取任意项目文件。
 
 OpenAPI 以运行中的 `/docs` 和 `/openapi.json` 为准。
 

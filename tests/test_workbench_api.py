@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from io import BytesIO
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
@@ -831,10 +833,25 @@ def test_complete_s0_to_s9_flow(tmp_path):
     assert exported.status_code == 200
     export_record = exported.json()["stages"][9]["content"]["exports"][-1]
     report = client.get(f"/api/v1/projects/{project_id}/exports/{export_record['export_id']}/report")
+    word = client.get(f"/api/v1/projects/{project_id}/exports/{export_record['export_id']}/word")
+    pdf = client.get(f"/api/v1/projects/{project_id}/exports/{export_record['export_id']}/pdf")
+    stata = client.get(f"/api/v1/projects/{project_id}/exports/{export_record['export_id']}/stata")
     package = client.get(f"/api/v1/projects/{project_id}/exports/{export_record['export_id']}/package")
     assert report.status_code == 200
     assert "Claim-Evidence" in report.text
+    assert "data-ai4ms-interactive-report" in report.text
     assert report.headers["content-disposition"].startswith("inline")
+    assert word.status_code == 200
+    assert word.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert word.content.startswith(b"PK")
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content.startswith(b"%PDF-")
+    assert stata.status_code == 200
+    with ZipFile(BytesIO(stata.content)) as archive:
+        assert {"README.md", "analysis.do", "manifest.json"} <= set(archive.namelist())
     assert package.status_code == 200
     assert package.headers["content-type"] == "application/zip"
     project = _approve(client, project_id, "delivery")

@@ -164,7 +164,11 @@ class StageGenerationService:
                     "source_evidence_hash": evidence_stage.get("content_hash", ""),
                     "exports": [],
                     "visual_report_path": "",
+                    "word_report_path": "",
+                    "pdf_report_path": "",
+                    "stata_package_path": "",
                     "research_package_path": "",
+                    "manifest_path": "",
                 }
             )
         content["generation"] = {
