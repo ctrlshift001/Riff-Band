@@ -13,7 +13,11 @@ from ai4ms.assets import DataAssetError
 from ai4ms.db import ProjectStore
 from ai4ms.delivery import DeliveryExportError
 from ai4ms.domains import MANAGEMENT_SCIENCE_PROFILE
-from ai4ms.inference import InferenceUnavailableError, inference_status
+from ai4ms.inference import (
+    InferenceUnavailableError,
+    OpenAICompatibleGateway,
+    inference_status,
+)
 from ai4ms.knowledge import (
     KnowledgeEvaluationOutputError,
     KnowledgeEvaluationService,
@@ -214,6 +218,19 @@ def create_app(
     @app.get("/api/v1/meta/inference", tags=["meta"])
     async def model_inference_status():
         return inference_status()
+
+    @app.post("/api/v1/meta/inference/probe", tags=["meta"])
+    async def probe_model_inference():
+        result = await OpenAICompatibleGateway(max_tokens=256).generate(
+            "You are a connectivity probe for the AI4MS research workbench.",
+            "Reply with AI4MS_READY and nothing else.",
+        )
+        return {
+            "status": "ok",
+            "configured": True,
+            "model": result.model,
+            "usage": result.usage,
+        }
 
     @app.get("/api/v1/meta/prompts", tags=["meta"])
     async def prompt_registry(response: Response):

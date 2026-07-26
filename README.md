@@ -135,13 +135,16 @@ riffband-mcp --config aorchestra.yaml
 
 ## Docker 交付
 
-比赛版本以带浏览器 GUI 的 Docker Web 产品交付：
+比赛版本以带浏览器 GUI 的 Docker Web 产品交付。提交方生成私下交付目录：
 
 ```powershell
-docker compose up --build
+.\scripts\deployment\BUILD_COMPETITION_PACKAGE.ps1 -ValidateOnly
+.\scripts\deployment\BUILD_COMPETITION_PACKAGE.ps1
 ```
 
-SQLite、`.dta` 项目资产和 HTML 报告通过 Docker volume 持久化。模型与检索 Key 在运行时注入；Stata 不进入镜像，Docker 工作台通过配对令牌连接研究者本机的自有许可 Local Runner。
+评委在交付目录双击 `START_AI4MS.bat`，脚本会加载镜像、启动服务、执行真实 LLM 连通性探针并打开 `http://localhost:8000/`。
+
+SQLite、`.dta` 项目资产和 HTML 报告通过 Docker volume 持久化。比赛专用模型 Key 只放在私下交付目录的 `.env.competition`，不进入 Git 或镜像层；Stata 不进入镜像，Docker 工作台通过配对令牌连接研究者本机的自有许可 Local Runner。
 
 项目没有公网网站。比赛只提交带 GUI 的 Docker 部署包，评委在本机启动后访问 `http://localhost:8000/`。详细说明见 [Docker 部署说明](docs/DEPLOYMENT.md)。
 
