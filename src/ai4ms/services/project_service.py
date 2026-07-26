@@ -31,6 +31,9 @@ from ai4ms.services.models import (
     StageDecisionRequest,
     StageAssetSectionPatchRequest,
     StageRestoreRequest,
+    StageSuggestionDecisionRequest,
+    StageSuggestionGenerateRequest,
+    StageToolInvokeRequest,
     StageStatus,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
@@ -42,6 +45,8 @@ from ai4ms.services.stage_generation import (
     StageGenerationService,
 )
 from ai4ms.services.stage_chat import StageChatService
+from ai4ms.services.stage_assistant import StageAssistantService
+from ai4ms.services.knowledge_jobs import KnowledgeEvaluationJobService
 
 
 class ProjectNotFoundError(LookupError):
@@ -85,6 +90,7 @@ class ProjectService:
         delivery_export: DeliveryExportService | None = None,
         knowledge_evaluation: KnowledgeEvaluationService | None = None,
         stage_chat: StageChatService | None = None,
+        stage_assistant: StageAssistantService | None = None,
     ):
         self.store = store
         self.data_dir = Path(data_dir)
@@ -99,7 +105,16 @@ class ProjectService:
         self.knowledge_evaluation = knowledge_evaluation or KnowledgeEvaluationService(
             self.projects_dir
         )
+        self.knowledge_evaluation_jobs = KnowledgeEvaluationJobService(
+            self.projects_dir,
+            self.knowledge_evaluation,
+        )
         self.stage_chat = stage_chat or StageChatService(self.projects_dir)
+        self.stage_assistant = stage_assistant or StageAssistantService(
+            self.projects_dir,
+            literature_search=self.literature_search,
+            analysis_runner=self.analysis_runner,
+        )
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
         self.analysis_jobs = AnalysisJobService(
@@ -229,6 +244,73 @@ class ProjectService:
     ) -> dict[str, Any]:
         return await self.knowledge_evaluation.evaluate(
             self.get_project(project_id), request
+        )
+
+    async def submit_knowledge_evaluation(
+        self,
+        project_id: str,
+        request: KnowledgeEvaluationRequest,
+    ) -> dict[str, Any]:
+        return await self.knowledge_evaluation_jobs.submit(
+            self.get_project(project_id),
+            request,
+        )
+
+    def get_knowledge_evaluation_job(
+        self,
+        project_id: str,
+        job_id: str,
+    ) -> dict[str, Any]:
+        self.get_project(project_id)
+        return self.knowledge_evaluation_jobs.get(project_id, job_id)
+
+    def get_stage_suggestions(
+        self,
+        project_id: str,
+        stage_key: str,
+    ) -> dict[str, Any]:
+        return self.stage_assistant.load_suggestions(
+            self.get_project(project_id),
+            stage_key,
+        )
+
+    async def generate_stage_suggestions(
+        self,
+        project_id: str,
+        stage_key: str,
+        request: StageSuggestionGenerateRequest,
+    ) -> dict[str, Any]:
+        return await self.stage_assistant.generate_suggestions(
+            self.get_project(project_id),
+            stage_key,
+            request,
+        )
+
+    def decide_stage_suggestion(
+        self,
+        project_id: str,
+        stage_key: str,
+        suggestion_id: str,
+        request: StageSuggestionDecisionRequest,
+    ) -> dict[str, Any]:
+        return self.stage_assistant.decide_suggestion(
+            self.get_project(project_id),
+            stage_key,
+            suggestion_id,
+            request,
+        )
+
+    async def invoke_stage_tool(
+        self,
+        project_id: str,
+        stage_key: str,
+        request: StageToolInvokeRequest,
+    ) -> dict[str, Any]:
+        return await self.stage_assistant.invoke_tool(
+            self.get_project(project_id),
+            stage_key,
+            request,
+            self.list_analysis_runs(project_id),
         )
 
     def update_project(self, project_id: str, request: UpdateProjectRequest) -> dict[str, Any]:

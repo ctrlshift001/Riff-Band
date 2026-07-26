@@ -45,6 +45,9 @@ from ai4ms.services.models import (
     StageAssetSectionPatchRequest,
     StageDecisionRequest,
     StageRestoreRequest,
+    StageSuggestionDecisionRequest,
+    StageSuggestionGenerateRequest,
+    StageToolInvokeRequest,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
     UpdateProjectRequest,
@@ -64,6 +67,12 @@ from ai4ms.services.stage_generation import (
     StageGenerationService,
 )
 from ai4ms.services.stage_chat import StageChatService
+from ai4ms.services.stage_assistant import (
+    StageAssistantError,
+    StageAssistantService,
+    StageSuggestionOutputError,
+)
+from ai4ms.services.knowledge_jobs import KnowledgeEvaluationJobNotFoundError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -95,6 +104,7 @@ def create_app(
     stage_chat: StageChatService | None = None,
     data_commons: DataCommonsConnector | None = None,
     research_service: WebResearchService | None = None,
+    stage_assistant: StageAssistantService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
     web_root = _web_root()
@@ -115,6 +125,7 @@ def create_app(
         analysis_runner=analysis_runner,
         knowledge_evaluation=knowledge_evaluation,
         stage_chat=resolved_stage_chat,
+        stage_assistant=stage_assistant,
     )
 
     app = FastAPI(
@@ -178,6 +189,34 @@ def create_app(
     @app.exception_handler(KnowledgeEvaluationOutputError)
     async def invalid_knowledge_evaluation(_request: Request, exc: KnowledgeEvaluationOutputError):
         return _json_error(status.HTTP_502_BAD_GATEWAY, "invalid_knowledge_evaluation", str(exc))
+
+    @app.exception_handler(StageSuggestionOutputError)
+    async def invalid_stage_suggestions(_request: Request, exc: StageSuggestionOutputError):
+        return _json_error(
+            status.HTTP_502_BAD_GATEWAY,
+            "invalid_stage_suggestions",
+            str(exc),
+        )
+
+    @app.exception_handler(StageAssistantError)
+    async def stage_assistant_error(_request: Request, exc: StageAssistantError):
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code in {"stage_not_found", "suggestion_not_found"}
+            else status.HTTP_409_CONFLICT
+        )
+        return _json_error(code, exc.code, str(exc))
+
+    @app.exception_handler(KnowledgeEvaluationJobNotFoundError)
+    async def knowledge_job_not_found(
+        _request: Request,
+        exc: KnowledgeEvaluationJobNotFoundError,
+    ):
+        return _json_error(
+            status.HTTP_404_NOT_FOUND,
+            "knowledge_evaluation_job_not_found",
+            str(exc),
+        )
 
     @app.exception_handler(LiteratureSearchInputError)
     async def invalid_literature_search(_request: Request, exc: LiteratureSearchInputError):
@@ -513,6 +552,67 @@ def create_app(
     ):
         return await get_service(request).chat_stage(project_id, stage_key, payload)
 
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/tools/invoke",
+        tags=["stage-tools"],
+    )
+    async def invoke_stage_tool(
+        project_id: str,
+        stage_key: str,
+        payload: StageToolInvokeRequest,
+        request: Request,
+    ):
+        return await get_service(request).invoke_stage_tool(
+            project_id,
+            stage_key,
+            payload,
+        )
+
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions",
+        tags=["stage-suggestions"],
+    )
+    async def get_stage_suggestions(
+        project_id: str,
+        stage_key: str,
+        request: Request,
+    ):
+        return get_service(request).get_stage_suggestions(project_id, stage_key)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions",
+        tags=["stage-suggestions"],
+    )
+    async def generate_stage_suggestions(
+        project_id: str,
+        stage_key: str,
+        payload: StageSuggestionGenerateRequest,
+        request: Request,
+    ):
+        return await get_service(request).generate_stage_suggestions(
+            project_id,
+            stage_key,
+            payload,
+        )
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions/{suggestion_id}/decision",
+        tags=["stage-suggestions"],
+    )
+    async def decide_stage_suggestion(
+        project_id: str,
+        stage_key: str,
+        suggestion_id: str,
+        payload: StageSuggestionDecisionRequest,
+        request: Request,
+    ):
+        return get_service(request).decide_stage_suggestion(
+            project_id,
+            stage_key,
+            suggestion_id,
+            payload,
+        )
+
     @app.post("/api/v1/projects/{project_id}/stages/literature/search", tags=["literature"])
     async def search_literature(project_id: str, payload: LiteratureSearchRequest, request: Request):
         return await get_service(request).search_literature(project_id, payload)
@@ -534,6 +634,35 @@ def create_app(
         request: Request,
     ):
         return await get_service(request).evaluate_knowledge(project_id, payload)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/knowledge/evaluation/jobs",
+        tags=["knowledge"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def submit_knowledge_evaluation(
+        project_id: str,
+        payload: KnowledgeEvaluationRequest,
+        request: Request,
+    ):
+        return await get_service(request).submit_knowledge_evaluation(
+            project_id,
+            payload,
+        )
+
+    @app.get(
+        "/api/v1/projects/{project_id}/knowledge/evaluation/jobs/{job_id}",
+        tags=["knowledge"],
+    )
+    async def get_knowledge_evaluation_job(
+        project_id: str,
+        job_id: str,
+        request: Request,
+    ):
+        return get_service(request).get_knowledge_evaluation_job(
+            project_id,
+            job_id,
+        )
 
     @app.post("/api/v1/projects/{project_id}/stages/analysis/preflight", tags=["runners"])
     async def preflight_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):
