@@ -1,0 +1,5 @@
+[console_scripts]
+ai4ms-stata-runner = ai4ms.runners.local_app:_entry
+ai4ms-web = ai4ms.api.app:_entry
+riffband = ui.shell:_entry
+riffband-mcp = mcp_server:_entry

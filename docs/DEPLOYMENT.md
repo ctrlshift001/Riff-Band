@@ -13,74 +13,56 @@
 
 ## 2. 部署包文件
 
-面向评委的私下交付目录为：
+最终提交至少包含：
 
 ```text
-ai4ms-workbench.tar
+Dockerfile
+.dockerignore
 docker-compose.yml
-.env.competition
-START_AI4MS.bat
-START_AI4MS.ps1
-START_AI4MS.sh
-SHA256SUMS.txt
-BUILD_INFO.txt
-DEPLOYMENT.md
+docs/DEPLOYMENT.md
+.env.example
 ```
-
-`ai4ms-workbench.tar` 是预构建镜像，`.env.competition` 只保存比赛专用运行时配置。评委不需要源码、Python、Node.js，也不需要手工填写模型 Key。
 
 ## 3. 构建与启动
 
 `Dockerfile` 使用两阶段构建：Node 阶段执行 `npm ci` 和 Next.js 静态导出，Python 阶段安装 FastAPI 并复制前端产物。最终运行镜像不包含 Node 开发环境。
 
-提交方先在源码根目录准备仅本机存在的 `deployment/competition/.env.competition`，再执行：
+构建与启动：
 
 ```powershell
-.\scripts\deployment\BUILD_COMPETITION_PACKAGE.ps1 -ValidateOnly
-.\scripts\deployment\BUILD_COMPETITION_PACKAGE.ps1
+docker build -t ai4ms-workbench:competition .
+docker run --rm `
+  -p 127.0.0.1:8000:8000 `
+  --env-file .env `
+  -v ai4ms-data:/app/data `
+  ai4ms-workbench:competition
 ```
 
-脚本构建镜像并生成 `dist/ai4ms-competition`，同时写入镜像 SHA-256 和源码提交号。真实 Key 不进入源码仓库、Docker 构建上下文或镜像层，只会被复制到最终私下交付目录。
-
-Windows 评委双击：
+Compose 启动方式：
 
 ```powershell
-START_AI4MS.bat
+docker compose up --build
 ```
 
-Linux 或 macOS 评委执行：
-
-```bash
-chmod +x START_AI4MS.sh
-./START_AI4MS.sh
-```
-
-启动脚本会依次校验比赛配置与镜像 SHA-256、加载镜像、启动 Compose、等待 `/healthz`、调用一次真实 LLM 探针和一次容器内 Serper 搜索探针，最后打开 GUI。任一检查失败都会明确停止，不会把“容器已启动”误报为“模型或联网检索可用”。
-
-容器进程监听 `0.0.0.0:8000`，宿主机只把它映射到 `127.0.0.1:8000`。
+容器进程必须监听 `0.0.0.0:8000`，宿主机只把它映射到 `127.0.0.1:8000`。启动完成后先检查 `/healthz`，再打开根路径使用 GUI。
 
 同一端口的路径约定：
 
 - `/`：Next.js 十阶段科研工作台；
 - `/_next/*`、`/favicon.svg`、`/ai4ms-user-guide.html`：前端静态资源；
 - `/api/v1/*`：GUI 使用的内部应用接口；
-- `POST /api/v1/meta/inference/probe`：发起最小真实模型请求的部署探针；
-- `POST /api/v1/meta/search/probe`：从容器内发起真实 Serper 请求的部署探针；
 - `/docs`：开发调试用 OpenAPI；
 - `/healthz`：容器健康检查。
 
 ## 4. 配置与密钥
 
-模型和检索配置沿用 `.env.example` 中的环境变量。开发用 `.env` 和比赛用 `.env.competition` 均不得进入 Git、公开压缩包、可复用镜像层或日志。
-
-为了满足“评委部署后直接使用”，最终私下交付目录可以包含 `.env.competition`，但必须使用单独申请的比赛 Key。该文件对拿到部署包并拥有 Docker 主机权限的人可见，因此需要限制余额与并发，并在评审结束后立即吊销。启动脚本和探针只显示模型名称，不输出 Key。
+模型和检索配置沿用 `.env.example` 中的环境变量。真实 `.env` 不得进入 Git、镜像层或部署包。
 
 运行时至少需要：
 
 - 一个可用的 OpenAI-compatible 或 Gemini 模型配置；
 - 至少一个开放学术检索后端可联网访问；
-- 一个比赛专用的 Serper Key，比赛部署脚本会强制校验并实调；
-- 可选的 Google Data Commons MCP key，用于官方统计指标检索；
+- 可选的 Serper 配置；
 - 可选的 Stata BYOL 批处理可执行文件、版本、许可确认和并发配置。
 
 未提供模型或检索配置时，服务可以启动并查看已保存项目，但执行相关阶段必须返回明确的 `blocked`，不能生成伪造结果。

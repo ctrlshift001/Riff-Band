@@ -21,10 +21,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 COPY --from=web-builder /web/out ./src/web/dist

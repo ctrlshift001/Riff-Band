@@ -151,7 +151,6 @@ class DraftRequest(BaseModel):
 
 class StageChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12_000)
-    search_mode: Literal["auto", "on", "off"] = "auto"
 
     @field_validator("message")
     @classmethod
@@ -160,47 +159,6 @@ class StageChatRequest(BaseModel):
         if not cleaned:
             raise ValueError("message must not be blank")
         return cleaned
-
-
-class StageToolInvokeRequest(BaseModel):
-    tool_id: str = Field(min_length=1, max_length=120)
-    query: str = Field(default="", max_length=4000)
-    instruction: str = Field(default="", max_length=4000)
-
-    @field_validator("tool_id", "query", "instruction")
-    @classmethod
-    def strip_stage_tool_text(cls, value: str) -> str:
-        return value.strip()
-
-
-class StageSuggestionGenerateRequest(BaseModel):
-    instruction: str = Field(default="", max_length=2000)
-
-    @field_validator("instruction")
-    @classmethod
-    def strip_suggestion_instruction(cls, value: str) -> str:
-        return value.strip()
-
-
-class StageSuggestionDecisionRequest(BaseModel):
-    state: Literal["pending", "accepted", "modified", "rejected"]
-    note: str = Field(default="", max_length=2000)
-
-    @field_validator("note")
-    @classmethod
-    def strip_suggestion_note(cls, value: str) -> str:
-        return value.strip()
-
-
-class ConnectorToolRequest(BaseModel):
-    query: str = Field(default="", max_length=12_000)
-    tool_name: Literal["search_indicators", "get_observations"] = "search_indicators"
-    arguments: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("query")
-    @classmethod
-    def strip_connector_query(cls, value: str) -> str:
-        return value.strip()
 
 
 class LiteratureSearchRequest(BaseModel):

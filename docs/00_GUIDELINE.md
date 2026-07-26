@@ -2,7 +2,7 @@
 
 ## 1. 当前状态
 
-`ai4ms` 分支处于 AI4MS 工作台改造期。当前代码可以运行 Next.js S0-S9 十阶段浏览器工作台、FastAPI、SQLite revision/审批状态机、S0-S9 阶段模型能力、Stata BYOL Runner、Claim-Evidence 审核和 HTML/Word/PDF/Stata 复现包交付，以及 RiffBand CLI/MCP 与既有研究流水线。
+`ai4ms` 分支处于 AI4MS 工作台改造期。当前代码可以运行 Next.js S0-S9 十阶段浏览器工作台、FastAPI、SQLite revision/审批状态机、S0-S9 阶段模型能力、Stata BYOL Runner、Claim-Evidence 审核和 HTML/ZIP 交付，以及 RiffBand CLI/MCP 与既有研究流水线。
 
 工程基线见 [ai4ms/BASELINE.md](ai4ms/BASELINE.md)。
 

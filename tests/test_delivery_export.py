@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 from zipfile import ZipFile
 
-from docx import Document
-from pypdf import PdfReader
-
 from ai4ms.delivery import DeliveryExportService
 
 
@@ -111,62 +108,18 @@ def test_delivery_export_is_traceable_visual_and_excludes_raw_data(tmp_path):
     assert "Claim-Evidence 可追溯矩阵" in html
     assert "renderVisualArtifacts" in html
     assert 'class="table-data"' in html
-    assert "data-ai4ms-interactive-report" in html
-    assert "data-mermaid-source" in html
-    assert "data-estimate-row" in html
     assert "cdn.jsdelivr.net" not in html
     assert "<script>alert(1)</script>" not in html
-    assert manifest["schema_version"] == "ai4ms.research-package.v2"
     assert manifest["source_revisions"]["evidence"]["content_hash"] == "8" * 64
     assert manifest["data_policy"]["raw_data_included"] is False
     assert all(len(item["sha256"]) == 64 for item in manifest["files"])
-    assert record["word_report_path"].endswith("/report.docx")
-    assert record["pdf_report_path"].endswith("/report.pdf")
-    assert record["stata_package_path"].endswith("/stata_reproduction.zip")
-    assert Document(export_dir / "report.docx").paragraphs
-    assert len(PdfReader(export_dir / "report.pdf").pages) >= 2
-    assert (export_dir / "charts" / "estimate-results.svg").is_file()
-    assert (export_dir / "charts" / "estimate-results.png").is_file()
-    assert (export_dir / "diagrams" / "research-workflow.mmd").read_text(
-        encoding="utf-8"
-    ).startswith("flowchart LR")
-    assert (export_dir / "diagrams" / "claim-evidence.svg").is_file()
 
     with ZipFile(export_dir / "research_package.zip") as archive:
         names = set(archive.namelist())
     assert "artifacts/runs/run_1/results.csv" in names
     assert "artifacts/runs/run_1/manifest.json" in names
     assert not any(name.endswith(".dta") for name in names)
-    assert {
-        "report/report.html",
-        "report/report.md",
-        "report/report.docx",
-        "report/report.pdf",
-        "charts/stage-revisions.svg",
-        "charts/estimate-results.json",
-        "diagrams/research-workflow.mmd",
-        "diagrams/research-workflow.svg",
-        "diagrams/claim-evidence.mmd",
-        "reproduction/stata_reproduction.zip",
-        "project/project_snapshot.json",
-        "manifest.json",
-    } <= names
-
-    with ZipFile(export_dir / "stata_reproduction.zip") as archive:
-        stata_names = set(archive.namelist())
-        reproduction_manifest = json.loads(archive.read("manifest.json"))
-    assert {
-        "README.md",
-        "analysis.do",
-        "data-assets.json",
-        "runner-profile.json",
-        "run-index.json",
-        "runs/run_1/results.csv",
-        "runs/run_1/manifest.json",
-        "manifest.json",
-    } <= stata_names
-    assert not any(name.endswith(".dta") for name in stata_names)
-    assert reproduction_manifest["raw_data_included"] is False
+    assert {"report/report.html", "report/report.md", "project/project_snapshot.json", "manifest.json"} <= names
 
 
 def test_delivery_fingerprint_changes_only_for_scientific_content():
@@ -174,9 +127,6 @@ def test_delivery_fingerprint_changes_only_for_scientific_content():
     first = DeliveryExportService.delivery_fingerprint(content)
     content["exports"] = [{"export_id": "export_1"}]
     content["visual_report_path"] = "exports/export_1/report.html"
-    content["word_report_path"] = "exports/export_1/report.docx"
-    content["pdf_report_path"] = "exports/export_1/report.pdf"
-    content["stata_package_path"] = "exports/export_1/stata_reproduction.zip"
     content["_workspace"] = {"human_confirmed": True}
     assert DeliveryExportService.delivery_fingerprint(content) == first
 

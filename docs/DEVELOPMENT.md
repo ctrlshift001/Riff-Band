@@ -24,15 +24,6 @@ AUTOENV_OPENAI_BASE_URL=https://api.deepseek.com
 AUTOENV_OPENAI_MODELS=deepseek-v4-pro,deepseek-v4-flash
 ```
 
-阶段对话不配置 Serper 时仍可使用 DuckDuckGo 和开放学术源。需要 Google Data Commons 官方统计 MCP 时，申请免费 key 后设置：
-
-```text
-AI4MS_DATACOMMONS_API_KEY=...
-AI4MS_DATACOMMONS_MCP_URL=https://api.datacommons.org/mcp
-```
-
-`GET /api/v1/connectors` 只返回配置状态，不返回 key；`GET /api/v1/connectors/datacommons/tools` 可验证 MCP 握手和实际只读工具清单。
-
 不要提交 `.env`、API Key、许可证、用户数据或本地 `aorchestra.yaml`。
 
 ## 2. 安装
