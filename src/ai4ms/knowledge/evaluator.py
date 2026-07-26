@@ -14,6 +14,7 @@ from ai4ms.inference.gateway import (
     OpenAICompatibleGateway,
 )
 from ai4ms.inference.structured import StructuredOutputError, validate_structured_output
+from ai4ms.reporting import build_ai_report_envelope
 from ai4ms.services.models import KnowledgeCandidateInput, KnowledgeEvaluationRequest
 
 
@@ -108,6 +109,46 @@ class KnowledgeEvaluationService:
             "formulas": formulas,
             "usage": response.usage,
         }
+        payload["ai_report"] = build_ai_report_envelope(
+            project_id=str(project["project_id"]),
+            stage_key="design",
+            content={
+                "executive_summary": assessed.summary
+                or "方法与公式候选适配性评估，等待研究者审核。",
+                "method_ids": [
+                    item["candidate_id"] for item in methods
+                ],
+                "formula_ids": [
+                    item["candidate_id"] for item in formulas
+                ],
+                "reasoning_trace": {
+                    "problem_framing": "比较候选方法与公式对当前管理科学课题的相对适配性。",
+                    "logic_chain": [],
+                    "assumptions": [],
+                    "alternatives": [
+                        "保留低分候选作为敏感性或替代设计，需人工判断。"
+                    ],
+                    "uncertainties": sorted(
+                        {
+                            missing
+                            for item in [*methods, *formulas]
+                            for missing in item.get("missing_information", [])
+                        }
+                    ),
+                    "human_decisions": [
+                        "研究者决定主方法、备选方法、公式和失败退出规则。"
+                    ],
+                    "next_verifications": [
+                        "逐项核验方法假设、数据可得性和公式符号定义。"
+                    ],
+                },
+            },
+            prompt_id="ai4ms.knowledge.evaluation",
+            prompt_version="1.0.0",
+            model=response.model,
+            generated_at=payload["evaluated_at"],
+            evidence_library=_evidence_library(project),
+        )
         path = self._artifact_path(str(project["project_id"]))
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
@@ -182,4 +223,24 @@ class KnowledgeEvaluationService:
             "methods": [],
             "formulas": [],
             "usage": {},
+            "ai_report": None,
         }
+
+
+def _evidence_library(project: dict[str, Any]) -> list[dict[str, Any]]:
+    literature = next(
+        (
+            stage
+            for stage in project.get("stages", [])
+            if stage.get("key") == "literature"
+        ),
+        {},
+    )
+    content = literature.get("content", {})
+    if not isinstance(content, dict):
+        return []
+    return [
+        item
+        for item in content.get("evidence_library", [])
+        if isinstance(item, dict)
+    ]
