@@ -10,6 +10,16 @@ ENV AI4MS_STATIC_EXPORT=1
 RUN npm run build
 
 
+FROM python:3.12-slim AS python-builder
+
+WORKDIR /build
+
+COPY pyproject.toml LICENSE ./
+COPY src ./src
+
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /wheels .
+
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -17,7 +27,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AI4MS_HOST=0.0.0.0 \
     AI4MS_PORT=8000 \
     AI4MS_DATA_DIR=/app/data \
-    AI4MS_WEB_ROOT=/app/src/web/dist
+    AI4MS_WEB_ROOT=/app/web
 
 WORKDIR /app
 
@@ -25,11 +35,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md LICENSE ./
-COPY src ./src
-COPY --from=web-builder /web/out ./src/web/dist
-
-RUN pip install --no-cache-dir .
+COPY --from=python-builder /wheels/riffband-*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/riffband-*.whl \
+    && rm -f /tmp/riffband-*.whl
+COPY --from=web-builder /web/out ./web
 
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 from datetime import UTC, datetime
 from typing import Any, Callable
 
@@ -31,9 +33,13 @@ class StageGenerationService:
         self,
         gateway_factory: Callable[[], InferenceGateway] | None = None,
         orchestrator: StageOrchestrator | None = None,
+        orchestration_timeout_seconds: float | None = None,
     ) -> None:
         self.gateway_factory = gateway_factory or OpenAICompatibleGateway
         self.orchestrator = orchestrator
+        self.orchestration_timeout_seconds = self._orchestration_timeout(
+            orchestration_timeout_seconds
+        )
 
     async def generate(
         self,
@@ -53,17 +59,34 @@ class StageGenerationService:
         )
         if should_orchestrate and self.orchestrator is not None:
             try:
-                orchestration = await self.orchestrator.analyze(
-                    project,
-                    stage_key,
-                    instruction,
-                    context,
+                orchestration = await asyncio.wait_for(
+                    self.orchestrator.analyze(
+                        project,
+                        stage_key,
+                        instruction,
+                        context,
+                    ),
+                    timeout=self.orchestration_timeout_seconds,
+                )
+            except TimeoutError:
+                context["aorchestra_analysis"] = self._orchestration_issue(
+                    "timed_out",
+                    (
+                        "AOrchestra exceeded the stage budget "
+                        f"({self.orchestration_timeout_seconds:g}s); "
+                        "direct structured generation continued."
+                    ),
                 )
             except Exception as exc:
-                raise StageGenerationOutputError(
-                    f"AOrchestra failed for stage '{stage_key}': {exc}"
-                ) from exc
-            context["aorchestra_analysis"] = orchestration.prompt_context()
+                context["aorchestra_analysis"] = self._orchestration_issue(
+                    "failed",
+                    (
+                        f"AOrchestra failed with {type(exc).__name__}; "
+                        "direct structured generation continued."
+                    ),
+                )
+            else:
+                context["aorchestra_analysis"] = orchestration.prompt_context()
         prompt = PromptCatalog.get(stage_key, context)
         if prompt is None:
             raise StageGenerationNotSupportedError(
@@ -182,7 +205,36 @@ class StageGenerationService:
         }
         if orchestration is not None:
             content["generation"]["orchestration"] = orchestration.generation_metadata()
+        elif "aorchestra_analysis" in context:
+            content["generation"]["orchestration"] = context["aorchestra_analysis"]
         return content
+
+    @staticmethod
+    def _orchestration_timeout(explicit: float | None) -> float:
+        raw: float | str = (
+            explicit
+            if explicit is not None
+            else os.getenv("AI4MS_AO_TOTAL_TIMEOUT_SECONDS", "30")
+        )
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise StageGenerationOutputError(
+                f"Invalid AI4MS_AO_TOTAL_TIMEOUT_SECONDS value: {raw!r}"
+            ) from exc
+        return max(0.01, min(value, 600.0))
+
+    @staticmethod
+    def _orchestration_issue(status: str, summary: str) -> dict[str, Any]:
+        from ai4ms.orchestration import AORCHESTRA_PAPER
+
+        return {
+            "runtime": "AOrchestra",
+            "paper": AORCHESTRA_PAPER,
+            "status": status,
+            "summary": summary,
+            "degraded": True,
+        }
 
     @staticmethod
     def _build_context(project: dict[str, Any], stage_key: str) -> dict[str, Any]:

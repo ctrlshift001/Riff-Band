@@ -25,13 +25,14 @@ START_AI4MS.sh
 SHA256SUMS.txt
 BUILD_INFO.txt
 DEPLOYMENT.md
+AI4MS_AGENT_APPLICATION_DESIGN.html
 ```
 
 `ai4ms-workbench.tar` 是预构建镜像，`.env.competition` 只保存比赛专用运行时配置。评委不需要源码、Python、Node.js，也不需要手工填写模型 Key。
 
 ## 3. 构建与启动
 
-`Dockerfile` 使用两阶段构建：Node 阶段执行 `npm ci` 和 Next.js 静态导出，Python 阶段安装 FastAPI 并复制前端产物。最终运行镜像不包含 Node 开发环境。
+`Dockerfile` 使用三阶段构建：Node 阶段执行 `npm ci` 和 Next.js 静态导出，Python 构建阶段生成干净 wheel，最终阶段只安装运行依赖并复制编译后的网页。最终运行镜像不包含 Node 开发环境、TypeScript 源码、测试或仓库文档。
 
 提交方先在源码根目录准备仅本机存在的 `deployment/competition/.env.competition`，再执行：
 
@@ -40,7 +41,7 @@ DEPLOYMENT.md
 .\scripts\deployment\BUILD_COMPETITION_PACKAGE.ps1
 ```
 
-脚本构建镜像并生成 `dist/ai4ms-competition`，同时写入镜像 SHA-256 和源码提交号。真实 Key 不进入源码仓库、Docker 构建上下文或镜像层，只会被复制到最终私下交付目录。
+正式构建要求 Git 工作区没有未提交改动，确保镜像内容与 `BUILD_INFO.txt` 中的源码提交号一致。脚本构建镜像并生成 `dist/ai4ms-competition`，同时写入镜像 SHA-256 和源码提交号。真实 Key 不进入源码仓库、Docker 构建上下文或镜像层，只会被复制到最终私下交付目录。
 
 Windows 评委双击：
 
@@ -101,24 +102,19 @@ chmod +x START_AI4MS.sh
 
 镜像不得包含 Stata 安装文件、许可证、序列号或破解组件。Docker 中的工作台通过 `host.docker.internal:8765` 连接研究者本机的 `ai4ms-stata-runner`。这条连接只用于同一台机器上的 Docker 与自带许可 Stata，不是比赛要求的公网远程调用接口。
 
-先在 `.env` 中设置同一个长随机令牌：
+从源码仓库运行安装脚本；它会生成长随机令牌，并同步到本机比赛环境文件：
 
-```dotenv
-AI4MS_STATA_RUNNER_TOKEN=replace-with-a-long-random-token
-AI4MS_STATA_EXECUTABLE=C:\Program Files\Stata18\StataMP-64.exe
-AI4MS_STATA_VERSION=18
-AI4MS_STATA_LOCALE=zh_CN
-AI4MS_STATA_LICENSE_MODE=user_byol
-AI4MS_STATA_LICENSE_CONFIRMED=true
-AI4MS_LOCAL_RUNNER_HOST=0.0.0.0
-AI4MS_LOCAL_RUNNER_PORT=8765
+```powershell
+.\scripts\stata-runner\SETUP_STATA_RUNNER.ps1 `
+  -StataExecutable "C:\Program Files\Stata18\StataMP-64.exe" `
+  -DockerWorkbench
 ```
 
-在研究者本机安装并启动连接器：
+然后在研究者本机启动连接器：
 
 ```powershell
 pip install -e .
-ai4ms-stata-runner
+.\scripts\stata-runner\START_STATA_RUNNER.ps1
 ```
 
 然后启动 Docker 工作台：

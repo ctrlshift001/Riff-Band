@@ -119,7 +119,7 @@ npm run dev
 - OpenAPI（仅开发调试）：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/healthz`
 
-Next.js 默认把同源 `/api/v1` 和 `/healthz` 代理到 `http://127.0.0.1:8000`。需要连接其他 FastAPI 地址时，在 `src/web/.env.local` 设置 `AI4MS_API_INTERNAL_URL`。
+开发环境中的浏览器默认直连 `http://127.0.0.1:8000/api/v1`，避免长模型请求经过 Next.js 开发代理。需要连接其他 FastAPI 地址时，在 `src/web/.env.local` 设置 `NEXT_PUBLIC_API_BASE_URL`。Docker 静态前端继续使用同源 `/api/v1`。
 
 兼容 CLI 和 MCP 入口：
 
@@ -159,7 +159,7 @@ SQLite、`.dta` 项目资产和 HTML 报告通过 Docker volume 持久化。比�
 - [Docker 部署](docs/DEPLOYMENT.md)
 - [提示词工程](docs/PROMPT_ENGINEERING.md)
 - [Stata Local Runner](docs/RUNNER.md)
-- [原始产品介绍](docs/reference/AI4MS_非技术产品介绍书.md)
+- [智能体应用设计文档（评委版 HTML）](docs/competition/AI4MS_AGENT_APPLICATION_DESIGN.html)
 
 ## 产品边界
 

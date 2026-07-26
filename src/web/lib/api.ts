@@ -454,10 +454,13 @@ export interface DiagnosticRegistry {
 
 interface ApiErrorPayload {
   error?: { code?: string; message?: string };
-  detail?: string | Array<{ msg?: string }>;
+  detail?: string | Array<{ msg?: string }> | { code?: string; message?: string };
 }
 
-const API_ROOT = (process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1").replace(/\/$/, "");
+const DEFAULT_API_ROOT = process.env.NODE_ENV === "development"
+  ? "http://127.0.0.1:8000/api/v1"
+  : "/api/v1";
+const API_ROOT = (process.env.NEXT_PUBLIC_API_BASE_URL || DEFAULT_API_ROOT).replace(/\/$/, "");
 
 export class ApiError extends Error {
   constructor(
@@ -482,11 +485,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const payload = (await response.json().catch(() => ({}))) as ApiErrorPayload;
     const validationMessage = Array.isArray(payload.detail)
       ? payload.detail.map((item) => item.msg).filter(Boolean).join("；")
-      : payload.detail;
+      : typeof payload.detail === "object"
+        ? payload.detail?.message
+        : payload.detail;
+    const detailCode = (
+      payload.detail
+      && !Array.isArray(payload.detail)
+      && typeof payload.detail === "object"
+    ) ? payload.detail.code : undefined;
     throw new ApiError(
       payload.error?.message || validationMessage || `API 请求失败（${response.status}）`,
       response.status,
-      payload.error?.code,
+      payload.error?.code || detailCode,
     );
   }
   return response.json() as Promise<T>;

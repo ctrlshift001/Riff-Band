@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,6 +78,7 @@ from ai4ms.services.knowledge_jobs import KnowledgeEvaluationJobNotFoundError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+LOGGER = logging.getLogger("ai4ms.api")
 load_dotenv(REPO_ROOT / ".env", override=False)
 load_dotenv(REPO_ROOT / ".env.stata-runner.local", override=True)
 
@@ -216,6 +219,21 @@ def create_app(
             status.HTTP_404_NOT_FOUND,
             "knowledge_evaluation_job_not_found",
             str(exc),
+        )
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(request: Request, exc: Exception):
+        incident_id = f"err_{uuid4().hex[:12]}"
+        LOGGER.exception(
+            "Unhandled AI4MS API error incident=%s method=%s path=%s",
+            incident_id,
+            request.method,
+            request.url.path,
+        )
+        return _json_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "internal_error",
+            f"服务端处理失败，请重试；错误编号：{incident_id}",
         )
 
     @app.exception_handler(LiteratureSearchInputError)

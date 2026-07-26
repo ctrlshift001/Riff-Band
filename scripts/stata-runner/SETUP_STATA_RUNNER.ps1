@@ -2,7 +2,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$StataExecutable,
   [int]$Port = 8765,
-  [int]$MaxConcurrency = 1
+  [int]$MaxConcurrency = 1,
+  [switch]$DockerWorkbench,
+  [string]$CompetitionEnvironmentFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +21,7 @@ if ($MaxConcurrency -lt 1) {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $configPath = Join-Path $repoRoot ".env.stata-runner.local"
+$runnerHost = if ($DockerWorkbench) { "0.0.0.0" } else { "127.0.0.1" }
 $tokenBytes = New-Object byte[] 32
 $random = [Security.Cryptography.RandomNumberGenerator]::Create()
 $random.GetBytes($tokenBytes)
@@ -35,15 +38,60 @@ $configuration = @(
   "AI4MS_STATA_LICENSE_CONFIRMED=true"
   "AI4MS_STATA_MAX_CONCURRENCY=$MaxConcurrency"
   "AI4MS_ANALYSIS_MAX_CONCURRENCY=$MaxConcurrency"
-  "AI4MS_LOCAL_RUNNER_HOST=127.0.0.1"
+  "AI4MS_LOCAL_RUNNER_HOST=$runnerHost"
   "AI4MS_LOCAL_RUNNER_PORT=$Port"
 )
 [IO.File]::WriteAllLines($configPath, $configuration, [Text.UTF8Encoding]::new($false))
+
+if ($DockerWorkbench) {
+  $competitionPath = if ([string]::IsNullOrWhiteSpace($CompetitionEnvironmentFile)) {
+    Join-Path $repoRoot "deployment\competition\.env.competition"
+  }
+  elseif ([IO.Path]::IsPathRooted($CompetitionEnvironmentFile)) {
+    $CompetitionEnvironmentFile
+  }
+  else {
+    Join-Path $repoRoot $CompetitionEnvironmentFile
+  }
+  if (-not (Test-Path -LiteralPath $competitionPath -PathType Leaf)) {
+    throw "Competition environment file does not exist: $competitionPath"
+  }
+
+  $values = @{
+    "AI4MS_STATA_RUNNER_URL" = "http://host.docker.internal:$Port"
+    "AI4MS_STATA_RUNNER_TOKEN" = $token
+  }
+  $lines = [Collections.Generic.List[string]]::new()
+  foreach ($line in Get-Content -LiteralPath $competitionPath) {
+    $lines.Add($line)
+  }
+  foreach ($name in $values.Keys) {
+    $updated = $false
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+      if ($lines[$index] -match "^\s*$([Regex]::Escape($name))\s*=") {
+        $lines[$index] = "$name=$($values[$name])"
+        $updated = $true
+        break
+      }
+    }
+    if (-not $updated) {
+      $lines.Add("$name=$($values[$name])")
+    }
+  }
+  [IO.File]::WriteAllLines(
+    $competitionPath,
+    $lines,
+    [Text.UTF8Encoding]::new($false)
+  )
+}
 
 Write-Host ""
 Write-Host "AI4MS Stata Local Runner configured." -ForegroundColor Green
 Write-Host "Config: $configPath"
 Write-Host "Stata:  $resolvedStata"
 Write-Host "URL:    http://127.0.0.1:$Port"
+if ($DockerWorkbench) {
+  Write-Host "Docker access enabled on $runnerHost`:$Port; competition token synchronized."
+}
 Write-Host ""
 Write-Host "Next: run START_STATA_RUNNER.bat, keep that window open, then click '重新检查' in AI4MS."

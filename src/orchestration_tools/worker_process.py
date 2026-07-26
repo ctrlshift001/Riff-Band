@@ -27,7 +27,27 @@ class SubAgentProcessManager:
 
     @staticmethod
     def _discover_project_root() -> Path:
-        return Path(__file__).resolve().parents[2]
+        current = Path(__file__).resolve()
+        for candidate in current.parents:
+            if (candidate / "pyproject.toml").is_file():
+                return candidate
+        return Path.cwd()
+
+    def _worker_command(self, request_path: Path, output_path: Path) -> List[str]:
+        if self.worker_script.is_file():
+            return [
+                sys.executable,
+                str(self.worker_script),
+                str(request_path),
+                str(output_path),
+            ]
+        return [
+            sys.executable,
+            "-m",
+            "workers.subagent_worker",
+            str(request_path),
+            str(output_path),
+        ]
 
     def run_task(
         self,
@@ -73,11 +93,16 @@ class SubAgentProcessManager:
             request_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
 
             env = os.environ.copy()
-            src_path = str(self.project_root / "src")
-            existing_pythonpath = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = src_path if not existing_pythonpath else src_path + os.pathsep + existing_pythonpath
+            if self.worker_script.is_file():
+                src_path = str(self.project_root / "src")
+                existing_pythonpath = env.get("PYTHONPATH", "")
+                env["PYTHONPATH"] = (
+                    src_path
+                    if not existing_pythonpath
+                    else src_path + os.pathsep + existing_pythonpath
+                )
 
-            command = [sys.executable, str(self.worker_script), str(request_path), str(output_path)]
+            command = self._worker_command(request_path, output_path)
             timeout = max(1, int(timeout_seconds or 180))
             logger.info(
                 f"[SubAgentProcessManager] Start session={session_id} label={task_label} "

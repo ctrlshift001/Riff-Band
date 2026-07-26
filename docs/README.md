@@ -1,6 +1,6 @@
 # AI4MS 文档
 
-这里保存当前产品的正式文档。文档只描述现行产品、代码和交付方式；历史规划、临时审计和已被实现替代的 Starter 不再保留。
+这里保存当前产品的正式文档。文档只描述现行产品、代码和交付方式；历史规划、临时审计、调研工作包和已被实现替代的 Starter 不再保留。
 
 ## 文档地图
 
@@ -12,18 +12,15 @@
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Docker GUI 构建、启动、配置、持久化和提交前检查 |
 | [PROMPT_ENGINEERING.md](PROMPT_ENGINEERING.md) | S0-S9 提示词、结构化输出契约和修改规则 |
 | [RUNNER.md](RUNNER.md) | `.dta` 资产、Stata Local Runner、后台任务和 Result Bundle |
-| [reference/AI4MS_非技术产品介绍书.md](reference/AI4MS_非技术产品介绍书.md) | 产品设计的原始业务输入，可搜索版本 |
-| [reference/AI4MS_非技术产品介绍书.docx](reference/AI4MS_非技术产品介绍书.docx) | 队友调研形成的原始文档 |
+| [competition/AI4MS_AGENT_APPLICATION_DESIGN.html](competition/AI4MS_AGENT_APPLICATION_DESIGN.html) | 面向比赛评委的智能体应用设计文档，可直接打印为 PDF |
 
 ## 信息优先级
 
 出现冲突时按以下顺序判断：
 
 1. 当前代码、Pydantic 契约和自动化测试；
-2. 本目录中的正式文档；
-3. `reference/` 中的原始产品输入。
-
-原始产品介绍用于解释设计来源，不等于当前代码已经完整实现其中所有设想。
+2. 本目录中的正式工程文档；
+3. 评委版设计文档中的产品级概括。
 
 ## 维护规则
 
@@ -33,4 +30,5 @@
 - Docker、环境变量或持久化变化：更新 `DEPLOYMENT.md`。
 - 提示词 ID、版本或输出契约变化：更新 `PROMPT_ENGINEERING.md`。
 - Stata、Result Bundle 或后台任务变化：更新 `RUNNER.md`。
+- 对外能力、架构、验证结论或比赛交付形态变化：同步更新评委版 HTML。
 - 不为一次性排查、某日测试结果或短期 DDL 新建长期文档；这类信息进入 Issue、PR 或提交记录。

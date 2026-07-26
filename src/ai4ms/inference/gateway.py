@@ -116,7 +116,7 @@ class OpenAICompatibleGateway:
         self.config = self.configs[0]
         self.timeout_seconds = max(
             1.0,
-            _configured_number("AI4MS_INFERENCE_TIMEOUT_SECONDS", timeout_seconds, "90", float),
+            _configured_number("AI4MS_INFERENCE_TIMEOUT_SECONDS", timeout_seconds, "60", float),
         )
         self.max_attempts = max(
             1,

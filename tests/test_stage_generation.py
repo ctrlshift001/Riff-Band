@@ -113,6 +113,12 @@ class _FakeOrchestrator:
         )
 
 
+class _SlowOrchestrator:
+    async def analyze(self, project, stage_key, instruction, context):
+        await asyncio.sleep(0.05)
+        raise AssertionError("orchestrator should have timed out")
+
+
 def test_extract_json_object_accepts_fenced_output():
     assert extract_json_object('```json\n{"value": 1}\n```') == {"value": 1}
 
@@ -156,6 +162,55 @@ def test_problem_generation_uses_aorchestra_context_and_records_provenance():
     assert metadata["runtime"] == "AOrchestra"
     assert metadata["subagent_runs"] == 2
     assert "report" not in metadata
+
+
+def test_problem_generation_normalizes_free_text_objective():
+    payload = _problem_payload()
+    payload["objective"] = "检验 AI 采用对创新绩效的因果影响"
+    gateway = _FakeGateway(
+        [
+            InferenceResponse(
+                text=json.dumps(payload, ensure_ascii=False),
+                model="test-model",
+                usage={},
+            )
+        ]
+    )
+
+    content = asyncio.run(
+        StageGenerationService(gateway_factory=lambda: gateway).generate(
+            _project(),
+            "problem",
+        )
+    )
+
+    assert content["objective"] == "causal"
+    assert content["generation"]["attempts"] == 1
+
+
+def test_aorchestra_timeout_degrades_to_direct_generation():
+    gateway = _FakeGateway(
+        [
+            InferenceResponse(
+                text=json.dumps(_problem_payload(), ensure_ascii=False),
+                model="test-model",
+                usage={},
+            )
+        ]
+    )
+    service = StageGenerationService(
+        gateway_factory=lambda: gateway,
+        orchestrator=_SlowOrchestrator(),
+        orchestration_timeout_seconds=0.01,
+    )
+
+    content = asyncio.run(service.generate(_project(), "problem"))
+
+    metadata = content["generation"]["orchestration"]
+    assert metadata["runtime"] == "AOrchestra"
+    assert metadata["status"] == "timed_out"
+    assert metadata["degraded"] is True
+    assert len(gateway.calls) == 1
 
 
 def test_invalid_model_json_gets_one_repair_attempt():
