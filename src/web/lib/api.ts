@@ -157,6 +157,7 @@ export interface AnalysisRun {
   input_artifact_path: string;
   data_signature: string;
   structured_results: StructuredResult[];
+  logs: string[];
   output_artifacts: Array<{ path: string; size: number; sha256: string }>;
   runner_error?: string;
 }
@@ -275,6 +276,38 @@ export interface StageChatTurn {
   assistant_message: StageChatMessage;
 }
 
+export type InterfaceTheme = "graphite" | "blueprint" | "paper";
+
+export interface UserProfile {
+  profile_id: string;
+  interface_theme: InterfaceTheme;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DiagnosticRule {
+  id: string;
+  family: string;
+  name: string;
+  appliesTo: string;
+  trigger: string;
+  evidence: string;
+  action: string;
+  level: "阻塞" | "警告" | "记录";
+  stage: "S4" | "S5" | "S6" | "S7";
+  implementation: string;
+}
+
+export interface DiagnosticRegistry {
+  schema_version: string;
+  registry_version: string;
+  published_at: string;
+  authority: "ai4ms-backend";
+  count: number;
+  total: number;
+  items: DiagnosticRule[];
+}
+
 interface ApiErrorPayload {
   error?: { code?: string; message?: string };
   detail?: string | Array<{ msg?: string }>;
@@ -318,6 +351,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function listProjects(): Promise<ProjectSummary[]> {
   const response = await request<{ items: ProjectSummary[] }>("/projects");
   return response.items;
+}
+
+export function getUserProfile(): Promise<UserProfile> {
+  return request<UserProfile>("/profile");
+}
+
+export function updateUserProfile(
+  interfaceTheme: InterfaceTheme,
+): Promise<UserProfile> {
+  return request<UserProfile>("/profile", {
+    method: "PATCH",
+    body: JSON.stringify({ interface_theme: interfaceTheme }),
+  });
+}
+
+export function getDiagnosticRegistry(): Promise<DiagnosticRegistry> {
+  return request<DiagnosticRegistry>("/knowledge/diagnostics?limit=100");
 }
 
 export function getProject(projectId: string): Promise<Project> {
@@ -365,6 +415,28 @@ export function saveStageWorkspace(
         workspace,
         expected_revision: expectedRevision,
         change_reason: changeReason,
+      }),
+    },
+  );
+}
+
+export function patchStageAssetSection(
+  projectId: string,
+  stageKey: string,
+  sectionKey: string,
+  title: string,
+  content: string,
+  expectedRevision: number,
+): Promise<Project> {
+  return request<Project>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/asset-sections/${encodeURIComponent(sectionKey)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        title,
+        content,
+        expected_revision: expectedRevision,
+        change_reason: `人工修改资产章节：${title}`,
       }),
     },
   );
@@ -522,6 +594,19 @@ export function getAnalysisRunResult(projectId: string, runId: string): Promise<
   return request<AnalysisRun>(
     `/projects/${encodeURIComponent(projectId)}/stages/analysis/runs/${encodeURIComponent(runId)}/result`,
   );
+}
+
+export function analysisRunArtifactUrl(
+  projectId: string,
+  runId: string,
+  artifactPath: string,
+): string {
+  const encodedPath = artifactPath
+    .split("/")
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join("/");
+  return `${API_ROOT}/projects/${encodeURIComponent(projectId)}/stages/analysis/runs/${encodeURIComponent(runId)}/artifacts/${encodedPath}`;
 }
 
 export function cancelAnalysisRun(projectId: string, runId: string): Promise<AnalysisJob> {

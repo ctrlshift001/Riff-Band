@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +20,7 @@ from ai4ms.knowledge import (
     KnowledgeRegistry,
 )
 from ai4ms.literature.service import LiteratureSearchInputError, LiteratureSearchService
+from ai4ms.prompts import PromptCatalog
 from ai4ms.runners import (
     AnalysisJobConflictError,
     AnalysisJobNotFoundError,
@@ -34,11 +35,13 @@ from ai4ms.services.models import (
     KnowledgeEvaluationRequest,
     LiteratureSearchRequest,
     StageChatRequest,
+    StageAssetSectionPatchRequest,
     StageDecisionRequest,
     StageRestoreRequest,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
     UpdateProjectRequest,
+    UserProfileUpdateRequest,
 )
 from ai4ms.services.project_service import (
     ProjectNotFoundError,
@@ -58,6 +61,7 @@ from ai4ms.services.stage_chat import StageChatService
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(REPO_ROOT / ".env", override=False)
+load_dotenv(REPO_ROOT / ".env.stata-runner.local", override=True)
 
 
 def _web_root() -> Path | None:
@@ -211,6 +215,14 @@ def create_app(
     async def model_inference_status():
         return inference_status()
 
+    @app.get("/api/v1/meta/prompts", tags=["meta"])
+    async def prompt_registry(response: Response):
+        manifest = PromptCatalog.manifest()
+        version = manifest["registry_version"]
+        response.headers["ETag"] = f'W/"prompts-{version}"'
+        response.headers["X-AI4MS-Prompt-Registry-Version"] = version
+        return manifest
+
     @app.get("/api/v1/knowledge/methods", tags=["knowledge"])
     async def method_registry(goal: str = "", q: str = "", limit: int = 10):
         return {"items": KnowledgeRegistry.method_candidates(goal, q, limit)}
@@ -222,6 +234,60 @@ def create_app(
     @app.get("/api/v1/knowledge/formulas", tags=["knowledge"])
     async def formula_registry(q: str = "", method_id: list[str] | None = None, limit: int = 12):
         return {"items": KnowledgeRegistry.formula_candidates(q, method_id or [], limit)}
+
+    @app.get("/api/v1/knowledge/diagnostics", tags=["knowledge"])
+    async def diagnostic_registry(
+        response: Response,
+        q: str = "",
+        family: str = "",
+        level: str = "",
+        stage: str = "",
+        limit: int = 100,
+    ):
+        registry = KnowledgeRegistry.diagnostic_registry()
+        items = KnowledgeRegistry.diagnostic_rules(
+            q, family, level, stage, limit
+        )
+        version = registry["registry_version"]
+        response.headers["ETag"] = f'W/"diagnostics-{version}"'
+        response.headers["X-AI4MS-Registry-Version"] = version
+        return {
+            "schema_version": registry["schema_version"],
+            "registry_version": version,
+            "published_at": registry["published_at"],
+            "authority": registry["authority"],
+            "count": len(items),
+            "total": len(registry["rules"]),
+            "items": items,
+        }
+
+    @app.get("/api/v1/knowledge/diagnostics/{rule_id}", tags=["knowledge"])
+    async def diagnostic_rule(rule_id: str, response: Response):
+        registry = KnowledgeRegistry.diagnostic_registry()
+        item = KnowledgeRegistry.diagnostic_rule(rule_id)
+        if item is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"diagnostic rule not found: {rule_id}",
+            )
+        version = registry["registry_version"]
+        response.headers["ETag"] = f'W/"diagnostics-{version}-{item["id"]}"'
+        response.headers["X-AI4MS-Registry-Version"] = version
+        return {
+            "schema_version": registry["schema_version"],
+            "registry_version": version,
+            "item": item,
+        }
+
+    @app.get("/api/v1/profile", tags=["profile"])
+    async def get_user_profile(request: Request):
+        return get_service(request).get_user_profile()
+
+    @app.patch("/api/v1/profile", tags=["profile"])
+    async def update_user_profile(
+        payload: UserProfileUpdateRequest, request: Request
+    ):
+        return get_service(request).update_user_profile(payload)
 
     @app.get("/api/v1/runners/stata", tags=["runners"])
     async def stata_runner_status(request: Request):
@@ -313,6 +379,21 @@ def create_app(
     ):
         return get_service(request).update_stage_workspace(project_id, stage_key, payload)
 
+    @app.patch(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/asset-sections/{section_key}",
+        tags=["stages"],
+    )
+    async def update_stage_asset_section(
+        project_id: str,
+        stage_key: str,
+        section_key: str,
+        payload: StageAssetSectionPatchRequest,
+        request: Request,
+    ):
+        return get_service(request).update_stage_asset_section(
+            project_id, stage_key, section_key, payload
+        )
+
     @app.post("/api/v1/projects/{project_id}/stages/{stage_key}/draft", tags=["stages"])
     async def create_stage_draft(project_id: str, stage_key: str, payload: DraftRequest, request: Request):
         return await get_service(request).create_draft(project_id, stage_key, payload)
@@ -402,6 +483,31 @@ def create_app(
     )
     async def get_analysis_run_result(project_id: str, run_id: str, request: Request):
         return get_service(request).get_analysis_run_result(project_id, run_id)
+
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/artifacts/{artifact_path:path}",
+        tags=["runners"],
+    )
+    async def get_analysis_run_artifact(
+        project_id: str,
+        run_id: str,
+        artifact_path: str,
+        request: Request,
+    ):
+        path = get_service(request).analysis_run_artifact(
+            project_id, run_id, artifact_path
+        )
+        media_type = (
+            "text/plain; charset=utf-8"
+            if path.suffix.lower() in {".log", ".smcl", ".txt", ".csv"}
+            else None
+        )
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=path.name,
+            content_disposition_type="inline",
+        )
 
     @app.post(
         "/api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/cancel",

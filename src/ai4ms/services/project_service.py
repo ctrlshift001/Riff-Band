@@ -10,7 +10,13 @@ from ai4ms.delivery import DeliveryExportError, DeliveryExportService
 from ai4ms.knowledge import KnowledgeEvaluationService
 from ai4ms.literature.service import LiteratureSearchService
 from ai4ms.orchestration import AOrchestraStageService
-from ai4ms.runners import AnalysisJobService, AnalysisRunnerService
+from ai4ms.prompts import PromptCatalog, get_stage_policy
+from ai4ms.runners import (
+    AnalysisJobConflictError,
+    AnalysisJobService,
+    AnalysisRunnerService,
+)
+from ai4ms.runners.stata import sha256_file
 from ai4ms.services.models import (
     STAGE_DEFINITIONS,
     STAGES_BY_KEY,
@@ -23,11 +29,13 @@ from ai4ms.services.models import (
     LiteratureSearchRequest,
     StageChatRequest,
     StageDecisionRequest,
+    StageAssetSectionPatchRequest,
     StageRestoreRequest,
     StageStatus,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
     UpdateProjectRequest,
+    UserProfileUpdateRequest,
 )
 from ai4ms.services.stage_generation import (
     StageContentValidationError,
@@ -102,7 +110,29 @@ class ProjectService:
         )
 
     def stage_definitions(self) -> list[dict[str, Any]]:
-        return [stage.model_dump() for stage in STAGE_DEFINITIONS]
+        definitions = []
+        for stage in STAGE_DEFINITIONS:
+            item = stage.model_dump()
+            prompt = PromptCatalog.get(stage.key)
+            item["agent_policy"] = get_stage_policy(stage.key).public_dict()
+            item["prompt"] = (
+                {
+                    "prompt_id": prompt.prompt_id,
+                    "prompt_version": prompt.version,
+                }
+                if prompt is not None
+                else None
+            )
+            definitions.append(item)
+        return definitions
+
+    def get_user_profile(self) -> dict[str, Any]:
+        return self.store.get_user_profile()
+
+    def update_user_profile(
+        self, request: UserProfileUpdateRequest
+    ) -> dict[str, Any]:
+        return self.store.update_user_profile(request.interface_theme)
 
     def create_project(self, request: CreateProjectRequest) -> dict[str, Any]:
         project = self.store.create_project(request.title, request.initial_idea)
@@ -308,6 +338,47 @@ class ProjectService:
     def get_analysis_run_result(self, project_id: str, run_id: str) -> dict[str, Any]:
         return self.analysis_jobs.result(project_id, run_id)
 
+    def analysis_run_artifact(
+        self,
+        project_id: str,
+        run_id: str,
+        artifact_path: str,
+    ) -> Path:
+        run = self.get_analysis_run_result(project_id, run_id)
+        relative = Path(str(artifact_path or ""))
+        if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+            raise AnalysisJobConflictError("unsafe analysis artifact path")
+        project_dir = (self.projects_dir / project_id).resolve()
+        run_dir = (project_dir / "artifacts" / "runs" / run_id).resolve()
+        target = (run_dir / relative).resolve()
+        try:
+            target.relative_to(run_dir)
+        except ValueError as exc:
+            raise AnalysisJobConflictError(
+                "analysis artifact escapes the run directory"
+            ) from exc
+        project_relative = target.relative_to(project_dir).as_posix()
+        declaration = next(
+            (
+                item
+                for item in run.get("output_artifacts", [])
+                if item.get("path") == project_relative
+            ),
+            None,
+        )
+        if declaration is None or not target.is_file():
+            raise AnalysisJobConflictError(
+                "analysis artifact is not declared by the run manifest"
+            )
+        if (
+            int(declaration.get("size", -1)) != target.stat().st_size
+            or declaration.get("sha256") != sha256_file(target)
+        ):
+            raise AnalysisJobConflictError(
+                "analysis artifact failed size or SHA-256 verification"
+            )
+        return target
+
     async def cancel_analysis_run(self, project_id: str, run_id: str) -> dict[str, Any]:
         return await self.analysis_jobs.cancel(project_id, run_id)
 
@@ -414,6 +485,61 @@ class ProjectService:
                 stage_key=stage_key,
                 content=content,
                 change_reason=request.change_reason,
+                author_type="human",
+                expected_revision=request.expected_revision,
+            )
+        except RevisionConflictError as exc:
+            raise StageRevisionConflictError(str(exc)) from exc
+        except KeyError as exc:
+            raise ProjectNotFoundError(project_id) from exc
+        return self._enrich(result)
+
+    def update_stage_asset_section(
+        self,
+        project_id: str,
+        stage_key: str,
+        section_key: str,
+        request: StageAssetSectionPatchRequest,
+    ) -> dict[str, Any]:
+        if section_key not in {
+            "summary",
+            "section-1",
+            "section-2",
+            "section-3",
+            "section-4",
+            "section-5",
+            "section-6",
+        }:
+            raise StageContentValidationError(
+                f"unknown asset section: {section_key}"
+            )
+        project = self.get_project(project_id)
+        self._ensure_unlocked(project, stage_key)
+        stage = next(item for item in project["stages"] if item["key"] == stage_key)
+        content = deepcopy(stage.get("content") or {})
+        asset_version = content.get("_asset_version")
+        if not isinstance(asset_version, dict):
+            asset_version = {"schema_version": "1.0", "sections": {}}
+        sections = asset_version.get("sections")
+        if not isinstance(sections, dict):
+            sections = {}
+        sections[section_key] = {
+            "title": request.title,
+            "content": request.content,
+        }
+        asset_version["schema_version"] = "1.0"
+        asset_version["sections"] = sections
+        content["_asset_version"] = asset_version
+        workspace = content.get("_workspace")
+        if isinstance(workspace, dict):
+            workspace["human_confirmed"] = False
+        try:
+            result = self.store.update_stage(
+                project_id=project_id,
+                stage_key=stage_key,
+                content=content,
+                change_reason=request.change_reason
+                or f"Updated asset section {section_key}",
                 author_type="human",
                 expected_revision=request.expected_revision,
             )

@@ -105,6 +105,14 @@ class ProjectStore:
                     FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    profile_id TEXT PRIMARY KEY,
+                    interface_theme TEXT NOT NULL
+                        CHECK(interface_theme IN ('graphite', 'blueprint', 'paper')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_stage_revisions_project
                     ON stage_revisions(project_id, stage_key, revision DESC);
                 CREATE INDEX IF NOT EXISTS idx_approval_events_project
@@ -112,6 +120,15 @@ class ProjectStore:
                 CREATE INDEX IF NOT EXISTS idx_data_assets_project
                     ON data_assets(project_id, created_at DESC);
                 """
+            )
+            timestamp = _now()
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO user_profiles
+                    (profile_id, interface_theme, created_at, updated_at)
+                VALUES ('local-user', 'graphite', ?, ?)
+                """,
+                (timestamp, timestamp),
             )
             self._synchronize_stage_model(conn)
 
@@ -349,6 +366,35 @@ class ProjectStore:
             if cursor.rowcount == 0:
                 raise KeyError(project_id)
         return self.get_project(project_id)
+
+    def get_user_profile(self, profile_id: str = "local-user") -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM user_profiles WHERE profile_id = ?",
+                (profile_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(profile_id)
+        return dict(row)
+
+    def update_user_profile(
+        self,
+        interface_theme: str,
+        profile_id: str = "local-user",
+    ) -> dict[str, Any]:
+        timestamp = _now()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE user_profiles
+                SET interface_theme = ?, updated_at = ?
+                WHERE profile_id = ?
+                """,
+                (interface_theme, timestamp, profile_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(profile_id)
+        return self.get_user_profile(profile_id)
 
     def create_data_asset(
         self,

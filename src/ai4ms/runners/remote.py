@@ -34,6 +34,18 @@ def discover_remote_stata_profile() -> dict[str, Any] | None:
             profile = json.loads(response.read().decode("utf-8"))
         profile["transport"] = "http_local_runner"
         return profile
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            return _unavailable_profile(
+                "Stata Local Runner 令牌不一致；请确保工作台与本机 Runner 使用相同 token"
+            )
+        if exc.code == 503:
+            return _unavailable_profile(
+                "Stata Local Runner 尚未配置 token；请先运行本机安装脚本"
+            )
+        return _unavailable_profile(
+            f"Stata Local Runner 返回 HTTP {exc.code}"
+        )
     except (OSError, ValueError, urllib.error.URLError) as exc:
         return _unavailable_profile(
             f"无法连接研究者本机 Stata Local Runner：{type(exc).__name__}"

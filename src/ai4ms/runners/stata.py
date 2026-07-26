@@ -5,6 +5,7 @@ import hashlib
 import os
 import platform
 import re
+import signal
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -147,7 +148,7 @@ class StataBatchAdapter:
         process = self._processes.get(run_id)
         if process is None or process.returncode is not None:
             return False
-        process.kill()
+        _kill_process_tree(process)
         return True
 
     async def execute(
@@ -172,6 +173,7 @@ class StataBatchAdapter:
             cwd=str(do_file_path.parent),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name != "nt",
         )
         self._processes[run_id] = process
         timed_out = False
@@ -179,7 +181,7 @@ class StataBatchAdapter:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
         except TimeoutError:
             timed_out = True
-            process.kill()
+            _kill_process_tree(process)
             stdout, stderr = await process.communicate()
         finally:
             self._processes.pop(run_id, None)
@@ -196,3 +198,15 @@ class StataBatchAdapter:
             "finished_at": finished_at.isoformat(),
             "duration_seconds": round((finished_at - started_at).total_seconds(), 3),
         }
+
+
+def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    if os.name == "nt":
+        process.kill()
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return

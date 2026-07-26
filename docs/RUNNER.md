@@ -11,6 +11,11 @@ Local Runner 不是公网服务。它要求：
 - `AI4MS_STATA_LICENSE_CONFIRMED=true`；
 - 防火墙禁止外部网络访问 Runner 端口。
 
+Windows 可从仓库根目录进入 `scripts/stata-runner/`，依次运行
+`SETUP_STATA_RUNNER.bat`、`START_STATA_RUNNER.bat` 和
+`CHECK_STATA_RUNNER.bat`。配置保存在 Git 忽略的
+`.env.stata-runner.local`，工作台与 Runner 会自动读取同一配对令牌。
+
 ## 2. 数据资产
 
 上传 `.dta` 后，平台登记：
@@ -85,6 +90,7 @@ GET  /api/v1/projects/{project_id}/stages/analysis/runs
 POST /api/v1/projects/{project_id}/stages/analysis/runs
 GET  /api/v1/projects/{project_id}/stages/analysis/runs/{run_id}
 GET  /api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/result
+GET  /api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/artifacts/{path}
 POST /api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/cancel
 POST /api/v1/projects/{project_id}/stages/analysis/runs/{run_id}/rerun
 ```
@@ -99,7 +105,10 @@ queued / running / canceling / succeeded / failed / canceled / interrupted
 - 取消从工作台继续传到 Local Runner 和活动 Stata 进程；
 - 重跑复用原请求、记录 `parent_run_id`，但重新执行 Preflight；
 - 失败和取消也生成最小 manifest，Result API 始终具有明确终态；
+- 日志和图表只能通过 manifest 已声明的 artifact 路径读取；下载前再次核对文件大小与 SHA-256；
 - 后端重启后未完成任务标记为 `interrupted:backend_restarted`。
+- `AI4MS_ANALYSIS_MAX_CONCURRENCY` 控制真正的执行槽；超过槽位的任务保持
+  `queued`，不会提前伪装成 `running`。
 
 当前任务实现面向比赛单实例，不支持多进程协调或重启续跑。
 

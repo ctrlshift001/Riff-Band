@@ -9,6 +9,42 @@ class StrictContract(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
 
+InferenceType = Literal[
+    "deduction",
+    "induction",
+    "abduction",
+    "causal",
+    "comparison",
+    "calculation",
+    "synthesis",
+    "design_choice",
+]
+
+
+class LogicStepDraft(StrictContract):
+    """Auditable scientific rationale, never private token-level chain of thought."""
+
+    step_id: str = Field(pattern=r"^L[0-9]{2,3}$")
+    question: str = Field(min_length=3, max_length=600)
+    evidence_refs: list[str] = Field(min_length=1, max_length=30)
+    inference_type: InferenceType
+    conclusion: str = Field(min_length=3, max_length=1000)
+    confidence: Literal["low", "medium", "high"]
+    falsifier: str = Field(min_length=3, max_length=800)
+
+
+class ReasoningTraceDraft(StrictContract):
+    """Compact, inspectable research rationale attached to every model draft."""
+
+    problem_framing: str = Field(min_length=5, max_length=1500)
+    logic_chain: list[LogicStepDraft] = Field(min_length=1, max_length=20)
+    assumptions: list[str] = Field(default_factory=list, max_length=30)
+    alternatives: list[str] = Field(default_factory=list, max_length=20)
+    uncertainties: list[str] = Field(default_factory=list, max_length=30)
+    human_decisions: list[str] = Field(min_length=1, max_length=20)
+    next_verifications: list[str] = Field(min_length=1, max_length=20)
+
+
 class ConceptBlock(StrictContract):
     label: str = Field(min_length=1, max_length=120)
     terms: list[str] = Field(min_length=1, max_length=20)
@@ -23,6 +59,7 @@ class GapDraft(StrictContract):
 
 
 class ProblemDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     initial_idea: str = Field(min_length=3, max_length=4000)
     research_object: str = Field(min_length=1, max_length=500)
     problem_boundary: str = Field(min_length=3, max_length=1000)
@@ -47,6 +84,7 @@ class QueryBlock(StrictContract):
 
 
 class LiteraturePlanDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     topic_summary: str = Field(min_length=5, max_length=1000)
     query_blocks: list[QueryBlock] = Field(min_length=2, max_length=12)
     databases: list[Literal["openalex", "crossref", "semantic_scholar", "arxiv"]] = Field(min_length=2, max_length=4)
@@ -87,6 +125,7 @@ class EvidenceGapDraft(StrictContract):
 
 
 class LiteratureSynthesisDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     research_streams: list[ResearchStreamDraft] = Field(min_length=1, max_length=8)
     syntheses: list[SynthesisStatementDraft] = Field(min_length=1, max_length=15)
     gap_candidates: list[EvidenceGapDraft] = Field(default_factory=list, max_length=8)
@@ -129,6 +168,7 @@ class PropositionDraft(StrictContract):
 
 
 class TheoryDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     theoretical_lenses: list[TheoreticalLensDraft] = Field(min_length=1, max_length=6)
     constructs: list[ConstructDraft] = Field(min_length=2, max_length=20)
     mechanisms: list[MechanismDraft] = Field(min_length=1, max_length=10)
@@ -156,6 +196,7 @@ class AssumptionDraft(StrictContract):
 
 
 class DesignDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     design_lane: Literal["empirical_causal", "analytical_optimization", "predictive_computational", "behavioral_qualitative", "synthesis_design_science"]
     research_question: str = Field(min_length=5, max_length=800)
     unit_of_analysis: str = Field(min_length=1, max_length=300)
@@ -190,6 +231,7 @@ class VariableDraft(StrictContract):
 
 
 class DataDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     data_sources: list[DataSourceChoiceDraft] = Field(min_length=1, max_length=10)
     variables: list[VariableDraft] = Field(min_length=2, max_length=30)
     sample_definition: str = Field(min_length=5, max_length=800)
@@ -247,6 +289,7 @@ class AnalysisStepDraft(StrictContract):
 
 
 class AnalysisPlanDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     design_lane: Literal["empirical_causal", "analytical_optimization", "predictive_computational", "behavioral_qualitative", "synthesis_design_science"]
     estimand_or_objective: str = Field(min_length=5, max_length=1000)
     analysis_sample: str = Field(min_length=5, max_length=800)
@@ -269,6 +312,7 @@ class AnalysisPlanDraft(StrictContract):
 
 
 class RunPreparationDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     execution_engine: ExecutionEngine
     readiness_summary: str = Field(min_length=5, max_length=800)
     expected_outputs: list[str] = Field(min_length=1, max_length=20)
@@ -291,6 +335,7 @@ class RobustnessCheckDraft(StrictContract):
 
 
 class RobustnessDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     robustness_matrix: list[RobustnessCheckDraft] = Field(min_length=2, max_length=30)
     failed_checks: list[str] = Field(default_factory=list, max_length=20)
     interpretation_limits: list[str] = Field(min_length=1, max_length=20)
@@ -376,6 +421,7 @@ class HeterogeneityAssessmentDraft(StrictContract):
 
 
 class ClaimEvidenceDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     claims: list[ClaimRecordDraft] = Field(min_length=1, max_length=30)
     mechanisms: list[MechanismAssessmentDraft] = Field(default_factory=list, max_length=12)
     heterogeneity: list[HeterogeneityAssessmentDraft] = Field(default_factory=list, max_length=15)
@@ -411,6 +457,7 @@ class DeliveryOutlineSectionDraft(StrictContract):
 
 
 class DeliveryDraft(StrictContract):
+    reasoning_trace: ReasoningTraceDraft | None = None
     title: str = Field(min_length=3, max_length=240)
     executive_summary: str = Field(min_length=20, max_length=3000)
     conclusions: list[DeliveryConclusionDraft] = Field(min_length=1, max_length=20)
