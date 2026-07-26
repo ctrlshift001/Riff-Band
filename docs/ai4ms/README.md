@@ -12,6 +12,8 @@
 4. [开发 Roadmap](IMPLEMENTATION_ROADMAP.md)：按依赖关系拆分的开发批次、验收标准与下一步操作。
 5. [仓库完整性与本轮验收](REPOSITORY_AUDIT_2026-07-21.md)：PR 合并基线、文件清单、发现的问题、修复结果和发布前检查。
 6. [完整 HTML 使用说明](../../src/web/public/ai4ms-user-guide.html)：随前端部署，可从右上角用户菜单直接打开并打印。
+7. [Prompt Engineering 2.0 开源调研](PROMPT_ENGINEERING_RESEARCH_2026-07-25.md)：DSPy、PromptFlow、Promptfoo、Guardrails、STORM、PaperQA、Deep Research 等项目的工程模式与 AI4MS 采用判断。
+8. [S0-S9 Prompt Playbook](PROMPT_PLAYBOOK_S0_S9.md)：10 个阶段智能体、9 次交接、工具风险、人工门禁、审计理由、失败规则和开发验收。
 
 ## 本轮前端变化
 
@@ -34,3 +36,4 @@
 - 公式必须连接变量定义、分析计划、代码和运行产物。
 - 智能体同步内容保持可编辑，并明确标记来源与“待人工审阅”。
 - 正式运行、接受风险、阶段批准和发布始终需要人工动作。
+- S0-S9 模型草稿统一使用 Prompt Engineering `2.0.0`，附带可审计 `reasoning_trace`；它展示证据—推断—结论和可推翻条件，不请求或保存模型私密思维链。

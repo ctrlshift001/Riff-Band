@@ -20,6 +20,7 @@ from ai4ms.knowledge import (
     KnowledgeRegistry,
 )
 from ai4ms.literature.service import LiteratureSearchInputError, LiteratureSearchService
+from ai4ms.prompts import PromptCatalog
 from ai4ms.runners import (
     AnalysisJobConflictError,
     AnalysisJobNotFoundError,
@@ -209,6 +210,14 @@ def create_app(
     @app.get("/api/v1/meta/inference", tags=["meta"])
     async def model_inference_status():
         return inference_status()
+
+    @app.get("/api/v1/meta/prompts", tags=["meta"])
+    async def prompt_registry(response: Response):
+        manifest = PromptCatalog.manifest()
+        version = manifest["registry_version"]
+        response.headers["ETag"] = f'W/"prompts-{version}"'
+        response.headers["X-AI4MS-Prompt-Registry-Version"] = version
+        return manifest
 
     @app.get("/api/v1/knowledge/methods", tags=["knowledge"])
     async def method_registry(goal: str = "", q: str = "", limit: int = 10):

@@ -78,12 +78,16 @@ class StageGenerationService:
         responses.append(first)
         try:
             draft = validate_structured_output(first.text, prompt.contract)
-            self._validate_domain_references(draft.model_dump(mode="json"), prompt.prompt_id, context)
+            validated_content = draft.model_dump(mode="json")
+            self._validate_reasoning_trace(validated_content)
+            self._validate_domain_references(validated_content, prompt.prompt_id, context)
         except StructuredOutputError as first_error:
             repair_prompt = f"""上一次输出未通过结构或引用约束：{first_error}
 
 请只修复 JSON 格式、字段和值，使其符合原任务、JSON Schema 和输入中的可用 ID。
 不得增加输入中不存在的事实、论文、方法或数据源。
+必须补全可审计 reasoning_trace；logic_chain 每一步都要有唯一 step_id、
+非空 evidence_refs、推断类型、结论、置信度和 falsifier，并保留人工决策与下一步核验。
 
 原任务与约束：
 {user_prompt[:12000]}
@@ -94,7 +98,9 @@ class StageGenerationService:
             responses.append(repaired)
             try:
                 draft = validate_structured_output(repaired.text, prompt.contract)
-                self._validate_domain_references(draft.model_dump(mode="json"), prompt.prompt_id, context)
+                validated_content = draft.model_dump(mode="json")
+                self._validate_reasoning_trace(validated_content)
+                self._validate_domain_references(validated_content, prompt.prompt_id, context)
             except StructuredOutputError as final_error:
                 raise StageGenerationOutputError(str(final_error)) from final_error
 
@@ -456,9 +462,60 @@ class StageGenerationService:
         payload = {key: content[key] for key in prompt.contract.model_fields if key in content}
         try:
             validated = prompt.contract.model_validate(payload).model_dump(mode="json")
+            generation = content.get("generation", {})
+            is_v2_model_draft = (
+                isinstance(generation, dict)
+                and str(generation.get("prompt_version", "")).startswith("2.")
+            )
+            if content.get("reasoning_trace") is not None or is_v2_model_draft:
+                cls._validate_reasoning_trace(validated)
             cls._validate_domain_references(validated, prompt.prompt_id, context)
         except (ValidationError, StructuredOutputError) as exc:
             raise StageContentValidationError(str(exc)) from exc
+
+    @staticmethod
+    def _validate_reasoning_trace(content: dict[str, Any]) -> None:
+        trace = content.get("reasoning_trace")
+        if not isinstance(trace, dict):
+            raise StructuredOutputError("reasoning_trace is required for Prompt Engineering 2.0 drafts")
+        if not str(trace.get("problem_framing", "")).strip():
+            raise StructuredOutputError("reasoning_trace.problem_framing must not be empty")
+
+        logic_chain = trace.get("logic_chain")
+        if not isinstance(logic_chain, list) or not logic_chain:
+            raise StructuredOutputError("reasoning_trace.logic_chain requires at least one auditable step")
+        step_ids: set[str] = set()
+        for index, step in enumerate(logic_chain, start=1):
+            if not isinstance(step, dict):
+                raise StructuredOutputError(f"reasoning_trace.logic_chain[{index}] must be an object")
+            step_id = str(step.get("step_id", "")).strip()
+            if not step_id:
+                raise StructuredOutputError(f"reasoning_trace.logic_chain[{index}] has no step_id")
+            if step_id in step_ids:
+                raise StructuredOutputError(f"duplicate reasoning_trace step_id: {step_id}")
+            step_ids.add(step_id)
+            evidence_refs = step.get("evidence_refs")
+            if not isinstance(evidence_refs, list) or not any(
+                str(item).strip() for item in evidence_refs
+            ):
+                raise StructuredOutputError(
+                    f"reasoning_trace step {step_id} requires at least one evidence_ref"
+                )
+            if not str(step.get("conclusion", "")).strip():
+                raise StructuredOutputError(f"reasoning_trace step {step_id} has no conclusion")
+            if not str(step.get("falsifier", "")).strip():
+                raise StructuredOutputError(f"reasoning_trace step {step_id} has no falsifier")
+
+        human_decisions = trace.get("human_decisions")
+        if not isinstance(human_decisions, list) or not any(
+            str(item).strip() for item in human_decisions
+        ):
+            raise StructuredOutputError("reasoning_trace.human_decisions requires at least one item")
+        next_verifications = trace.get("next_verifications")
+        if not isinstance(next_verifications, list) or not any(
+            str(item).strip() for item in next_verifications
+        ):
+            raise StructuredOutputError("reasoning_trace.next_verifications requires at least one item")
 
     @staticmethod
     def _validate_domain_references(

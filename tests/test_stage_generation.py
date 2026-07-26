@@ -15,8 +15,31 @@ from ai4ms.services.stage_generation import (
 )
 
 
+def _reasoning_trace(evidence_ref: str = "project.initial_idea") -> dict:
+    return {
+        "problem_framing": "基于当前项目资产形成可供研究者审阅的阶段草稿。",
+        "logic_chain": [
+            {
+                "step_id": "L01",
+                "question": "当前证据允许形成什么范围的阶段判断？",
+                "evidence_refs": [evidence_ref],
+                "inference_type": "synthesis",
+                "conclusion": "只形成受输入与证据边界约束的候选内容。",
+                "confidence": "medium",
+                "falsifier": "后续证据与当前输入冲突或研究者修改研究边界。",
+            }
+        ],
+        "assumptions": ["输入资产代表当前项目状态"],
+        "alternatives": ["保留更多候选并推迟冻结"],
+        "uncertainties": ["仍需人工核验的字段"],
+        "human_decisions": ["研究者确认本阶段边界与是否采纳草稿"],
+        "next_verifications": ["核对引用 ID、关键假设和上游 revision"],
+    }
+
+
 def _problem_payload() -> dict:
     return {
+        "reasoning_trace": _reasoning_trace(),
         "initial_idea": "A model must not replace this authoritative field",
         "research_object": "使用生成式 AI 的企业",
         "problem_boundary": "考察企业采用生成式 AI 与创新结果之间的关系，不预设因果成立",
@@ -232,6 +255,7 @@ def _s1_s4_project() -> dict:
 
 def _theory_payload() -> dict:
     return {
+        "reasoning_trace": _reasoning_trace("paper_a"),
         "theoretical_lenses": [
             {
                 "name": "组织信息处理理论",
@@ -277,6 +301,7 @@ def test_design_generation_repairs_method_id_outside_registry_shortlist():
 
     def payload(primary: str) -> dict:
         return {
+            "reasoning_trace": _reasoning_trace("method_candidates"),
             "design_lane": "empirical_causal",
             "research_question": "AI 采用如何影响企业创新？",
             "unit_of_analysis": "企业年度观测",
@@ -313,6 +338,7 @@ def test_data_generation_uses_registry_source_ids():
     context = StageGenerationService._build_context(project, "data")
     source_id = context["data_source_candidates"][0]["source_id"]
     payload = {
+        "reasoning_trace": _reasoning_trace("data_source_candidates"),
         "data_sources": [{"source_id": source_id, "role": "candidate", "access_status": "unknown", "license_status": "unknown", "rationale": "候选数据源与企业创新变量可能相关。", "required_fields": ["企业标识", "年份"], "risks": ["授权状态未知"]}],
         "variables": [
             {"name": "AI 采用", "role": "treatment", "construct": "企业 AI 采用", "operationalization": "根据可得字段构建，口径待确认。", "unit": "企业-年", "source_ids": [source_id], "missing_data_plan": "先描述缺失机制再决定处理方式。"},
@@ -370,6 +396,7 @@ def _s5_s7_project() -> dict:
 
 def _analysis_plan_payload(formula_id: str) -> dict:
     return {
+        "reasoning_trace": _reasoning_trace(formula_id),
         "design_lane": "empirical_causal",
         "estimand_or_objective": "估计 AI 采用对企业创新结果的平均处理效应。",
         "analysis_sample": "满足企业标识、年份及主变量完整要求的企业年度样本。",
@@ -442,6 +469,7 @@ def test_analysis_generation_cannot_modify_approved_do_file_binding():
     }
     project["stages"][6]["content"] = {"runs": [preserved_run]}
     payload = {
+        "reasoning_trace": _reasoning_trace("analysis_plan_hash"),
         "execution_engine": "stata",
         "readiness_summary": "分析计划已冻结，但仍需执行确定性预检。",
         "expected_outputs": ["日志", "主结果表"],
@@ -462,6 +490,7 @@ def test_analysis_generation_cannot_modify_approved_do_file_binding():
 
 def _robustness_payload(status: str = "blocked") -> dict:
     return {
+        "reasoning_trace": _reasoning_trace("run_blocked"),
         "robustness_matrix": [
             {"check_id": "ROB1", "category": "alternative_measure", "rationale": "检查指标口径依赖。", "specification": "使用替代创新指标重估主规格。", "linked_specification_ids": ["SPEC1"], "required_run_ids": ["run_blocked"], "status": status, "result_summary": "" if status == "blocked" else "声称稳健", "implication": "完成运行前不得提升结论强度。"},
             {"check_id": "ROB2", "category": "placebo", "rationale": "检查虚假处理时间。", "specification": "把处理时间提前并重估。", "linked_specification_ids": ["SPEC1"], "required_run_ids": [], "status": "planned", "result_summary": "", "implication": "显著安慰剂结果将削弱识别可信度。"},
@@ -531,6 +560,7 @@ def test_s7_accepts_status_only_when_s6_run_has_structured_results():
 
 def _claim_evidence_payload(confidence: str = "low") -> dict:
     return {
+        "reasoning_trace": _reasoning_trace("paper_a"),
         "claims": [
             {
                 "claim_id": "C1",
@@ -689,6 +719,7 @@ def test_s8_accepts_structured_s6_run_as_estimate_evidence():
 
 def _delivery_payload(evidence_id: str = "EV1") -> dict:
     return {
+        "reasoning_trace": _reasoning_trace(evidence_id),
         "title": "AI 采用与企业创新：受当前证据约束的研究报告",
         "executive_summary": "现有论文提示二者存在关系，但本地运行阻塞，因此报告只保留低置信、有限范围的结论。",
         "conclusions": [

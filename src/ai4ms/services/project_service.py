@@ -10,6 +10,7 @@ from ai4ms.delivery import DeliveryExportError, DeliveryExportService
 from ai4ms.knowledge import KnowledgeEvaluationService
 from ai4ms.literature.service import LiteratureSearchService
 from ai4ms.orchestration import AOrchestraStageService
+from ai4ms.prompts import PromptCatalog, get_stage_policy
 from ai4ms.runners import (
     AnalysisJobConflictError,
     AnalysisJobService,
@@ -105,7 +106,21 @@ class ProjectService:
         )
 
     def stage_definitions(self) -> list[dict[str, Any]]:
-        return [stage.model_dump() for stage in STAGE_DEFINITIONS]
+        definitions = []
+        for stage in STAGE_DEFINITIONS:
+            item = stage.model_dump()
+            prompt = PromptCatalog.get(stage.key)
+            item["agent_policy"] = get_stage_policy(stage.key).public_dict()
+            item["prompt"] = (
+                {
+                    "prompt_id": prompt.prompt_id,
+                    "prompt_version": prompt.version,
+                }
+                if prompt is not None
+                else None
+            )
+            definitions.append(item)
+        return definitions
 
     def get_user_profile(self) -> dict[str, Any]:
         return self.store.get_user_profile()
