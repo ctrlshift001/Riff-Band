@@ -677,7 +677,9 @@ interface ApiErrorPayload {
   detail?: string | Array<{ msg?: string }> | { code?: string; message?: string };
 }
 
-const DEFAULT_API_ROOT = "/api/v1";
+const DEFAULT_API_ROOT = process.env.NODE_ENV === "development"
+  ? "http://127.0.0.1:8000/api/v1"
+  : "/api/v1";
 const API_ROOT = (process.env.NEXT_PUBLIC_API_BASE_URL || DEFAULT_API_ROOT).replace(/\/$/, "");
 
 export class ApiError extends Error {
