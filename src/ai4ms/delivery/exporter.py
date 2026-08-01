@@ -11,10 +11,14 @@ from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from ai4ms.delivery.quality import AcademicOutputQualityService
-from ai4ms.services.stage_generation import (
-    StageContentValidationError,
-    StageGenerationService,
+from ai4ms.delivery.renderers import (
+    build_visual_assets,
+    enhance_interactive_html,
+    render_docx,
+    render_pdf,
+    reproduction_readme,
 )
+from ai4ms.services.stage_generation import StageContentValidationError, StageGenerationService
 from research.artifacts import export_visual_html
 
 
@@ -64,11 +68,15 @@ class DeliveryExportService:
 
         report_md = export_dir / "report.md"
         report_html = export_dir / "report.html"
+        report_docx = export_dir / "report.docx"
+        report_pdf = export_dir / "report.pdf"
         snapshot_path = export_dir / "project_snapshot.json"
         quality_path = export_dir / "output_quality.json"
         manifest_path = export_dir / "manifest.json"
+        stata_package_path = export_dir / "stata_reproduction.zip"
         package_path = export_dir / "research_package.zip"
 
+        visual_assets = build_visual_assets(project, export_dir)
         report_md.write_text(self._render_markdown(project), encoding="utf-8")
         export_visual_html(
             report_md,
@@ -77,6 +85,9 @@ class DeliveryExportService:
             mode_label="AI4MS",
             product_label="AI4MS 管理科学科研工作台",
         )
+        enhance_interactive_html(report_html, export_dir, visual_assets)
+        render_docx(project, report_docx, export_dir, visual_assets)
+        render_pdf(project, report_pdf, visual_assets)
         snapshot_path.write_text(
             json.dumps(project, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
@@ -86,17 +97,32 @@ class DeliveryExportService:
             encoding="utf-8",
         )
 
+        run_artifacts = self._public_run_artifacts(project, project_dir)
+        self._build_stata_package(
+            project,
+            export_dir,
+            stata_package_path,
+            run_artifacts,
+        )
         package_files: list[tuple[Path, str, str]] = [
             (report_md, "report/report.md", "generated_report"),
             (report_html, "report/report.html", "visual_report"),
+            (report_docx, "report/report.docx", "editable_word_report"),
+            (report_pdf, "report/report.pdf", "fixed_pdf_report"),
             (snapshot_path, "project/project_snapshot.json", "project_snapshot"),
             (
                 quality_path,
                 "quality/output_quality.json",
                 "academic_output_quality",
             ),
+            (
+                stata_package_path,
+                "reproduction/stata_reproduction.zip",
+                "stata_reproduction_package",
+            ),
         ]
-        package_files.extend(self._public_run_artifacts(project, project_dir))
+        package_files.extend(self._visual_files(export_dir))
+        package_files.extend(run_artifacts)
         generated_at = datetime.now(UTC).isoformat()
         manifest = {
             "schema_version": "ai4ms.research-package.v2",
@@ -150,9 +176,15 @@ class DeliveryExportService:
             "source_delivery_hash": delivery.get("content_hash", ""),
             "source_content_fingerprint": self.delivery_fingerprint(delivery.get("content", {})),
             "visual_report_path": f"{relative}/report.html",
+            "word_report_path": f"{relative}/report.docx",
+            "pdf_report_path": f"{relative}/report.pdf",
+            "stata_package_path": f"{relative}/stata_reproduction.zip",
             "research_package_path": f"{relative}/research_package.zip",
             "manifest_path": f"{relative}/manifest.json",
             "file_count": len(manifest["files"]) + 1,
+            "word_sha256": self._sha256(report_docx),
+            "pdf_sha256": self._sha256(report_pdf),
+            "stata_package_sha256": self._sha256(stata_package_path),
             "package_sha256": self._sha256(package_path),
             "quality_status": quality["status"],
             "quality_counts": quality["counts"],
@@ -168,6 +200,9 @@ class DeliveryExportService:
                 "_workspace",
                 "exports",
                 "visual_report_path",
+                "word_report_path",
+                "pdf_report_path",
+                "stata_package_path",
                 "research_package_path",
                 "manifest_path",
             }
@@ -177,7 +212,7 @@ class DeliveryExportService:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def artifact_path(self, project: dict[str, Any], export_id: str, kind: str) -> Path:
-        if kind not in {"report", "package", "manifest"}:
+        if kind not in {"report", "word", "pdf", "stata", "package", "manifest"}:
             raise DeliveryExportError(f"不支持的交付产物类型：{kind}")
         delivery = self._stage(project, "delivery").get("content", {})
         export_record = next(
@@ -192,6 +227,9 @@ class DeliveryExportService:
             raise DeliveryExportError(f"交付记录不存在：{export_id}")
         field = {
             "report": "visual_report_path",
+            "word": "word_report_path",
+            "pdf": "pdf_report_path",
+            "stata": "stata_package_path",
             "package": "research_package_path",
             "manifest": "manifest_path",
         }[kind]
@@ -242,6 +280,175 @@ class DeliveryExportService:
                     archive_path = f"artifacts/{archive_path}"
                 found.append((source, archive_path, "run_artifact"))
         return found
+
+    @staticmethod
+    def _visual_files(export_dir: Path) -> list[tuple[Path, str, str]]:
+        found: list[tuple[Path, str, str]] = []
+        for folder in ("charts", "diagrams"):
+            root = export_dir / folder
+            if not root.is_dir():
+                continue
+            for source in sorted(root.rglob("*")):
+                if not source.is_file():
+                    continue
+                suffix = source.suffix.lower()
+                role = (
+                    "mermaid_source"
+                    if suffix == ".mmd"
+                    else "visual_specification"
+                    if suffix == ".json"
+                    else "visual_asset"
+                )
+                found.append(
+                    (
+                        source,
+                        source.relative_to(export_dir).as_posix(),
+                        role,
+                    )
+                )
+        return found
+
+    def _build_stata_package(
+        self,
+        project: dict[str, Any],
+        export_dir: Path,
+        package_path: Path,
+        run_artifacts: list[tuple[Path, str, str]],
+    ) -> None:
+        reproduction_dir = export_dir / "reproduction"
+        reproduction_dir.mkdir(parents=True, exist_ok=True)
+        stages = {
+            str(stage.get("key")): stage
+            for stage in project.get("stages", [])
+            if isinstance(stage, dict) and stage.get("key")
+        }
+        analysis = stages.get("analysis", {}).get("content", {})
+        identification = stages.get("identification", {}).get("content", {})
+        runs = [
+            run
+            for run in analysis.get("runs", [])
+            if isinstance(run, dict)
+        ]
+        do_file = str(
+            analysis.get("do_file")
+            or identification.get("stata_do_file")
+            or "* 尚无获批 Stata do-file\n"
+        )
+        (reproduction_dir / "analysis.do").write_text(do_file, encoding="utf-8")
+        (reproduction_dir / "README.md").write_text(
+            reproduction_readme(project), encoding="utf-8"
+        )
+        data_assets = [
+            {
+                key: asset.get(key)
+                for key in (
+                    "asset_id",
+                    "original_name",
+                    "media_type",
+                    "size_bytes",
+                    "sha256",
+                    "created_at",
+                    "metadata",
+                )
+            }
+            for asset in project.get("data_assets", [])
+            if isinstance(asset, dict)
+        ]
+        (reproduction_dir / "data-assets.json").write_text(
+            json.dumps(data_assets, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        runner_profile = next(
+            (
+                run.get("runner_profile", {})
+                for run in reversed(runs)
+                if isinstance(run.get("runner_profile"), dict)
+            ),
+            {},
+        )
+        (reproduction_dir / "runner-profile.json").write_text(
+            json.dumps(runner_profile, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        run_index = [
+            {
+                key: run.get(key)
+                for key in (
+                    "run_id",
+                    "status",
+                    "reason_code",
+                    "exit_code",
+                    "requested_at",
+                    "started_at",
+                    "finished_at",
+                    "duration_seconds",
+                    "analysis_plan_revision",
+                    "analysis_plan_hash",
+                    "do_file_sha256",
+                    "input_asset_id",
+                    "data_signature",
+                    "manifest_path",
+                )
+            }
+            for run in runs
+        ]
+        (reproduction_dir / "run-index.json").write_text(
+            json.dumps(run_index, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+        files: list[tuple[Path, str, str]] = [
+            (reproduction_dir / "README.md", "README.md", "instructions"),
+            (reproduction_dir / "analysis.do", "analysis.do", "approved_do_file"),
+            (
+                reproduction_dir / "data-assets.json",
+                "data-assets.json",
+                "input_metadata",
+            ),
+            (
+                reproduction_dir / "runner-profile.json",
+                "runner-profile.json",
+                "runner_environment",
+            ),
+            (reproduction_dir / "run-index.json", "run-index.json", "run_index"),
+        ]
+        for source, archive_path, _role in run_artifacts:
+            normalized = archive_path
+            if normalized.startswith("artifacts/"):
+                normalized = normalized[len("artifacts/") :]
+            files.append((source, normalized, "run_artifact"))
+
+        manifest = {
+            "schema_version": "ai4ms.stata-reproduction.v1",
+            "project_id": project["project_id"],
+            "raw_data_included": False,
+            "required_input_hashes": [
+                {
+                    "asset_id": item.get("asset_id", ""),
+                    "filename": item.get("original_name", ""),
+                    "sha256": item.get("sha256", ""),
+                }
+                for item in data_assets
+            ],
+            "files": [
+                {
+                    "path": archive_path,
+                    "role": role,
+                    "bytes": source.stat().st_size,
+                    "sha256": self._sha256(source),
+                }
+                for source, archive_path, role in files
+            ],
+        }
+        reproduction_manifest = reproduction_dir / "manifest.json"
+        reproduction_manifest.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        with ZipFile(package_path, "w", compression=ZIP_DEFLATED) as archive:
+            for source, archive_path, _role in files:
+                archive.write(source, archive_path)
+            archive.write(reproduction_manifest, "manifest.json")
 
     def _render_markdown(self, project: dict[str, Any]) -> str:
         stages = {stage["key"]: stage for stage in project.get("stages", [])}

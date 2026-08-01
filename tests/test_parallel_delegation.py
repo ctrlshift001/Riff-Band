@@ -97,6 +97,18 @@ class TestParallelDelegation(unittest.TestCase):
             self.assertEqual(result["finish_result"]["status"], "done")
             self.assertIn("prefix-", result["worker_process"]["stdout"])
 
+    def test_installed_worker_falls_back_to_module_entrypoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = SubAgentProcessManager(project_root=root)
+
+            command = manager._worker_command(
+                root / "request.json",
+                root / "result.json",
+            )
+
+            self.assertEqual(command[1:3], ["-m", "workers.subagent_worker"])
+
 
 if __name__ == "__main__":
     unittest.main()

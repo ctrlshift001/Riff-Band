@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictContract(BaseModel):
@@ -129,6 +129,38 @@ class ProblemDraft(StrictContract):
     selection_tradeoffs: list[str] = Field(default_factory=list, max_length=12)
     counter_searches: list[str] = Field(default_factory=list, max_length=10)
     unknowns: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("objective", mode="before")
+    @classmethod
+    def normalize_objective(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().casefold()
+        allowed = {
+            "explore",
+            "explain",
+            "causal",
+            "predict",
+            "optimize",
+            "synthesize",
+            "theory_build",
+            "unknown",
+        }
+        if normalized in allowed:
+            return normalized
+        aliases = (
+            (("因果", "causal", "effect", "impact"), "causal"),
+            (("预测", "predict", "forecast"), "predict"),
+            (("优化", "optimize", "optimization"), "optimize"),
+            (("综述", "综合", "synthesize", "review"), "synthesize"),
+            (("理论构建", "理论建构", "theory"), "theory_build"),
+            (("解释", "机制", "explain", "mechanism"), "explain"),
+            (("探索", "探究", "explore"), "explore"),
+        )
+        for terms, objective in aliases:
+            if any(term in normalized for term in terms):
+                return objective
+        return "unknown"
 
 
 class QueryBlock(StrictContract):

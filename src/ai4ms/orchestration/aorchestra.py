@@ -162,11 +162,11 @@ class AOrchestraStageService:
             brief_text=self._brief(stage_key, instruction, context),
             sources_dir=sources_dir,
             output_dir=run_dir,
-            max_attempts=self._int_setting("AI4MS_AO_MAX_ATTEMPTS", 2, 2, 10),
-            max_subagent_steps=self._int_setting("AI4MS_AO_MAX_SUBAGENT_STEPS", 7, 3, 20),
-            max_parallel_subtasks=self._int_setting("AI4MS_AO_MAX_PARALLEL", 3, 2, 5),
+            max_attempts=self._int_setting("AI4MS_AO_MAX_ATTEMPTS", 1, 1, 10),
+            max_subagent_steps=self._int_setting("AI4MS_AO_MAX_SUBAGENT_STEPS", 4, 3, 20),
+            max_parallel_subtasks=self._int_setting("AI4MS_AO_MAX_PARALLEL", 2, 2, 5),
             subagent_process_timeout_seconds=self._int_setting(
-                "AI4MS_AO_TIMEOUT_SECONDS", 150, 30, 600
+                "AI4MS_AO_TIMEOUT_SECONDS", 30, 30, 600
             ),
             profile_name=f"ai4ms-{stage_key}",
             report_filename="stage_analysis.md",

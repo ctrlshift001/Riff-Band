@@ -238,6 +238,21 @@ test("deep research workflow persists creation, remediation, agent sync, asset p
   await page.getByRole("button", { name: /与 Topic Agent 讨论并同步/ }).click();
   await page.getByLabel("智能体聊天输入").fill("请形成一段研究边界和失败条件说明。");
   await page.getByRole("button", { name: "发送" }).click();
+  const assistantReply = page.locator(".chat-message.is-assistant").filter({
+    hasText: "研究边界限定为企业层面的可追溯 AI 采用",
+  });
+  await expect(assistantReply).toBeVisible();
+  const replyTypography = await assistantReply.locator(".message-content").evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return {
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      lineHeight: style.lineHeight,
+    };
+  });
+  expect(replyTypography.fontFamily).toContain("SF Pro Text");
+  expect(replyTypography.fontSize).toBe("15px");
+  expect(Number.parseFloat(replyTypography.lineHeight)).toBeGreaterThan(26);
   await page.getByRole("button", { name: "同步到交付正文" }).click();
   await page.getByRole("button", { name: "人工确认并同步" }).click();
   await expect(page.getByText("已生成同步记录，可到“当前草稿”继续修改。")).toBeVisible();

@@ -1,8 +1,8 @@
 # AI4MS / RiffBand
 
-面向管理科学（MS）的垂直 AI 科研工作台：从研究想法、文献和设计，到分析、证据、HTML 可视化报告与成果交付。
+面向管理科学（MS）的垂直 AI 科研工作台：从研究想法、文献和设计，到分析、证据、可交互报告与复现交付。
 
-> 当前工程已经提供可运行的 S0-S9 十阶段浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像、Stata BYOL Runner、Claim-Evidence 审核、HTML/ZIP 交付和 Docker 基础文件。现有 CLI、MCP、Agent Runtime 与研究流水线继续作为工程基础。
+> 当前工程已经提供可运行的 S0-S9 十阶段浏览器工作台、FastAPI、SQLite 项目状态、不可变 revision、人工门禁、领域画像、Stata BYOL Runner、Claim-Evidence 审核、HTML/Word/PDF/Stata 复现包交付和 Docker 基础文件。现有 CLI、MCP、Agent Runtime 与研究流水线继续作为工程基础。
 
 [文档索引](docs/README.md) | [产品定义](docs/PRODUCT.md) | [当前架构](docs/ARCHITECTURE.md) | [开发指南](docs/DEVELOPMENT.md)
 
@@ -43,7 +43,7 @@ S0-S9 十阶段已经进入同一个项目工作台，当前基础能力包括�
 
 当前 S0-S9 均支持真实模型生成。S0-S1 与 S7-S8 已接入基于论文 **AOrchestra: Automating Sub-Agent Creation for Agentic Orchestration** 的动态 SubAgent 编排：S0-S1 并行执行边界澄清、检索侦察、反向检索和综述，S7-S8 并行执行稳健性、负结果、Claim-Evidence 与过度主张审查。S7-S8 的 SubAgent 只有既有项目资产只读权限，不能联网或启动 Runner；AO 报告还必须经过阶段 Pydantic 契约和 ID 白名单，才能保存为 `needs_review` 的 agent revision。
 
-S0 会并列生成可比较的问题候选与诊断，由研究者选择并绑定候选集指纹；S1 的模型检索计划需人工批准后才能自动执行。智能体找到的文献和数据研究先进入候选队列，研究者核对、修改并批准后生成 `EVLIB_*` 权威证据；综述、主张与参考文献只读取 active 权威记录。S2 构建理论，S3-S5 从方法、数据源和公式库形成研究设计、数据合同与分析计划；方法与公式也支持联网候选、人工审核、人工新建和版本化修改。S6 支持 `.dta` 上传、资产登记、SHA-256、元信息读取，并通过 HMAC 签名 Run Bundle 连接研究者本机 Stata Local Runner，回收结构化结果、数据签名、日志和表图；S7 生成受 Run 证据约束的稳健性矩阵；S8 形成主张、证据、假设、机制、异质性和反证图谱；S9 只从 G4 已批准主张与 active 权威论文、数据研究生成可编辑分节正文，每篇 `paper_id` 必须绑定 `EVLIB_*`，数据研究直接使用 `EVLIB_*`，通过引用双向对应和逻辑闭环质量门后，确定性导出 HTML、质量报告、manifest 和 ZIP 研究包 v2。
+S0 会并列生成可比较的问题候选与诊断，由研究者选择并绑定候选集指纹；S1 的模型检索计划需人工批准后才能自动执行。智能体找到的文献和数据研究先进入候选队列，研究者核对、修改并批准后生成 `EVLIB_*` 权威证据；综述、主张与参考文献只读取 active 权威记录。S2 构建理论，S3-S5 从方法、数据源和公式库形成研究设计、数据合同与分析计划；方法与公式也支持联网候选、人工审核、人工新建和版本化修改。S6 支持 `.dta` 上传、资产登记、SHA-256、元信息读取，并通过 HMAC 签名 Run Bundle 连接研究者本机 Stata Local Runner，回收结构化结果、数据签名、日志和表图；S7 生成受 Run 证据约束的稳健性矩阵；S8 形成主张、证据、假设、机制、异质性和反证图谱；S9 只从 G4 已批准主张与 active 权威论文、数据研究生成可编辑分节正文，每篇 `paper_id` 必须绑定 `EVLIB_*`，数据研究直接使用 `EVLIB_*`，通过引用双向对应和逻辑闭环质量门后，确定性导出可交互 HTML、质量报告、manifest、可编辑 DOCX、固定版 PDF、图表、Mermaid 源码、独立 Stata 复现包和 ZIP 研究包 v2。十个阶段批准前都执行结构契约校验，S1 还必须具有真实检索快照和论文记录。
 
 所有模型阶段草稿、智能体回答、知识适配评估和联网发现报告都使用 `ai4ms.ai-report.v1`，包含执行摘要、公开可审计研究依据、来源、资产 ID、限制、人工决定与生成来源；不请求或保存模型私密思维链。
 
@@ -69,11 +69,11 @@ AI4MS 首先服务管理科学，但不会把某个课题或单一方法写死�
 
 领域差异通过 profile、方法卡、数据卡和 Gate Registry 注入，通用 Agent Runtime、资产版本、审批和证据模型保持稳定，为后续扩展到其他科研学科保留接口。
 
-## HTML 可视化报告
+## 多格式研究交付
 
-RiffBand 已支持独立 HTML 研究报告、响应式排版、目录、表格和 ECharts 图表。AI4MS 保留并升级这项能力，用于展示检索范围、研究流派、共识争议、候选空白、数据方法可行性、人工决定和审计记录。
+S9 导出中心以同一份结构化研究资产生成可交互 HTML、DOCX、PDF 和完整研究包。HTML 内嵌图表筛选、Claim-Evidence 关系图和 Mermaid 源码，不依赖外部 CDN；Word 用于继续编辑，PDF 用于固定版本与归档。
 
-HTML 报告是成果交付阶段的一等产物，不属于需要清理的旧工程内容。
+独立 Stata 复现包包含获批 do-file、运行契约、结构化结果、日志、图表、数据签名、Runner 环境和 manifest。原始 `.dta`、Stata 软件与许可证不进入交付包。
 
 ## 工程基础
 
@@ -121,7 +121,7 @@ npm run dev
 - OpenAPI（仅开发调试）：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/healthz`
 
-Next.js 默认把同源 `/api/v1` 和 `/healthz` 代理到 `http://127.0.0.1:8000`。需要连接其他 FastAPI 地址时，在 `src/web/.env.local` 设置 `AI4MS_API_INTERNAL_URL`。
+开发环境中的浏览器默认直连 `http://127.0.0.1:8000/api/v1`，避免长模型请求经过 Next.js 开发代理。需要连接其他 FastAPI 地址时，在 `src/web/.env.local` 设置 `NEXT_PUBLIC_API_BASE_URL`。Docker 静态前端继续使用同源 `/api/v1`。
 
 兼容 CLI 和 MCP 入口：
 
@@ -163,7 +163,7 @@ SQLite、`.dta` 项目资产和 HTML 报告通过 Docker volume 持久化。比�
 - [Paper-Agent 与 thesis-writer 适配说明](docs/ai4ms/PAPER_AGENT_THESIS_WRITER_ADAPTATION_2026-07-26.md)
 - [证据与知识治理方案](docs/ai4ms/EVIDENCE_KNOWLEDGE_GOVERNANCE_V1.md)
 - [Stata Local Runner](docs/RUNNER.md)
-- [原始产品介绍](docs/reference/AI4MS_非技术产品介绍书.md)
+- [智能体应用设计文档（评委版 HTML）](docs/competition/AI4MS_AGENT_APPLICATION_DESIGN.html)
 
 ## 产品边界
 

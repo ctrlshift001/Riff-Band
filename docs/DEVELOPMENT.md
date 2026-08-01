@@ -67,7 +67,7 @@ Set-Location src/web
 npm run dev
 ```
 
-浏览器打开 `http://127.0.0.1:3000`。Next.js 默认把 `/api/v1` 和 `/healthz` 转发到 `8000`。需要修改地址时复制 `src/web/.env.local.example` 并设置 `AI4MS_API_INTERNAL_URL`。
+浏览器打开 `http://127.0.0.1:3000`。开发环境中的浏览器默认直连 `http://127.0.0.1:8000/api/v1`，避免长 LLM 请求经过 Next.js 开发代理后出现 `socket hang up`。需要修改地址时复制 `src/web/.env.local.example` 并设置 `NEXT_PUBLIC_API_BASE_URL`。Docker 静态前端继续使用同源 `/api/v1`。
 
 ## 4. 常用检查
 
@@ -149,12 +149,11 @@ chore(scope): ...
 
 需要保留的决策进入正式文档；临时排查过程进入 Issue、PR 或提交信息。
 
-## 9. 当前工程重点
+## 9. 后续维护重点
 
-后续重构优先级：
+比赛交付后的维护优先级：
 
-1. 把证据库和智能体建议中的展示数据替换为真实项目资产；
-2. 将 `src/web/app/page.tsx` 拆成独立工作区组件；
-3. 合并 `globals.css` 中重复的历史样式层；
-4. 在装有 Docker 和合法 Stata 的机器完成最终端到端演示；
-5. 比赛结束后再评估任务队列、多用户和生产隔离。
+1. 保持阶段契约、前端类型与评委版设计文档同步；
+2. 只在降低维护成本时拆分大型前端组件，不在交付前进行无关重构；
+3. 在装有 Docker 和合法 Stata 的机器保留端到端回归记录；
+4. 比赛结束后再评估任务队列、多用户、对象存储和生产隔离。

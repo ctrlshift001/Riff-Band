@@ -52,6 +52,9 @@ from ai4ms.services.models import (
     StageDecisionRequest,
     StageAssetSectionPatchRequest,
     StageRestoreRequest,
+    StageSuggestionDecisionRequest,
+    StageSuggestionGenerateRequest,
+    StageToolInvokeRequest,
     StageStatus,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
@@ -63,6 +66,8 @@ from ai4ms.services.stage_generation import (
     StageGenerationService,
 )
 from ai4ms.services.stage_chat import StageChatService
+from ai4ms.services.stage_assistant import StageAssistantService
+from ai4ms.services.knowledge_jobs import KnowledgeEvaluationJobService
 
 
 class ProjectNotFoundError(LookupError):
@@ -91,7 +96,7 @@ STAGE_TEMPLATES: dict[str, dict[str, Any]] = {
     "analysis": {"execution_engine": "unknown", "readiness_summary": "", "expected_outputs": [], "preflight_checks": [], "result_review_checks": [], "runner_status": "not_checked", "approved_analysis_plan_revision": 0, "approved_analysis_plan_hash": "", "do_file": "", "runs": [], "results": [], "blocking_issues": [], "unknowns": []},
     "robustness": {"robustness_matrix": [], "failed_checks": [], "interpretation_limits": [], "next_runs": [], "reproducibility_report": "", "unknowns": []},
     "evidence": {"claims": [], "mechanisms": [], "heterogeneity": [], "limitations": [], "interpretation": "", "unknowns": []},
-    "delivery": {"title": "", "document_profile": None, "abstract": "", "keywords": [], "executive_summary": "", "conclusions": [], "policy_implications": [], "outline": [], "manuscript_sections": [], "logic_closure": [], "author_self_review": [], "reference_paper_ids": [], "reference_evidence_ids": [], "approved_claims": [], "references": [], "limitations": [], "reproducibility_notes": [], "disclosure": "", "release_notes": "", "unknowns": [], "exports": [], "visual_report_path": "", "research_package_path": ""},
+    "delivery": {"title": "", "document_profile": None, "abstract": "", "keywords": [], "executive_summary": "", "conclusions": [], "policy_implications": [], "outline": [], "manuscript_sections": [], "logic_closure": [], "author_self_review": [], "reference_paper_ids": [], "reference_evidence_ids": [], "approved_claims": [], "references": [], "limitations": [], "reproducibility_notes": [], "disclosure": "", "release_notes": "", "unknowns": [], "exports": [], "visual_report_path": "", "word_report_path": "", "pdf_report_path": "", "stata_package_path": "", "research_package_path": "", "manifest_path": ""},
 }
 
 
@@ -107,6 +112,7 @@ class ProjectService:
         knowledge_evaluation: KnowledgeEvaluationService | None = None,
         stage_chat: StageChatService | None = None,
         research_service: WebResearchService | None = None,
+        stage_assistant: StageAssistantService | None = None,
     ):
         self.store = store
         self.data_dir = Path(data_dir)
@@ -121,11 +127,20 @@ class ProjectService:
         self.knowledge_evaluation = knowledge_evaluation or KnowledgeEvaluationService(
             self.projects_dir
         )
+        self.knowledge_evaluation_jobs = KnowledgeEvaluationJobService(
+            self.projects_dir,
+            self.knowledge_evaluation,
+        )
         self.stage_chat = stage_chat or StageChatService(self.projects_dir)
         self.research_service = (
             research_service
             or getattr(self.stage_chat, "research_service", None)
             or WebResearchService(self.projects_dir)
+        )
+        self.stage_assistant = stage_assistant or StageAssistantService(
+            self.projects_dir,
+            literature_search=self.literature_search,
+            analysis_runner=self.analysis_runner,
         )
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
@@ -553,6 +568,72 @@ class ProjectService:
             raise StageContentValidationError(
                 f"knowledge record does not exist: {record_id}"
             ) from exc
+    async def submit_knowledge_evaluation(
+        self,
+        project_id: str,
+        request: KnowledgeEvaluationRequest,
+    ) -> dict[str, Any]:
+        return await self.knowledge_evaluation_jobs.submit(
+            self.get_project(project_id),
+            request,
+        )
+
+    def get_knowledge_evaluation_job(
+        self,
+        project_id: str,
+        job_id: str,
+    ) -> dict[str, Any]:
+        self.get_project(project_id)
+        return self.knowledge_evaluation_jobs.get(project_id, job_id)
+
+    def get_stage_suggestions(
+        self,
+        project_id: str,
+        stage_key: str,
+    ) -> dict[str, Any]:
+        return self.stage_assistant.load_suggestions(
+            self.get_project(project_id),
+            stage_key,
+        )
+
+    async def generate_stage_suggestions(
+        self,
+        project_id: str,
+        stage_key: str,
+        request: StageSuggestionGenerateRequest,
+    ) -> dict[str, Any]:
+        return await self.stage_assistant.generate_suggestions(
+            self.get_project(project_id),
+            stage_key,
+            request,
+        )
+
+    def decide_stage_suggestion(
+        self,
+        project_id: str,
+        stage_key: str,
+        suggestion_id: str,
+        request: StageSuggestionDecisionRequest,
+    ) -> dict[str, Any]:
+        return self.stage_assistant.decide_suggestion(
+            self.get_project(project_id),
+            stage_key,
+            suggestion_id,
+            request,
+        )
+
+    async def invoke_stage_tool(
+        self,
+        project_id: str,
+        stage_key: str,
+        request: StageToolInvokeRequest,
+    ) -> dict[str, Any]:
+        return await self.stage_assistant.invoke_tool(
+            self.get_project(project_id),
+            stage_key,
+            request,
+            self.list_analysis_runs(project_id),
+        )
 
     def update_project(self, project_id: str, request: UpdateProjectRequest) -> dict[str, Any]:
         try:
@@ -1675,6 +1756,9 @@ class ProjectService:
         content.update(stage.get("content") or {})
         content.setdefault("exports", []).append(export_record)
         content["visual_report_path"] = export_record["visual_report_path"]
+        content["word_report_path"] = export_record["word_report_path"]
+        content["pdf_report_path"] = export_record["pdf_report_path"]
+        content["stata_package_path"] = export_record["stata_package_path"]
         content["research_package_path"] = export_record["research_package_path"]
         content["manifest_path"] = export_record["manifest_path"]
         return self.update_stage(
@@ -1813,6 +1897,9 @@ class ProjectService:
                 exports = stage.get("content", {}).get("exports", [])
                 latest = exports[-1]
                 self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "report")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "word")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "pdf")
+                self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "stata")
                 self.delivery_export.artifact_path(project, str(latest.get("export_id", "")), "package")
         try:
             result = self.store.decide_stage(
@@ -1987,7 +2074,7 @@ class ProjectService:
                 exports = content.get("exports", [])
                 if not exports:
                     raise StageContentValidationError(
-                        "G5 批准前必须生成 HTML 报告与研究包"
+                        "G5 批准前必须生成 HTML、Word、PDF 与 Stata 复现包"
                     )
                 quality = AcademicOutputQualityService.audit(project)
                 if quality["counts"]["must_fix"]:

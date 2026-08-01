@@ -40,6 +40,39 @@ export interface ProjectStage {
   readiness: StageReadiness;
 }
 
+export interface StageToolPolicy {
+  tool_id: string;
+  purpose: string;
+  risk_level: "R0" | "R1" | "R2" | "R3" | "R4" | "R5";
+  call_when: string[];
+  preconditions: string[];
+  allowed_actions: string[];
+  forbidden_actions: string[];
+  failure_action: string;
+  requires_human_confirmation: boolean;
+}
+
+export interface StageDefinition {
+  key: string;
+  code: string;
+  position: number;
+  title: string;
+  short_title: string;
+  description: string;
+  artifact_type: string;
+  gate: string | null;
+  agent_policy: {
+    stage_id: string;
+    stage_key: string;
+    title: string;
+    principal_agent: string;
+    mission: string;
+    tools: StageToolPolicy[];
+    human_decisions: string[];
+    stop_conditions: string[];
+  };
+}
+
 export interface StageReadiness {
   percent: number;
   completed: number;
@@ -82,6 +115,25 @@ export interface Project extends ProjectSummary {
   approvals: ApprovalEvent[];
   progress: { approved: number; total: number };
   data_assets: DataAsset[];
+}
+
+export interface DeliveryExportRecord {
+  export_id: string;
+  generated_at: string;
+  source_delivery_revision: number;
+  source_delivery_hash: string;
+  source_content_fingerprint: string;
+  visual_report_path: string;
+  word_report_path: string;
+  pdf_report_path: string;
+  stata_package_path: string;
+  research_package_path: string;
+  manifest_path: string;
+  file_count: number;
+  word_sha256: string;
+  pdf_sha256: string;
+  stata_package_sha256: string;
+  package_sha256: string;
 }
 
 export interface DataAssetColumn {
@@ -444,6 +496,60 @@ export interface KnowledgeRecordRevision {
   created_at: string;
 }
 
+export interface KnowledgeEvaluationJob {
+  job_id: string;
+  project_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  error: string;
+  result: KnowledgeEvaluation | null;
+}
+
+export type SuggestionDecision = "pending" | "accepted" | "modified" | "rejected";
+
+export interface StageSuggestion {
+  suggestion_id: string;
+  title: string;
+  reason: string;
+  before: string;
+  after: string;
+  target: "summary" | "objective" | "content" | "scope" | "evidence_note" | "decision" | "risk" | "handoff";
+  tool_id: string;
+  state: SuggestionDecision;
+  decision_note?: string;
+  decided_at: string;
+}
+
+export interface StageSuggestionSet {
+  suggestion_set_id: string;
+  project_id: string;
+  stage_key: string;
+  stage_revision: number;
+  status: "not_generated" | "current" | "stale" | "invalid";
+  context_hash: string;
+  model: string;
+  generated_at: string;
+  summary: string;
+  suggestions: StageSuggestion[];
+  usage: Record<string, unknown>;
+}
+
+export interface StageToolRun {
+  tool_run_id: string;
+  project_id: string;
+  stage_key: string;
+  stage_revision: number;
+  tool_id: string;
+  risk_level: StageToolPolicy["risk_level"];
+  status: "completed" | "failed" | "confirmation_required";
+  summary: string;
+  result: Record<string, unknown>;
+  started_at: string;
+  finished_at: string;
+}
+
 export type ChatSearchMode = "auto" | "on" | "off";
 
 export interface SearchCitation {
@@ -568,10 +674,11 @@ export interface AcademicOutputQuality {
 
 interface ApiErrorPayload {
   error?: { code?: string; message?: string };
-  detail?: string | Array<{ msg?: string }>;
+  detail?: string | Array<{ msg?: string }> | { code?: string; message?: string };
 }
 
-const API_ROOT = (process.env.NEXT_PUBLIC_API_BASE_URL || "/api/v1").replace(/\/$/, "");
+const DEFAULT_API_ROOT = "/api/v1";
+const API_ROOT = (process.env.NEXT_PUBLIC_API_BASE_URL || DEFAULT_API_ROOT).replace(/\/$/, "");
 
 export class ApiError extends Error {
   constructor(
@@ -596,11 +703,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const payload = (await response.json().catch(() => ({}))) as ApiErrorPayload;
     const validationMessage = Array.isArray(payload.detail)
       ? payload.detail.map((item) => item.msg).filter(Boolean).join("；")
-      : payload.detail;
+      : typeof payload.detail === "object"
+        ? payload.detail?.message
+        : payload.detail;
+    const detailCode = (
+      payload.detail
+      && !Array.isArray(payload.detail)
+      && typeof payload.detail === "object"
+    ) ? payload.detail.code : undefined;
     throw new ApiError(
       payload.error?.message || validationMessage || `API 请求失败（${response.status}）`,
       response.status,
-      payload.error?.code,
+      payload.error?.code || detailCode,
     );
   }
   return response.json() as Promise<T>;
@@ -793,6 +907,27 @@ export function selectProblemQuestion(
   );
 }
 
+export async function getStageDefinitions(): Promise<StageDefinition[]> {
+  const payload = await request<{ items: StageDefinition[] }>("/meta/stages");
+  return payload.items;
+}
+
+export function invokeStageTool(
+  projectId: string,
+  stageKey: string,
+  toolId: string,
+  query = "",
+  instruction = "",
+): Promise<StageToolRun> {
+  return request<StageToolRun>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/tools/invoke`,
+    {
+      method: "POST",
+      body: JSON.stringify({ tool_id: toolId, query, instruction }),
+    },
+  );
+}
+
 export function reviewLiteraturePlan(
   projectId: string,
   decision: "approve" | "request_changes",
@@ -809,6 +944,29 @@ export function reviewLiteraturePlan(
         expected_revision: expectedRevision,
         actor_type: "human",
       }),
+    },
+  );
+}
+
+export function getStageSuggestions(
+  projectId: string,
+  stageKey: string,
+): Promise<StageSuggestionSet> {
+  return request<StageSuggestionSet>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/suggestions`,
+  );
+}
+
+export function generateStageSuggestions(
+  projectId: string,
+  stageKey: string,
+  instruction = "",
+): Promise<StageSuggestionSet> {
+  return request<StageSuggestionSet>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/suggestions`,
+    {
+      method: "POST",
+      body: JSON.stringify({ instruction }),
     },
   );
 }
@@ -863,6 +1021,22 @@ export function discoverEvidenceCandidates(
         limit,
         actor_type: "agent",
       }),
+    },
+  );
+}
+
+export function decideStageSuggestion(
+  projectId: string,
+  stageKey: string,
+  suggestionId: string,
+  state: SuggestionDecision,
+  note = "",
+): Promise<StageSuggestionSet> {
+  return request<StageSuggestionSet>(
+    `/projects/${encodeURIComponent(projectId)}/stages/${encodeURIComponent(stageKey)}/suggestions/${encodeURIComponent(suggestionId)}/decision`,
+    {
+      method: "POST",
+      body: JSON.stringify({ state, note }),
     },
   );
 }
@@ -1057,6 +1231,29 @@ export function evaluateKnowledge(
   );
 }
 
+export function submitKnowledgeEvaluation(
+  projectId: string,
+  methods: KnowledgeCandidate[],
+  formulas: KnowledgeCandidate[],
+): Promise<KnowledgeEvaluationJob> {
+  return request<KnowledgeEvaluationJob>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/evaluation/jobs`,
+    {
+      method: "POST",
+      body: JSON.stringify({ methods, formulas }),
+    },
+  );
+}
+
+export function getKnowledgeEvaluationJob(
+  projectId: string,
+  jobId: string,
+): Promise<KnowledgeEvaluationJob> {
+  return request<KnowledgeEvaluationJob>(
+    `/projects/${encodeURIComponent(projectId)}/knowledge/evaluation/jobs/${encodeURIComponent(jobId)}`,
+  );
+}
+
 export async function getStataRunnerStatus(): Promise<RunnerStatus> {
   return request<RunnerStatus>("/runners/stata");
 }
@@ -1163,7 +1360,7 @@ export function exportDelivery(projectId: string): Promise<Project> {
 export function deliveryArtifactUrl(
   projectId: string,
   exportId: string,
-  kind: "report" | "package" | "manifest",
+  kind: "report" | "word" | "pdf" | "stata" | "package" | "manifest",
 ): string {
   return `${API_ROOT}/projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(exportId)}/${kind}`;
 }

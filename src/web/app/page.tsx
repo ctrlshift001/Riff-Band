@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Globe2, Search, SendHorizontal } from "lucide-react";
+import {
+  Download,
+  ExternalLink,
+  FileText,
+  FileType2,
+  Globe2,
+  PackageCheck,
+  RefreshCw,
+  Search,
+  SendHorizontal,
+} from "lucide-react";
 import {
   ApiError,
   analysisRunArtifactUrl,
@@ -9,16 +19,20 @@ import {
   createKnowledgeRecord as createApiKnowledgeRecord,
   createStageDraft as createApiStageDraft,
   createProject as createApiProject,
+  decideStageSuggestion as decideApiStageSuggestion,
   decideStage as decideApiStage,
   discoverEvidenceCandidates as discoverApiEvidenceCandidates,
   discoverKnowledgeCandidates as discoverApiKnowledgeCandidates,
-  evaluateKnowledge as evaluateApiKnowledge,
+  deliveryArtifactUrl,
   exportDelivery as exportApiDelivery,
   getAnalysisJob,
   getAnalysisRunResult,
   getDeliveryQuality as getApiDeliveryQuality,
   getDiagnosticRegistry as getApiDiagnosticRegistry,
   getKnowledgeEvaluation as getApiKnowledgeEvaluation,
+  getKnowledgeEvaluationJob as getApiKnowledgeEvaluationJob,
+  getStageDefinitions as getApiStageDefinitions,
+  getStageSuggestions as getApiStageSuggestions,
   getStataRunnerStatus,
   getProject as getApiProject,
   getUserProfile as getApiUserProfile,
@@ -28,6 +42,8 @@ import {
   listAnalysisJobs,
   listStageChat as listApiStageChat,
   listStageRevisions as listApiStageRevisions,
+  generateStageSuggestions as generateApiStageSuggestions,
+  invokeStageTool as invokeApiStageTool,
   preflightAnalysisRun,
   patchStageAssetSection as patchApiStageAssetSection,
   patchEvidenceRecord as patchApiEvidenceRecord,
@@ -43,6 +59,7 @@ import {
   selectProblemQuestion as selectApiProblemQuestion,
   sendStageChat as sendApiStageChat,
   submitAnalysisRun,
+  submitKnowledgeEvaluation as submitApiKnowledgeEvaluation,
   uploadDataAsset,
   updateProject as updateApiProject,
   updateUserProfile as updateApiUserProfile,
@@ -57,6 +74,7 @@ import {
   type KnowledgeGovernanceCandidate,
   type KnowledgeGovernanceRecord,
   type DiagnosticRule,
+  type DeliveryExportRecord,
   type InterfaceTheme,
   type Project as ApiProject,
   type ProjectStage as ApiProjectStage,
@@ -65,6 +83,10 @@ import {
   type SearchCitation,
   type SearchTrace,
   type StageRevision,
+  type StageDefinition as ApiStageDefinition,
+  type StageSuggestionSet,
+  type StageToolPolicy,
+  type SuggestionDecision,
   type StageChatMessage as ApiStageChatMessage,
   type StageWorkspacePayload,
 } from "@/lib/api";
@@ -92,7 +114,6 @@ import {
 } from "./deep-workspaces";
 
 type ViewKey = "journey" | "evidence" | "methods" | "runs" | "approvals";
-type SuggestionState = "pending" | "accepted" | "modified" | "rejected";
 type DetailPanel = {
   eyebrow: string;
   title: string;
@@ -141,18 +162,36 @@ const agentProfiles = [
   { mission: "协作形成论文、审稿回复与可复现发布包。", skills: ["论文写作", "引用核查", "发布复现"], starters: ["生成论文结构", "改写贡献表述", "检查数字与引用一致性"] },
 ] as const;
 
-const agentToolProfiles = [
-  { tools: ["OpenAlex / Crossref 检索", "选题新颖性扫描", "研究可行性评分"], rule: "先检索同义词与反向问题；没有来源时不得宣称研究空白。" },
-  { tools: ["布尔检索式生成", "主动学习筛选", "全文证据提取"], rule: "纳入/排除理由逐条保存；摘要级证据不得直接支撑核心结论。" },
-  { tools: ["理论实体抽取", "因果图编辑器", "竞争解释生成"], rule: "每条机制至少连接一个可检验结果和一个竞争解释。" },
-  { tools: ["方法适配检索", "Estimand 构造器", "识别假设审计"], rule: "只推荐候选设计；选择主设计、接受风险必须由人确认。" },
-  { tools: ["数据目录连接器", "变量字典生成", "许可与隐私扫描"], rule: "下载、上传或连接受限数据前必须通过 G2；默认最小权限。" },
-  { tools: ["公式库", "功效与样本量", "分析计划编译器"], rule: "公式、变量、诊断与代码任务逐项映射；冻结前允许人工修改。" },
-  { tools: ["Stata do-file 生成", "静态安全检查", "机构 Runner"], rule: "仅 G3 批准的哈希可正式运行；智能体不能自行启动或安装依赖。" },
-  { tools: ["稳健性矩阵", "安慰剂与敏感性", "结果差异比较"], rule: "失败项不得隐藏；新增检验标记为探索性并触发人工解释。" },
-  { tools: ["主张—证据图", "机制/异质性审计", "反证检索"], rule: "每条主张绑定结果、来源、反证与适用边界后才能送审。" },
-  { tools: ["结构化写作", "数字与引用核验", "交付包导出"], rule: "对话内容先同步为可编辑正文；发布前必须通过 G5 人工批准。" },
-] as const;
+const stageToolLabels: Record<string, string> = {
+  "project.asset.read": "读取项目资产",
+  "literature.scout": "选题文献侦察",
+  "literature.openalex": "OpenAlex 检索",
+  "literature.crossref": "Crossref 核验",
+  "literature.semantic_scholar": "Semantic Scholar 检索",
+  "literature.arxiv": "arXiv 检索",
+  "literature.screen_and_dedupe": "筛选与去重审计",
+  "evidence.graph.read": "读取证据图",
+  "knowledge.method.lookup": "方法适配检索",
+  "knowledge.formula.lookup": "公式库查询",
+  "design.feasibility.check": "研究设计完整性检查",
+  "knowledge.data_source.lookup": "数据源目录",
+  "data.asset.profile": "数据资产画像",
+  "data.governance.check": "许可与治理检查",
+  "knowledge.diagnostic.lookup": "稳健性与诊断矩阵",
+  "stata.policy.scan": "Stata 静态安全检查",
+  "runner.preflight": "Runner 预检",
+  "runner.submit": "提交正式运行",
+  "runner.status_logs": "运行状态与日志",
+  "runner.cancel": "取消运行",
+  "runner.result.read": "读取与比较结果",
+  "runner.rerun.request": "创建重跑请求",
+  "evidence.artifact.verify": "证据产物核验",
+  "evidence.graph.patch": "更新主张—证据图",
+  "citation.validate": "数字与引用核验",
+  "revision.patch": "写入阶段草稿",
+  "delivery.export": "导出交付包",
+  "delivery.publish": "发布交付成果",
+};
 
 const navItems: { key: ViewKey; label: string; short: string }[] = [
   { key: "journey", label: "Research Journey", short: "研究旅程" },
@@ -160,30 +199,6 @@ const navItems: { key: ViewKey; label: string; short: string }[] = [
   { key: "methods", label: "Methods", short: "方法库" },
   { key: "runs", label: "Runs", short: "分析运行" },
   { key: "approvals", label: "Approvals", short: "审批" },
-];
-
-const initialSuggestions = [
-  {
-    id: 1,
-    title: "将因变量口径从数量改为质量",
-    reason: "专利申请数容易受到防御性申请影响，授权且被引的发明专利更接近创新质量。",
-    before: "专利申请数量 · ln(1+count)",
-    after: "发明专利授权被引数 · ln(1+count)",
-  },
-  {
-    id: 2,
-    title: "将时间窗口扩展至 2016—2024",
-    reason: "增加处理前观测期，可更充分检查共同趋势与提前反应。",
-    before: "样本窗口 · 2018—2024",
-    after: "样本窗口 · 2016—2024",
-  },
-  {
-    id: 3,
-    title: "增加企业与年份双向固定效应",
-    reason: "控制不随时间变化的企业异质性与共同年份冲击。",
-    before: "固定效应 · 企业固定效应",
-    after: "固定效应 · 企业 + 年份固定效应",
-  },
 ];
 
 const methods: MethodRecord[] = [
@@ -677,9 +692,12 @@ function AgentChatDrawer({
   messages,
   loading,
   busy,
+  tools,
+  toolBusyId,
   onClose,
   onSelectAgent,
   onSend,
+  onInvokeTool,
   onCapture,
 }: {
   open: boolean;
@@ -687,9 +705,12 @@ function AgentChatDrawer({
   messages: ChatMessage[];
   loading: boolean;
   busy: boolean;
+  tools: StageToolPolicy[];
+  toolBusyId: string;
   onClose: () => void;
   onSelectAgent: (index: number) => void;
   onSend: (text: string, searchMode: ChatSearchMode) => void;
+  onInvokeTool: (tool: StageToolPolicy) => void;
   onCapture: (text: string, target: ChatSyncTarget, mode: ChatSyncMode) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -702,7 +723,6 @@ function AgentChatDrawer({
   if (!open) return null;
   const stage = stages[agentIndex];
   const profile = agentProfiles[agentIndex];
-  const toolProfile = agentToolProfiles[agentIndex];
   const submit = () => {
     const value = draft.trim();
     if (!value || unavailable) return;
@@ -735,13 +755,13 @@ function AgentChatDrawer({
             <div className="chat-messages" aria-live="polite">
               <article className="chat-message is-assistant">
                 <div className="message-role">{stage.agent}</div>
-                <p>连接模型后，我会读取当前阶段目标和交付要求。你可以让我解释、比较方案或形成一份可人工修改的草稿。</p>
+                <p className="message-content">连接模型后，我会读取当前阶段目标和交付要求。你可以让我解释、比较方案或形成一份可人工修改的草稿。</p>
               </article>
               {loading && <article className="chat-message is-assistant is-typing"><div className="message-role">{stage.agent}</div><p><span /><span /><span /> 正在读取历史记录</p></article>}
               {!loading && messages.map((message) => (
                 <article className={`chat-message is-${message.role}${message.error ? " is-error" : ""}`} key={message.id}>
                   <div className="message-role">{message.role === "user" ? "你" : stage.agent}<time>{message.time}</time></div>
-                  <p>{message.text}</p>
+                  <p className={message.role === "assistant" ? "message-content" : undefined}>{message.text}</p>
                   {message.role === "assistant" && message.citations && message.citations.length > 0 && (
                     <section className="message-sources" aria-label="本轮联网来源">
                       <div className="message-source-summary">
@@ -840,7 +860,23 @@ function AgentChatDrawer({
               <div><dt>需要人工决定</dt><dd>{stage.decision}</dd></div>
             </dl>
             <div className="context-notice"><strong>协作边界</strong><p>智能体可以提出建议和草稿，但不能替你接受风险、批准阶段或启动正式分析。</p></div>
-            <div className="agent-tool-mini"><strong>本阶段可调用工具</strong>{toolProfile.tools.map((tool) => <span key={tool}>{tool}</span>)}<p>{toolProfile.rule}</p></div>
+            <div className="agent-tool-mini">
+              <strong>本阶段可调用工具</strong>
+              {tools.map((tool) => (
+                <button
+                  type="button"
+                  disabled={unavailable || Boolean(toolBusyId)}
+                  onClick={() => onInvokeTool(tool)}
+                  title={`${tool.tool_id} · ${tool.purpose}`}
+                  key={tool.tool_id}
+                >
+                  <span>{toolBusyId === tool.tool_id ? "调用中…" : stageToolLabels[tool.tool_id] ?? tool.tool_id}</span>
+                  <small>{tool.risk_level}{tool.requires_human_confirmation ? " · 需人工确认" : ""}</small>
+                </button>
+              ))}
+              {tools.length === 0 && <p>正在读取后端工具注册表。</p>}
+              {tools.length > 0 && <p>每次调用都会校验阶段权限并保存工具运行记录；高风险动作只进入人工确认流程。</p>}
+            </div>
             {syncCandidate && <div className="chat-sync-panel"><div className="chat-sync-title"><span>SYNC</span><strong>同步到阶段资产</strong></div><p>同步前可选择目标和写入方式；确认后仍可在草稿中人工修改。</p><label><span>目标位置</span><select value={syncTarget} onChange={(event) => setSyncTarget(event.target.value as ChatSyncTarget)}><option value="content">交付正文</option><option value="summary">阶段摘要</option><option value="evidenceNote">证据说明</option><option value="decision">决定记录草稿</option></select></label><label><span>写入方式</span><select value={syncMode} onChange={(event) => setSyncMode(event.target.value as ChatSyncMode)}><option value="append">追加并保留原文</option><option value="replace">替换目标内容</option></select></label><div className="sync-preview">{syncCandidate}</div><div className="chat-sync-actions"><button onClick={() => setSyncCandidate("")}>取消</button><button className="primary-action" disabled={syncConfirmed} onClick={() => { onCapture(syncCandidate, syncTarget, syncMode); setSyncConfirmed(true); }}>{syncConfirmed ? "已同步" : "人工确认并同步"}</button></div>{syncConfirmed && <small>已生成同步记录，可到“当前草稿”继续修改。</small>}</div>}
           </aside>
         </div>
@@ -914,8 +950,9 @@ function StageRail({
 
 function AgentPanel({
   stageIndex,
-  suggestionStateKey,
-  suggestionStates,
+  suggestions,
+  suggestionBusy,
+  onRefreshSuggestions,
   onDecision,
   onGenerate,
   onSubmit,
@@ -924,9 +961,10 @@ function AgentPanel({
   busy,
 }: {
   stageIndex: number;
-  suggestionStateKey: string;
-  suggestionStates: Record<string, SuggestionState>;
-  onDecision: (id: number, state: SuggestionState) => void;
+  suggestions?: StageSuggestionSet;
+  suggestionBusy: boolean;
+  onRefreshSuggestions: () => void;
+  onDecision: (id: string, state: SuggestionDecision) => void;
   onGenerate: () => void;
   onSubmit: () => void;
   onOpenChat: () => void;
@@ -974,13 +1012,12 @@ function AgentPanel({
       : usesAO
         ? "AO 生成阶段资产"
         : "生成阶段资产";
-  const stageSuggestions = stageIndex === 3
-    ? initialSuggestions
-    : [
-        { id: 11, title: `补全 ${stage.output}`, reason: `依据当前已批准上游资产，${stage.agent} 发现 2 个待确认字段。`, before: "字段状态 · 待确认", after: "字段状态 · 已补充候选值" },
-        { id: 12, title: "增加一条反向证据检查", reason: "主动寻找可能推翻当前判断的证据，降低确认偏误。", before: "反向检查 · 0 条", after: "反向检查 · 1 条候选" },
-        { id: 13, title: "记录本阶段人工决定", reason: "下一阶段需要知道研究者接受了什么风险以及为什么。", before: "决定理由 · 空", after: "决定理由 · 等待人工填写" },
-      ];
+  const stageSuggestions = suggestions?.status === "current" ? suggestions.suggestions : [];
+  const suggestionStatus = suggestions?.status === "current"
+    ? `基于 Revision ${suggestions.stage_revision} · ${suggestions.model || "AI"}`
+    : suggestions?.status === "stale"
+      ? "阶段草稿已变化，请重新分析"
+      : "尚未根据当前草稿生成 AI 建议";
 
   return (
     <aside className="agent-panel" aria-label={`${stage.agent} 协作建议`}>
@@ -998,32 +1035,54 @@ function AgentPanel({
           ? usesAO ? "AOrchestra 正在编排 SubAgent" : "阶段智能体正在生成资产"
           : orchestration
             ? `AOrchestra · ${orchestrationRuns} 个 SubAgent · ${String(orchestration.status ?? "complete")}`
-            : `${remoteStage ? `Revision ${remoteStage.revision} · ${remoteStage.status}` : "本地演示"} · 不会替你批准`}
+            : `${remoteStage ? `Revision ${remoteStage.revision} · ${remoteStage.status}` : "后端阶段未连接"} · 不会替你批准`}
       </div>
 
+      <div className="suggestion-toolbar">
+        <div><strong>AI 草稿建议</strong><span>{suggestionStatus}</span></div>
+        <button
+          type="button"
+          disabled={
+            !remoteStage
+            || remoteStage.revision <= 0
+            || remoteStage.status === "not_started"
+            || suggestionBusy
+          }
+          onClick={onRefreshSuggestions}
+        >
+          {suggestionBusy ? "分析中…" : stageSuggestions.length ? "重新分析" : "AI 生成建议"}
+        </button>
+      </div>
       <div className="suggestion-list">
+        {stageSuggestions.length === 0 && (
+          <div className="suggestion-empty">
+            <strong>等待分析当前草稿</strong>
+            <p>保存阶段资产后，由模型读取当前 revision 和已批准的上游内容，再给出可审阅建议。</p>
+          </div>
+        )}
         {stageSuggestions.map((suggestion, index) => {
-          const state = suggestionStates[`${suggestionStateKey}:${suggestion.id}`] ?? "pending";
+          const state = suggestion.state;
           return (
-            <article className={`suggestion-card suggestion-${state}`} key={suggestion.id}>
+            <article className={`suggestion-card suggestion-${state}`} key={suggestion.suggestion_id}>
               <div className="suggestion-title"><span>{index + 1}</span><strong>{suggestion.title}</strong></div>
               <p>{suggestion.reason}</p>
+              {suggestion.tool_id && <small className="suggestion-tool">建议工具 · {stageToolLabels[suggestion.tool_id] ?? suggestion.tool_id}</small>}
               <div className="diff-block">
                 <div className="diff-before"><b>−</b>{suggestion.before}</div>
                 <div className="diff-after"><b>+</b>{suggestion.after}</div>
               </div>
               {state === "pending" ? (
                 <div className="suggestion-actions" aria-label="处理建议">
-                  <button className="button-accept" onClick={() => onDecision(suggestion.id, "accepted")}>接受</button>
-                  <button onClick={() => onDecision(suggestion.id, "modified")}>修改</button>
-                  <button onClick={() => onDecision(suggestion.id, "rejected")}>拒绝</button>
+                  <button className="button-accept" onClick={() => onDecision(suggestion.suggestion_id, "accepted")}>接受</button>
+                  <button onClick={() => onDecision(suggestion.suggestion_id, "modified")}>修改</button>
+                  <button onClick={() => onDecision(suggestion.suggestion_id, "rejected")}>拒绝</button>
                 </div>
               ) : (
                 <div className={`decision-result result-${state}`}>
                   {state === "accepted" && "✓ 已接受，待写入阶段草稿"}
                   {state === "modified" && "✎ 已转为人工编辑候选"}
-                  {state === "rejected" && "× 已拒绝，本页保留处理状态"}
-                  <button onClick={() => onDecision(suggestion.id, "pending")}>撤销</button>
+                  {state === "rejected" && "× 已拒绝，处理记录已保存"}
+                  <button onClick={() => onDecision(suggestion.suggestion_id, "pending")}>撤销</button>
                 </div>
               )}
             </article>
@@ -1301,6 +1360,110 @@ function LiteraturePlanControl({
         </>
       ) : <p>先让 Literature Agent 生成经典、近期、相邻、反向和争议查询族；未获人工批准时平台不会自动执行模型检索计划。</p>}
     </section>
+  );
+}
+
+function DeliveryCenter({
+  projectId,
+  remoteStage,
+  busy,
+  onExport,
+}: {
+  projectId: string;
+  remoteStage?: ApiProjectStage;
+  busy: boolean;
+  onExport: () => void;
+}) {
+  const exports = Array.isArray(remoteStage?.content.exports)
+    ? remoteStage.content.exports
+        .map(asRecord)
+        .filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
+  const latestRaw = exports.at(-1);
+  const latest = latestRaw as unknown as DeliveryExportRecord | undefined;
+  const complete = Boolean(
+    latest?.export_id
+    && latest.word_report_path
+    && latest.pdf_report_path
+    && latest.stata_package_path,
+  );
+  const reportUrl = latest?.export_id
+    ? deliveryArtifactUrl(projectId, latest.export_id, "report")
+    : "";
+
+  return (
+    <div className="delivery-center">
+      <section className="delivery-heading">
+        <div>
+          <p className="eyebrow">Research delivery center</p>
+          <h2>研究报告与复现交付</h2>
+          <p>同一份获批研究资产生成可交互 HTML、可编辑 Word、固定版 PDF 和完整 Stata 复现包。</p>
+        </div>
+        <button
+          className="delivery-refresh"
+          type="button"
+          disabled={busy || !remoteStage || remoteStage.revision < 1 || remoteStage.status === "not_started"}
+          onClick={onExport}
+        >
+          <RefreshCw size={17} />
+          {busy ? "正在生成" : latest ? "重新导出" : "生成交付物"}
+        </button>
+      </section>
+
+      {!latest && (
+        <section className="delivery-empty">
+          <FileText size={30} />
+          <div><h3>尚无正式导出</h3><p>先生成并保存 S9 草稿，再生成统一报告和 Stata 复现包。</p></div>
+        </section>
+      )}
+
+      {latest && !complete && (
+        <section className="delivery-empty delivery-upgrade">
+          <RefreshCw size={28} />
+          <div><h3>这是旧版交付记录</h3><p>重新导出后即可获得 Word、PDF、图表、Mermaid 和独立 Stata 复现包。</p></div>
+        </section>
+      )}
+
+      {latest && complete && (
+        <>
+          <section className="delivery-actions" aria-label="报告下载">
+            <a href={reportUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={18} />
+              <span><strong>打开 HTML</strong><small>交互图表与关系图</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "word")} download>
+              <FileType2 size={18} />
+              <span><strong>下载 Word</strong><small>可继续编辑的 DOCX</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "pdf")} download>
+              <FileText size={18} />
+              <span><strong>下载 PDF</strong><small>固定版本与归档</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "stata")} download>
+              <PackageCheck size={18} />
+              <span><strong>Stata 复现包</strong><small>代码、结果、日志与签名</small></span>
+            </a>
+            <a href={deliveryArtifactUrl(projectId, latest.export_id, "package")} download>
+              <Download size={18} />
+              <span><strong>完整研究包</strong><small>全部报告与可视资产</small></span>
+            </a>
+          </section>
+
+          <section className="delivery-preview">
+            <header>
+              <div><p className="eyebrow">Interactive HTML preview</p><h3>{String(remoteStage?.content.title || "AI4MS 研究报告")}</h3></div>
+              <div><span>{latest.file_count} 个文件</span><code>{latest.package_sha256.slice(0, 12)}</code></div>
+            </header>
+            <iframe src={reportUrl} title="AI4MS 可交互研究报告预览" />
+            <footer>
+              <span>Export {latest.export_id}</span>
+              <span>{new Date(latest.generated_at).toLocaleString("zh-CN")}</span>
+              <span>Source S9 revision {latest.source_delivery_revision}</span>
+            </footer>
+          </section>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -2103,7 +2266,10 @@ export default function Home() {
   const [deepStack, setDeepStack] = useState<DeepRoute[]>([]);
   const [stageDrafts, setStageDrafts] = useState<Record<string, StageDraft>>({});
   const [resolvedIssues, setResolvedIssues] = useState<Record<string, boolean>>({});
-  const [suggestionStates, setSuggestionStates] = useState<Record<string, SuggestionState>>({});
+  const [stageDefinitions, setStageDefinitions] = useState<ApiStageDefinition[]>([]);
+  const [stageSuggestions, setStageSuggestions] = useState<Record<string, StageSuggestionSet>>({});
+  const [suggestionBusyKey, setSuggestionBusyKey] = useState("");
+  const [toolBusyId, setToolBusyId] = useState("");
   const [approvalStageIndex, setApprovalStageIndex] = useState<number | null>(null);
   const [stageRevisions, setStageRevisions] = useState<Record<string, StageRevision[]>>({});
   const [restoringRevision, setRestoringRevision] = useState<number | null>(null);
@@ -2134,6 +2300,8 @@ export default function Home() {
   const activeApiProject = apiProjects[activeProject.id];
   const activeStageData = stages[activeStage];
   const activeRemoteStage = activeApiProject?.stages.find((stage) => stage.key === activeStageData.key);
+  const activeSuggestionKey = `${activeProject.id}:${activeStageData.key}`;
+  const activeStageSuggestions = stageSuggestions[activeSuggestionKey];
   const deepRoute = deepStack[deepStack.length - 1];
   const deepStageDraftIndex = deepRoute?.kind === "stage-draft" ? deepRoute.stageIndex : null;
   const activeEvidence = projectEvidenceRecords(activeApiProject);
@@ -2206,15 +2374,36 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    void getApiDiagnosticRegistry().then((registry) => {
-      if (cancelled) return;
-      setDiagnosticRules(registry.items);
-      setDiagnosticRegistryVersion(`v${registry.registry_version} · ${registry.total} / ${registry.total}`);
-    }).catch(() => {
-      if (!cancelled) setDiagnosticRegistryVersion("后端注册表不可用");
-    });
+    void Promise.all([
+      getApiDiagnosticRegistry().then((registry) => {
+        if (cancelled) return;
+        setDiagnosticRules(registry.items);
+        setDiagnosticRegistryVersion(`v${registry.registry_version} · ${registry.total} / ${registry.total}`);
+      }).catch(() => {
+        if (!cancelled) setDiagnosticRegistryVersion("后端注册表不可用");
+      }),
+      getApiStageDefinitions().then((items) => {
+        if (!cancelled) setStageDefinitions(items);
+      }).catch(() => {
+        if (!cancelled) setStageDefinitions([]);
+      }),
+    ]);
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!activeApiProject || !activeRemoteStage) return;
+    const projectId = activeProject.id;
+    const stageKey = activeStageData.key;
+    const key = `${projectId}:${stageKey}`;
+    let cancelled = false;
+    void getApiStageSuggestions(projectId, stageKey).then((result) => {
+      if (!cancelled) {
+        setStageSuggestions((current) => ({ ...current, [key]: result }));
+      }
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [activeProject.id, activeStageData.key, activeRemoteStage, activeApiProject]);
 
   useEffect(() => {
     if (!activeApiProject) return;
@@ -2313,11 +2502,40 @@ export default function Home() {
       showToast("界面偏好已保存在本机，后端 profile 同步待重试");
     });
   }
-  function decideSuggestion(id: number, state: SuggestionState) {
-    const key = `${activeProject.id}:${activeStageData.key}:${id}`;
-    setSuggestionStates((current) => ({ ...current, [key]: state }));
-    const verb = state === "accepted" ? "接受" : state === "modified" ? "转为人工修改" : state === "rejected" ? "拒绝" : "撤销处理";
-    showToast(`已${verb}建议；正式内容仍需写入阶段草稿并保存 revision`);
+  async function refreshStageSuggestions() {
+    const projectId = activeProject.id;
+    const stageKey = activeStageData.key;
+    const key = `${projectId}:${stageKey}`;
+    if (!apiProjectIds[projectId] || !activeRemoteStage) {
+      showToast("请先连接 FastAPI 项目并保存当前阶段草稿");
+      return;
+    }
+    setSuggestionBusyKey(key);
+    try {
+      const result = await generateApiStageSuggestions(projectId, stageKey);
+      setStageSuggestions((current) => ({ ...current, [key]: result }));
+      setApiError("");
+      showToast(`已根据 Revision ${result.stage_revision} 生成 ${result.suggestions.length} 条 AI 建议`);
+    } catch (error) {
+      const message = readApiError(error);
+      setApiError(message);
+      showToast(`AI 建议生成失败：${message}`);
+    } finally {
+      setSuggestionBusyKey((current) => current === key ? "" : current);
+    }
+  }
+  async function decideSuggestion(id: string, state: SuggestionDecision) {
+    const projectId = activeProject.id;
+    const stageKey = activeStageData.key;
+    const key = `${projectId}:${stageKey}`;
+    try {
+      const result = await decideApiStageSuggestion(projectId, stageKey, id, state);
+      setStageSuggestions((current) => ({ ...current, [key]: result }));
+      const verb = state === "accepted" ? "接受" : state === "modified" ? "转为人工修改" : state === "rejected" ? "拒绝" : "撤销处理";
+      showToast(`已${verb}建议，处理记录已保存`);
+    } catch (error) {
+      showToast(`建议状态保存失败：${readApiError(error)}`);
+    }
   }
   function applyApiProject(updated: ApiProject, preferred?: ResearchProject) {
     const existing = preferred ?? projects.find((item) => item.id === updated.project_id);
@@ -2546,7 +2764,7 @@ export default function Home() {
     }
     setKnowledgeBusy(true);
     try {
-      const evaluation = await evaluateApiKnowledge(
+      let job = await submitApiKnowledgeEvaluation(
         activeProject.id,
         allMethods.map((method) => ({
           candidate_id: method.id,
@@ -2561,6 +2779,18 @@ export default function Home() {
           assumptions: [...formula.assumptions],
         })),
       );
+      const deadline = Date.now() + 6 * 60 * 1000;
+      while (job.status === "queued" || job.status === "running") {
+        if (Date.now() >= deadline) {
+          throw new Error("AI 评估后台任务等待超时，请稍后重试");
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 900));
+        job = await getApiKnowledgeEvaluationJob(activeProject.id, job.job_id);
+      }
+      if (job.status !== "succeeded" || !job.result) {
+        throw new Error(job.error || "AI 评估后台任务未完成");
+      }
+      const evaluation = job.result;
       setKnowledgeEvaluations((current) => ({
         ...current,
         [activeProject.id]: evaluation,
@@ -2844,6 +3074,29 @@ export default function Home() {
       setApiBusy(false);
     }
   }
+
+  async function refreshDeliveryExport() {
+    const projectId = activeProject.id;
+    const delivery = apiProjects[projectId]?.stages.find((stage) => stage.key === "delivery");
+    if (!delivery || delivery.revision < 1 || delivery.status === "not_started") {
+      showToast("请先生成并保存 S9 阶段草稿");
+      return;
+    }
+    setApiBusy(true);
+    setApiError("");
+    try {
+      const updated = await exportApiDelivery(projectId);
+      applyApiProject(updated);
+      showToast("HTML、Word、PDF、图表、Mermaid 与 Stata 复现包已更新");
+    } catch (error) {
+      const message = readApiError(error);
+      setApiError(message);
+      showToast(`交付物生成失败：${message}`);
+    } finally {
+      setApiBusy(false);
+    }
+  }
+
   async function saveDesignPanel() {
     const projectId = activeProject.id;
     const remote = apiProjects[projectId]?.stages.find((stage) => stage.key === "design");
@@ -2930,7 +3183,6 @@ export default function Home() {
     setActiveProjectId(project.id);
     setActiveStage(project.stageIndex);
     setQuestion(project.question);
-    setSuggestionStates({});
     navigateView("journey");
     showToast(`已切换到项目：${project.name}`);
     if (apiProjectIds[project.id]) {
@@ -2969,10 +3221,17 @@ export default function Home() {
     setChatLoadingKey(key);
     try {
       const messages = await listApiStageChat(projectId, stages[index].key);
-      setChatMessages((current) => ({
-        ...current,
-        [key]: messages.map(mapChatMessage),
-      }));
+      const loadedMessages = messages.map(mapChatMessage);
+      setChatMessages((current) => {
+        const loadedIds = new Set(loadedMessages.map((message) => message.id));
+        const messagesCreatedWhileLoading = (current[key] ?? []).filter(
+          (message) => !loadedIds.has(message.id),
+        );
+        return {
+          ...current,
+          [key]: [...loadedMessages, ...messagesCreatedWhileLoading],
+        };
+      });
     } catch (error) {
       showToast(`对话历史读取失败：${readApiError(error)}`);
     } finally {
@@ -3025,6 +3284,48 @@ export default function Home() {
       showToast(`智能体调用失败：${message}`);
     } finally {
       setChatBusyKey((current) => current === key ? "" : current);
+    }
+  }
+  async function invokeAgentTool(tool: StageToolPolicy) {
+    const index = chatAgent;
+    const projectId = activeProject.id;
+    const stageKey = stages[index].key;
+    const key = `${projectId}:${stageKey}`;
+    if (!apiProjectIds[projectId]) {
+      showToast("请先连接 FastAPI 项目，再调用阶段工具");
+      return;
+    }
+    setToolBusyId(tool.tool_id);
+    try {
+      const run = await invokeApiStageTool(projectId, stageKey, tool.tool_id, question);
+      const message: ChatMessage = {
+        id: `tool-${run.tool_run_id}`,
+        role: "assistant",
+        text: run.summary,
+        time: new Date(run.finished_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+        model: `${stageToolLabels[run.tool_id] ?? run.tool_id} · ${run.status}`,
+        error: run.status === "failed",
+      };
+      setChatMessages((current) => ({ ...current, [key]: [...(current[key] ?? []), message] }));
+      showToast(run.status === "confirmation_required" ? "工具调用已进入人工确认流程" : `工具调用${run.status === "completed" ? "完成" : "失败"}`);
+    } catch (error) {
+      const message = readApiError(error);
+      setChatMessages((current) => ({
+        ...current,
+        [key]: [
+          ...(current[key] ?? []),
+          {
+            id: `tool-error-${Date.now()}`,
+            role: "assistant",
+            text: `工具调用失败：${message}`,
+            time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+            error: true,
+          },
+        ],
+      }));
+      showToast(`工具调用失败：${message}`);
+    } finally {
+      setToolBusyId("");
     }
   }
   function syncAgentOutput(text: string, target: ChatSyncTarget, mode: ChatSyncMode) {
@@ -3299,7 +3600,9 @@ export default function Home() {
                   <nav className="stage-action-strip" aria-label="阶段工作入口"><div><span>{activeStageData.id}</span><strong>阶段工作资产</strong><small>草稿、人工决定与检查结果均可继续修改</small></div><button onClick={openStageDraft}>打开当前草稿</button><button onClick={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })}>待决定项</button><button className="is-primary" onClick={runStageCheck}>一致性检查</button></nav>
                   {activeStage === 3
                     ? <DesignWorkspace question={question} setQuestion={setQuestion} selectedDesign={selectedDesign} setSelectedDesign={setSelectedDesign} onCompareMethods={() => setView("methods")} onSave={() => void saveDesignPanel()} remoteStage={activeRemoteStage} methodRecords={evaluatedMethods} busy={apiBusy} />
-                    : <div className="stage-control-stack">
+                    : activeStage === 9
+                      ? <DeliveryCenter projectId={activeProject.id} remoteStage={activeRemoteStage} busy={apiBusy} onExport={() => void refreshDeliveryExport()} />
+                      : <div className="stage-control-stack">
                         {activeStage === 0 && <ProblemQuestionControl key={`problem-${activeRemoteStage?.revision ?? 0}`} stage={activeRemoteStage} busy={apiBusy} onSelect={selectResearchQuestion} />}
                         {activeStage === 1 && <LiteraturePlanControl key={`literature-${activeRemoteStage?.revision ?? 0}`} stage={activeRemoteStage} busy={apiBusy} onReview={reviewCurrentLiteraturePlan} />}
                         <GenericStage stageIndex={activeStage} remoteStage={activeRemoteStage} onOpenDraft={openStageDraft} onOpenDecision={() => openDeep({ kind: "stage-decisions", stageIndex: activeStage })} onRunCheck={runStageCheck} />
@@ -3307,10 +3610,11 @@ export default function Home() {
                 </section>
                 <AgentPanel
                   stageIndex={activeStage}
-                  suggestionStateKey={`${activeProject.id}:${activeStageData.key}`}
-                  suggestionStates={suggestionStates}
+                  suggestions={activeStageSuggestions}
+                  suggestionBusy={suggestionBusyKey === activeSuggestionKey}
                   remoteStage={activeRemoteStage}
                   busy={apiBusy}
+                  onRefreshSuggestions={() => void refreshStageSuggestions()}
                   onDecision={decideSuggestion}
                   onGenerate={generateActiveStageAssets}
                   onSubmit={() => setApprovalStageIndex(activeStage)}
@@ -3338,7 +3642,20 @@ export default function Home() {
       />
       <DetailModal detail={detail} onClose={() => setDetail(null)} />
       <PreferencesModal open={preferencesOpen} value={interfaceTheme} onSelect={selectInterfaceTheme} onClose={() => setPreferencesOpen(false)} />
-      <AgentChatDrawer open={chatOpen} agentIndex={chatAgent} messages={chatMessages[activeChatKey] ?? []} loading={chatLoadingKey === activeChatKey} busy={chatBusyKey === activeChatKey} onClose={() => setChatOpen(false)} onSelectAgent={selectChatAgent} onSend={(text, searchMode) => void sendAgentMessage(text, searchMode)} onCapture={syncAgentOutput} />
+      <AgentChatDrawer
+        open={chatOpen}
+        agentIndex={chatAgent}
+        messages={chatMessages[activeChatKey] ?? []}
+        loading={chatLoadingKey === activeChatKey}
+        busy={chatBusyKey === activeChatKey}
+        tools={stageDefinitions.find((item) => item.key === stages[chatAgent].key)?.agent_policy.tools ?? []}
+        toolBusyId={toolBusyId}
+        onClose={() => setChatOpen(false)}
+        onSelectAgent={selectChatAgent}
+        onSend={(text, searchMode) => void sendAgentMessage(text, searchMode)}
+        onInvokeTool={(tool) => void invokeAgentTool(tool)}
+        onCapture={syncAgentOutput}
+      />
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
       <div className="screen-reader-status" aria-live="polite">当前页面：{pageTitle}</div>
     </div>

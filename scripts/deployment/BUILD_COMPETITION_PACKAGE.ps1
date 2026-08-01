@@ -12,6 +12,7 @@ Set-StrictMode -Version Latest
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $deploymentSource = Join-Path $repoRoot "deployment/competition"
 $startScript = Join-Path $deploymentSource "START_AI4MS.ps1"
+$designDocument = Join-Path $repoRoot "docs/competition/AI4MS_AGENT_APPLICATION_DESIGN.html"
 $environmentPath = Join-Path $repoRoot $EnvironmentFile
 $outputPath = Join-Path $repoRoot $OutputDirectory
 
@@ -36,10 +37,21 @@ foreach ($asset in $requiredAssets) {
         throw "Required deployment asset is missing: $assetPath"
     }
 }
+if (-not (Test-Path -LiteralPath $designDocument -PathType Leaf)) {
+    throw "Competition design document is missing: $designDocument"
+}
 
 if ($ValidateOnly) {
     Write-Host "Competition package inputs are valid. No package was written."
     exit 0
+}
+
+$worktreeChanges = @(& git -C $repoRoot status --porcelain --untracked-files=normal)
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to inspect the Git worktree before packaging."
+}
+if ($worktreeChanges.Count -gt 0) {
+    throw "Git worktree is not clean. Commit the exact delivery source before packaging."
 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -72,6 +84,8 @@ foreach ($asset in $requiredAssets) {
 Copy-Item -LiteralPath $environmentPath -Destination (Join-Path $outputPath ".env.competition")
 Copy-Item -LiteralPath (Join-Path $repoRoot "docs/DEPLOYMENT.md") `
     -Destination (Join-Path $outputPath "DEPLOYMENT.md")
+Copy-Item -LiteralPath $designDocument `
+    -Destination (Join-Path $outputPath "AI4MS_AGENT_APPLICATION_DESIGN.html")
 
 $imageHash = (Get-FileHash -LiteralPath $imageArchive -Algorithm SHA256).Hash.ToLowerInvariant()
 $commit = (& git -C $repoRoot rev-parse --short HEAD).Trim()
@@ -81,6 +95,59 @@ $commit = (& git -C $repoRoot rev-parse --short HEAD).Trim()
     "source_commit=$commit",
     "image=$ImageTag"
 ) | Set-Content -LiteralPath (Join-Path $outputPath "BUILD_INFO.txt") -Encoding utf8
+
+$expectedPackageFiles = @(
+    ".env.competition",
+    "AI4MS_AGENT_APPLICATION_DESIGN.html",
+    "ai4ms-workbench.tar",
+    "BUILD_INFO.txt",
+    "DEPLOYMENT.md",
+    "docker-compose.yml",
+    "SHA256SUMS.txt",
+    "START_AI4MS.bat",
+    "START_AI4MS.ps1",
+    "START_AI4MS.sh"
+) | Sort-Object
+$actualPackageFiles = @(
+    Get-ChildItem -LiteralPath $outputPath -File |
+        ForEach-Object { $_.Name } |
+        Sort-Object
+)
+$unexpectedFiles = @(
+    Compare-Object $expectedPackageFiles $actualPackageFiles |
+        ForEach-Object { $_.InputObject }
+)
+if ($unexpectedFiles.Count -gt 0) {
+    throw "Competition package whitelist mismatch: $($unexpectedFiles -join ', ')"
+}
+
+$secretValues = @()
+foreach ($line in Get-Content -LiteralPath $environmentPath) {
+    $trimmed = $line.Trim()
+    if (-not $trimmed -or $trimmed.StartsWith("#")) {
+        continue
+    }
+    $separator = $trimmed.IndexOf("=")
+    if ($separator -le 0) {
+        continue
+    }
+    $name = $trimmed.Substring(0, $separator).Trim()
+    $value = $trimmed.Substring($separator + 1).Trim().Trim('"').Trim("'")
+    if ($name -match "(KEY|TOKEN)$" -and $value.Length -ge 8) {
+        $secretValues += $value
+    }
+}
+$readablePackageFiles = $expectedPackageFiles | Where-Object {
+    $_ -ne ".env.competition" -and $_ -ne "ai4ms-workbench.tar"
+}
+foreach ($fileName in $readablePackageFiles) {
+    $content = Get-Content -LiteralPath (Join-Path $outputPath $fileName) -Raw
+    foreach ($secret in $secretValues) {
+        if ($content.Contains($secret)) {
+            throw "A competition secret leaked into public package file: $fileName"
+        }
+    }
+}
 
 Write-Host "Competition package created at $outputPath"
 Write-Host "The package contains a readable competition-only API key. Deliver it privately and revoke it after judging."

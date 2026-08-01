@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +57,9 @@ from ai4ms.services.models import (
     StageAssetSectionPatchRequest,
     StageDecisionRequest,
     StageRestoreRequest,
+    StageSuggestionDecisionRequest,
+    StageSuggestionGenerateRequest,
+    StageToolInvokeRequest,
     StageUpdateRequest,
     StageWorkspaceUpdateRequest,
     UpdateProjectRequest,
@@ -74,9 +79,16 @@ from ai4ms.services.stage_generation import (
     StageGenerationService,
 )
 from ai4ms.services.stage_chat import StageChatService
+from ai4ms.services.stage_assistant import (
+    StageAssistantError,
+    StageAssistantService,
+    StageSuggestionOutputError,
+)
+from ai4ms.services.knowledge_jobs import KnowledgeEvaluationJobNotFoundError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+LOGGER = logging.getLogger("ai4ms.api")
 load_dotenv(REPO_ROOT / ".env", override=False)
 load_dotenv(REPO_ROOT / ".env.stata-runner.local", override=True)
 
@@ -105,6 +117,7 @@ def create_app(
     stage_chat: StageChatService | None = None,
     data_commons: DataCommonsConnector | None = None,
     research_service: WebResearchService | None = None,
+    stage_assistant: StageAssistantService | None = None,
 ) -> FastAPI:
     resolved_data_dir = Path(data_dir) if data_dir is not None else _default_data_dir()
     web_root = _web_root()
@@ -126,6 +139,7 @@ def create_app(
         knowledge_evaluation=knowledge_evaluation,
         stage_chat=resolved_stage_chat,
         research_service=resolved_research_service,
+        stage_assistant=stage_assistant,
     )
 
     app = FastAPI(
@@ -189,6 +203,49 @@ def create_app(
     @app.exception_handler(KnowledgeEvaluationOutputError)
     async def invalid_knowledge_evaluation(_request: Request, exc: KnowledgeEvaluationOutputError):
         return _json_error(status.HTTP_502_BAD_GATEWAY, "invalid_knowledge_evaluation", str(exc))
+
+    @app.exception_handler(StageSuggestionOutputError)
+    async def invalid_stage_suggestions(_request: Request, exc: StageSuggestionOutputError):
+        return _json_error(
+            status.HTTP_502_BAD_GATEWAY,
+            "invalid_stage_suggestions",
+            str(exc),
+        )
+
+    @app.exception_handler(StageAssistantError)
+    async def stage_assistant_error(_request: Request, exc: StageAssistantError):
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if exc.code in {"stage_not_found", "suggestion_not_found"}
+            else status.HTTP_409_CONFLICT
+        )
+        return _json_error(code, exc.code, str(exc))
+
+    @app.exception_handler(KnowledgeEvaluationJobNotFoundError)
+    async def knowledge_job_not_found(
+        _request: Request,
+        exc: KnowledgeEvaluationJobNotFoundError,
+    ):
+        return _json_error(
+            status.HTTP_404_NOT_FOUND,
+            "knowledge_evaluation_job_not_found",
+            str(exc),
+        )
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(request: Request, exc: Exception):
+        incident_id = f"err_{uuid4().hex[:12]}"
+        LOGGER.exception(
+            "Unhandled AI4MS API error incident=%s method=%s path=%s",
+            incident_id,
+            request.method,
+            request.url.path,
+        )
+        return _json_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "internal_error",
+            f"服务端处理失败，请重试；错误编号：{incident_id}",
+        )
 
     @app.exception_handler(LiteratureSearchInputError)
     async def invalid_literature_search(_request: Request, exc: LiteratureSearchInputError):
@@ -661,6 +718,67 @@ def create_app(
     ):
         return get_service(request).review_literature_plan(project_id, payload)
 
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/tools/invoke",
+        tags=["stage-tools"],
+    )
+    async def invoke_stage_tool(
+        project_id: str,
+        stage_key: str,
+        payload: StageToolInvokeRequest,
+        request: Request,
+    ):
+        return await get_service(request).invoke_stage_tool(
+            project_id,
+            stage_key,
+            payload,
+        )
+
+    @app.get(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions",
+        tags=["stage-suggestions"],
+    )
+    async def get_stage_suggestions(
+        project_id: str,
+        stage_key: str,
+        request: Request,
+    ):
+        return get_service(request).get_stage_suggestions(project_id, stage_key)
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions",
+        tags=["stage-suggestions"],
+    )
+    async def generate_stage_suggestions(
+        project_id: str,
+        stage_key: str,
+        payload: StageSuggestionGenerateRequest,
+        request: Request,
+    ):
+        return await get_service(request).generate_stage_suggestions(
+            project_id,
+            stage_key,
+            payload,
+        )
+
+    @app.post(
+        "/api/v1/projects/{project_id}/stages/{stage_key}/suggestions/{suggestion_id}/decision",
+        tags=["stage-suggestions"],
+    )
+    async def decide_stage_suggestion(
+        project_id: str,
+        stage_key: str,
+        suggestion_id: str,
+        payload: StageSuggestionDecisionRequest,
+        request: Request,
+    ):
+        return get_service(request).decide_stage_suggestion(
+            project_id,
+            stage_key,
+            suggestion_id,
+            payload,
+        )
+
     @app.post("/api/v1/projects/{project_id}/stages/literature/search", tags=["literature"])
     async def search_literature(project_id: str, payload: LiteratureSearchRequest, request: Request):
         return await get_service(request).search_literature(project_id, payload)
@@ -775,6 +893,35 @@ def create_app(
     ):
         return await get_service(request).evaluate_knowledge(project_id, payload)
 
+    @app.post(
+        "/api/v1/projects/{project_id}/knowledge/evaluation/jobs",
+        tags=["knowledge"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def submit_knowledge_evaluation(
+        project_id: str,
+        payload: KnowledgeEvaluationRequest,
+        request: Request,
+    ):
+        return await get_service(request).submit_knowledge_evaluation(
+            project_id,
+            payload,
+        )
+
+    @app.get(
+        "/api/v1/projects/{project_id}/knowledge/evaluation/jobs/{job_id}",
+        tags=["knowledge"],
+    )
+    async def get_knowledge_evaluation_job(
+        project_id: str,
+        job_id: str,
+        request: Request,
+    ):
+        return get_service(request).get_knowledge_evaluation_job(
+            project_id,
+            job_id,
+        )
+
     @app.post("/api/v1/projects/{project_id}/stages/analysis/preflight", tags=["runners"])
     async def preflight_analysis_run(project_id: str, payload: AnalysisRunRequest, request: Request):
         return get_service(request).preflight_analysis_run(project_id, payload)
@@ -874,6 +1021,33 @@ def create_app(
             media_type="text/html; charset=utf-8",
             filename=path.name,
             content_disposition_type="inline",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/word", tags=["delivery"])
+    async def download_word_report(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "word")
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=f"{project_id}-{export_id}.docx",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/pdf", tags=["delivery"])
+    async def download_pdf_report(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "pdf")
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=f"{project_id}-{export_id}.pdf",
+        )
+
+    @app.get("/api/v1/projects/{project_id}/exports/{export_id}/stata", tags=["delivery"])
+    async def download_stata_package(project_id: str, export_id: str, request: Request):
+        path = get_service(request).delivery_artifact(project_id, export_id, "stata")
+        return FileResponse(
+            path,
+            media_type="application/zip",
+            filename=f"{project_id}-{export_id}-stata.zip",
         )
 
     @app.get("/api/v1/projects/{project_id}/exports/{export_id}/package", tags=["delivery"])

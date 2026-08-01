@@ -14,7 +14,7 @@
 | `prompts/` | S0-S9 提示词和输出契约 |
 | `assets/` | 数据资产登记和元信息 |
 | `runners/` | Stata Runner、后台任务和 Result Bundle |
-| `delivery/` | 学术输出质量门、引用/逻辑审计、HTML 报告和研究包 v2 |
+| `delivery/` | 学术输出质量门、引用/逻辑审计、HTML、Word、PDF、图表、Mermaid 和 Stata/综合研究包 v2 |
 
 边界规则：
 
